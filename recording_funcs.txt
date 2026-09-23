@@ -1,0 +1,98 @@
+﻿// Recording and snapshot functions
+// Add these to WebcamDetect.jsx before the stop() function
+
+  // --- recording -------------------------------------------------------------
+  async function toggleRecording() {
+    if (isRecording) {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== '"'"'inactive'"'"') {
+        mediaRecorderRef.current.stop()
+      }
+      setIsRecording(false)
+      return
+    }
+    const cv = canvasRef.current
+    if (!cv) return setMsg('"'"'Canvas not ready'"'"')
+    const stream = cv.captureStream(30)
+    if (!stream) return setMsg('"'"'CaptureStream not supported'"'"')
+    try {
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: '"'"'video/webm; codecs=vp9'"'"' })
+      mediaRecorderRef.current = mediaRecorder
+      chunksRef.current = []
+      mediaRecorder.ondataavailable = (e) => { if (e.data.size) chunksRef.current.push(e.data) }
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(chunksRef.current, { type: '"'"'video/webm'"'"' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('"'"'a'"'"')
+        a.href = url
+        a.download = '"'"'varuna-recording-' + new Date().toISOString().slice(0,19).replace(/[:T]/g,'"'"'-'"'"') + '"'"'.webm'"'"''
+        a.click()
+        URL.revokeObjectURL(url)
+        setMsg('"'"'Recording saved'"'"')
+        setTimeout(() => setMsg('"'"'Ready'"'"'), 3000)
+      }
+      mediaRecorder.start()
+      setIsRecording(true)
+      setMsg('"'"'Recording... (click Stop when done)"'"')
+    } catch (e) {
+      console.error('"'"'[recording] error:'"'"', e)
+      setMsg('"'"'Recording failed: '"'"' + (e?.message ?? e))
+    }
+  }
+
+  async function takeSnapshot() {
+    const cv = canvasRef.current
+    const el = srcElRef.current
+    if (!cv || !el) return setMsg('"'"'Canvas not ready'"'"')
+    const [vw, vh] = srcSize(el)
+    if (!vw || !vh) return setMsg('"'"'Source not ready'"'"')
+    const ctx = cv.getContext('"'"'2d'"'"')
+    const cw = cv.width, ch = cv.height
+    const scale = Math.min(cw / vw, ch / vh)
+    const dw = vw * scale, dh = vh * scale
+    const ox = (cw - dw) / 2, oy = (ch - dh) / 2
+    ctx.clearRect(0, 0, cw, ch)
+    ctx.drawImage(el, ox, oy, dw, dh)
+    ctx.font = `700 ${Math.max(13, cw / 44)}px Inter, sans-serif`
+    ctx.textBaseline = '"'"'top'"'"''
+    for (const b of boxesRef.current) {
+      const col     = b.color || ACCENT
+      const isHuman = b.label === '"'"'Human'"'"''
+      const isRiverTrash = b.label === '"'"'River trash'"'"''
+      const x = ox + (b.x1 / vw) * dw
+      const y = oy + (b.y1 / vh) * dh
+      const w = ((b.x2 - b.x1) / vw) * dw
+      const h = ((b.y2 - b.y1) / vh) * dh
+      ctx.strokeStyle = isRiverTrash ? RIVER_COLOR : col
+      ctx.lineWidth   = isRiverTrash ? 3 : 2
+      ctx.setLineDash(isHuman ? [6, 4] : [])
+      ctx.shadowColor = isRiverTrash ? RIVER_COLOR : col
+      ctx.shadowBlur  = isRiverTrash ? 15 : 10
+      ctx.strokeRect(x, y, w, h)
+      ctx.shadowBlur  = 0
+      ctx.setLineDash([])
+      const labelText = isHuman ? '"'"'Human'"'"' : `${b.label} ${Math.round(b.score * 100)}%`'
+      const tw  = ctx.measureText(labelText).width + 14
+      const thh = Math.max(20, cw / 32)
+      const lx  = x, ly  = Math.max(0, y - thh)
+      ctx.fillStyle = isRiverTrash ? '"'"'rgba(0,255,212,0.85)'"'"' : isHuman ? '"'"'rgba(30,28,0,0.82)'"'"' : '"'"'rgba(4,18,31,0.72)'"'"''
+      ctx.beginPath()
+      ctx.roundRect(lx, ly, tw, thh, 5)
+      ctx.fill()
+      ctx.strokeStyle = isRiverTrash ? RIVER_COLOR : col
+      ctx.lineWidth   = isRiverTrash ? 2 : 1
+      ctx.stroke()
+      ctx.fillStyle   = isRiverTrash ? '"'"'#000'"'"' : (isHuman ? HUMAN_COLOR : '"'"'#fff'"'"')'
+      ctx.shadowColor = isRiverTrash ? RIVER_COLOR : col
+      ctx.shadowBlur  = isRiverTrash ? 8 : 4
+      ctx.fillText(labelText, lx + 7, ly + 3)
+      ctx.shadowBlur  = 0
+    }
+    const dataUrl = cv.toDataURL('"'"'image/png'"'"')
+    const a = document.createElement('"'"'a'"'"')
+    a.href = dataUrl
+    setSnapshotCount(c => c + 1)
+    a.download = '"'"'varuna-snapshot-' + new Date().toISOString().slice(0,19).replace(/[:T]/g,'"'"'-'"'"') + '"'"'-' + snapshotCount + '"'"'.png'"'"''
+    a.click()
+    setMsg('"'"'Snapshot saved'"'"')
+    setTimeout(() => setMsg('"'"'Ready'"'"'), 3000)
+  }

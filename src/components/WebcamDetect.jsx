@@ -1,0 +1,478 @@
+import { useEffect, useRef, useState } from 'react'
+import { createDetector, mergeBoxes, makeTileGrid, overlapRatio, suppressByPerson, suppressByPlants } from '../lib/detector'
+import { filterDetections } from '../lib/labels'
+import { BoxTracker } from '../lib/track'
+import { api } from '../api/client'
+import { recordTrashCount } from '../lib/detectionStats'
+import { StatusOrb } from './ui'
+
+const ACCENT = '#3b41ff'
+const HUMAN_COLOR = '#FFD60A'
+const RIVER_COLOR = '#00ffd4'
+const TILE_TTL = 1500
+const TILE_OVERLAP = 0.35
+const TILE_CONF_FACTOR = 0.6
+const BUDGET_MS = 80
+const MERGE_IOU = 0.4
+const FACE_SUPPRESS_IOU = 0.20
+const ADAPTIVE_CONF = {
+  gridSizeFactors: { 2: 0.85, 3: 0.75, 4: 0.65, 5: 0.55 },
+  gridSizeMinConf:  { 2: 0.08, 3: 0.06, 4: 0.04, 5: 0.03 },
+  successBoost: 0.10, failurePenalty: 0.05, maxAdaptiveConf: 0.4, minAdaptiveConf: 0.02,
+}
+
+export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam', autoStart = false, onCount }) {
+  const videoRef     = useRef(null)
+  const streamImgRef = useRef(null)
+  const canvasRef    = useRef(null)
+  const srcElRef     = useRef(null)
+  const detRef       = useRef(null)
+  const faceDetRef   = useRef(null)
+  const personDetRef = useRef(null)
+  const plantDetRef  = useRef(null)
+  const boxesRef     = useRef([])
+  const runningRef   = useRef(false)
+  const confRef      = useRef(confThr)
+  const rafRef       = useRef(0)
+  const mediaRecorderRef  = useRef(null)
+  const chunksRef         = useRef([])
+  const videoCountRef     = useRef(0)
+  const snapshotCountRef  = useRef(0)
+  const folderHandleRef   = useRef(null)
+  const tileGridRef    = useRef(null)
+  const tileIndexRef   = useRef(0)
+  const tileBoxesRef   = useRef(new Map())
+  const tileSuccessRef = useRef(new Map())
+  const activeTileRef  = useRef(null)
+  const tileSkipRef    = useRef(0)
+  const emaRef         = useRef(60)
+  const trackerRef     = useRef(new BoxTracker({ matchIou: 0.25, smoothing: 0.6, maxAgeMs: 500 }))
+  const longRangeRef        = useRef(false)
+  const gridSizeRef         = useRef(2)
+  const humanDetectionRef   = useRef(true)
+  const plantSuppressionRef = useRef(true)
+  const trashDetectionRef   = useRef(true)
+
+  const [status, setStatus]               = useState('init')
+  const [msg,    setMsg]                  = useState('Loading AI models...')
+  const [ep,     setEp]                   = useState('')
+  const [fps,    setFps]                  = useState(0)
+  const [count,  setCount]                = useState(0)
+  const [facing, setFacing]               = useState('environment')
+  const [source, setSource]               = useState(defaultSource)
+  const [longRange,        setLongRange]        = useState(false)
+  const [gridSize,         setGridSize]         = useState(2)
+  const [humanDetection,   setHumanDetection]   = useState(true)
+  const [plantSuppression, setPlantSuppression] = useState(true)
+  const [trashDetection,   setTrashDetection]   = useState(true)
+  const [isRecording,      setIsRecording]      = useState(false)
+
+  confRef.current = confThr
+  useEffect(() => { longRangeRef.current        = longRange        }, [longRange])
+  useEffect(() => { humanDetectionRef.current   = humanDetection   }, [humanDetection])
+  useEffect(() => { plantSuppressionRef.current = plantSuppression }, [plantSuppression])
+  useEffect(() => { trashDetectionRef.current   = trashDetection   }, [trashDetection])
+
+  function suppressByFace(trashBoxes, faceBoxes) {
+    if (!faceBoxes.length) return trashBoxes
+    return trashBoxes.filter(t => { for (const f of faceBoxes) { if (overlapRatio(f, t) > FACE_SUPPRESS_IOU) return false } return true })
+  }
+
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      try {
+        const d = await createDetector((m) => alive && setMsg(m))
+        if (!alive) return d.dispose()
+        detRef.current = d
+        try {
+          const { createFaceDetector } = await import('../lib/faceDetector')
+          const fd = await createFaceDetector((m) => alive && setMsg(m))
+          if (!alive) { fd.dispose(); return }
+          faceDetRef.current = fd; setEp(d.ep + '+face'); setMsg('Models ready')
+        } catch (fe) { console.warn('[face] load failed:', fe); setEp(d.ep); setMsg('Model ready') }
+        try {
+          const { createPersonDetector } = await import('../lib/personDetector')
+          const pd = await createPersonDetector((m) => alive && setMsg(m))
+          if (!alive) { pd.dispose(); return }
+          personDetRef.current = pd; setEp(d.ep + '+face+person')
+        } catch (pe) { console.warn('[person] load failed:', pe) }
+        try {
+          const { createPlantDetector } = await import('../lib/plantDetector')
+          const pld = await createPlantDetector((m) => alive && setMsg(m))
+          if (!alive) { pld.dispose(); return }
+          if (pld.available) { plantDetRef.current = pld; setEp(prev => prev + '+plant') }
+        } catch (ple) { console.warn('[plant] load failed:', ple) }
+        setStatus('ready')
+        if (autoStart) start(defaultSource)
+      } catch (e) {
+        if (!alive) return
+        setStatus('error'); setMsg('Failed to load model: ' + (e?.message ?? e))
+      }
+    })()
+    return () => { alive=false; stop(); detRef.current?.dispose(); faceDetRef.current?.dispose(); personDetRef.current?.dispose(); plantDetRef.current?.dispose() }
+  }, [defaultSource, autoStart])
+
+  function fitCanvas() { const cv=canvasRef.current; if(!cv) return; const r=cv.getBoundingClientRect(); cv.width=Math.max(2,Math.round(r.width)); cv.height=Math.max(2,Math.round(r.height)) }
+  function srcSize(el) { return [el.videoWidth||el.naturalWidth||0, el.videoHeight||el.naturalHeight||0] }
+
+  function drawBoxes(ctx, cw, ch, vw, vh, ox, oy, dw, dh) {
+    ctx.font = `700 ${Math.max(13, cw/44)}px Inter, sans-serif`
+    ctx.textBaseline = 'top'
+    for (const b of boxesRef.current) {
+      const col=b.color||ACCENT, isHuman=b.label==='Human', isRiverTrash=b.label==='River trash'
+      const x=ox+(b.x1/vw)*dw, y=oy+(b.y1/vh)*dh, w=((b.x2-b.x1)/vw)*dw, h=((b.y2-b.y1)/vh)*dh
+      ctx.strokeStyle=isRiverTrash?RIVER_COLOR:col; ctx.lineWidth=isRiverTrash?3:2
+      ctx.setLineDash(isHuman?[6,4]:[])
+      ctx.shadowColor=isRiverTrash?RIVER_COLOR:col; ctx.shadowBlur=isRiverTrash?15:10
+      ctx.strokeRect(x,y,w,h); ctx.shadowBlur=0; ctx.setLineDash([])
+      const labelText=isHuman?'Human':`${b.label} ${Math.round(b.score*100)}%`
+      const tw=ctx.measureText(labelText).width+14, thh=Math.max(20,cw/32)
+      const lx=x, ly=Math.max(0,y-thh)
+      ctx.fillStyle=isRiverTrash?'rgba(0,255,212,0.85)':isHuman?'rgba(30,28,0,0.82)':'rgba(4,18,31,0.72)'
+      ctx.beginPath(); ctx.roundRect(lx,ly,tw,thh,5); ctx.fill()
+      ctx.strokeStyle=isRiverTrash?RIVER_COLOR:col; ctx.lineWidth=isRiverTrash?2:1; ctx.stroke()
+      ctx.fillStyle=isRiverTrash?'#000':(isHuman?HUMAN_COLOR:'#fff')
+      ctx.shadowColor=isRiverTrash?RIVER_COLOR:col; ctx.shadowBlur=isRiverTrash?8:4
+      ctx.fillText(labelText,lx+7,ly+3); ctx.shadowBlur=0
+    }
+  }
+
+  function draw() {
+    const cv=canvasRef.current, el=srcElRef.current
+    if(!cv||!el) return
+    const ctx=cv.getContext('2d'), cw=cv.width, ch=cv.height
+    ctx.clearRect(0,0,cw,ch)
+    const [vw,vh]=srcSize(el)
+    if(vw&&vh){
+      const scale=Math.min(cw/vw,ch/vh), dw=vw*scale, dh=vh*scale, ox=(cw-dw)/2, oy=(ch-dh)/2
+      ctx.drawImage(el,ox,oy,dw,dh)
+      if(longRangeRef.current&&activeTileRef.current&&runningRef.current){
+        const t=activeTileRef.current; ctx.save(); ctx.setLineDash([5,5]); ctx.lineWidth=1.5
+        ctx.strokeStyle='rgba(255,255,255,0.35)'
+        ctx.strokeRect(ox+t.x1*dw,oy+t.y1*dh,(t.x2-t.x1)*dw,(t.y2-t.y1)*dh); ctx.restore()
+      }
+      drawBoxes(ctx,cw,ch,vw,vh,ox,oy,dw,dh)
+    }
+    if(runningRef.current) rafRef.current=requestAnimationFrame(draw)
+  }
+
+  function ensureTileGrid() {
+    if(!tileGridRef.current||tileGridRef.current.size!==gridSizeRef.current){
+      const size=gridSizeRef.current
+      tileGridRef.current={size,tiles:makeTileGrid(size,size,TILE_OVERLAP)}
+      tileIndexRef.current=0; tileBoxesRef.current.clear(); tileSuccessRef.current.clear(); setGridSize(size)
+    }
+    return tileGridRef.current.tiles
+  }
+
+  function calcConf(baseConf,gs,tileSuccess,rect){
+    const gf=ADAPTIVE_CONF.gridSizeFactors[gs]||1.0, gmin=ADAPTIVE_CONF.gridSizeMinConf[gs]||0.05
+    let c=Math.max(gmin,Math.min(ADAPTIVE_CONF.maxAdaptiveConf,baseConf*TILE_CONF_FACTOR*gf))
+    if(tileSuccess!==undefined){ if(tileSuccess)c=Math.min(ADAPTIVE_CONF.maxAdaptiveConf,c+ADAPTIVE_CONF.successBoost); else c=Math.max(ADAPTIVE_CONF.minAdaptiveConf,c-ADAPTIVE_CONF.failurePenalty) }
+    const cx=rect.x1+(rect.x2-rect.x1)/2, cy=rect.y1+(rect.y2-rect.y1)/2
+    return Math.max(gmin, c*(1.0-Math.sqrt((cx-0.5)**2+(cy-0.5)**2)*0.3))
+  }
+
+  async function detectLoop() {
+    let frames=0, t0=performance.now(), taintWarned=false
+    while(runningRef.current&&detRef.current&&srcElRef.current){
+      const tickStart=performance.now()
+      let faceBoxes=[], personBoxes=[], trashBoxes=[]
+      if(trashDetectionRef.current){
+        try { trashBoxes=await detRef.current.detect(srcElRef.current,{confThr:Math.max(0.08,confRef.current*0.7),iouThr:0.40}) }
+        catch(e){ if(!taintWarned&&/tainted|cross.origin|SecurityError/i.test(e?.message??'')){taintWarned=true;setMsg('Drone stream blocked by CORS')} }
+      }
+      if(faceDetRef.current&&humanDetectionRef.current){
+        try{faceBoxes=await faceDetRef.current.detectFaces(srcElRef.current,{confThr:0.15,iouThr:0.25})}catch(e){console.warn('[face]',e)}
+      }
+      if(personDetRef.current&&humanDetectionRef.current){
+        try{personBoxes=await personDetRef.current.detectPersons(srcElRef.current,{confThr:0.25,iouThr:0.30})}catch(e){console.warn('[person]',e)}
+      }
+      let plantBoxes=[]
+      if(plantDetRef.current&&plantDetRef.current.available&&plantSuppressionRef.current){
+        try{plantBoxes=await plantDetRef.current.detectPlants(srcElRef.current,{confThr:0.20,iouThr:0.30})}catch(e){console.warn('[plant]',e)}
+      }
+      let runTile=false
+      if(longRangeRef.current){
+        if(emaRef.current<=BUDGET_MS){runTile=true;if(emaRef.current<=BUDGET_MS*0.4)gridSizeRef.current=3;else if(emaRef.current>BUDGET_MS*0.7)gridSizeRef.current=2}
+        else if(emaRef.current<=BUDGET_MS*1.8){runTile=tileSkipRef.current++%2===0;gridSizeRef.current=2}
+        else{gridSizeRef.current=2}
+      }
+      if(runTile){
+        const tiles=ensureTileGrid(),idx=tileIndexRef.current%tiles.length,rect=tiles[idx]
+        activeTileRef.current=rect
+        try{const tc=calcConf(confRef.current,gridSizeRef.current,tileSuccessRef.current.get(idx),rect),tb=await detRef.current.detect(srcElRef.current,{confThr:tc,iouThr:0.40,rect});tileBoxesRef.current.set(idx,{boxes:tb,ts:performance.now()});tileSuccessRef.current.set(idx,tb.length>0)}catch{}
+        tileIndexRef.current=idx+1
+      } else { activeTileRef.current=null }
+      const now=performance.now()
+      emaRef.current=emaRef.current*0.8+(now-tickStart)*0.2
+      const ft=[];for(const{boxes,ts}of tileBoxesRef.current.values()){if(now-ts<=TILE_TTL)ft.push(boxes)}
+      const merged=ft.length?mergeBoxes([trashBoxes,...ft],MERGE_IOU):trashBoxes
+      let finalTrash=merged
+      if(humanDetectionRef.current){finalTrash=filterDetections(suppressByPerson(suppressByFace(merged,faceBoxes),personBoxes),[])}
+      else{finalTrash=filterDetections(merged,[])}
+      if(plantSuppressionRef.current&&plantBoxes.length>0)finalTrash=suppressByPlants(finalTrash,plantBoxes,0.15)
+      recordTrashCount(finalTrash.length) // share trash-only count with the Detections tab
+      const lf=humanDetectionRef.current?faceBoxes.map(b=>({...b,label:'Human',color:HUMAN_COLOR,cls:'human'})):[]
+      const lp=humanDetectionRef.current?personBoxes.map(b=>({...b,label:'Human',color:HUMAN_COLOR,cls:'human'})):[]
+      const topT=finalTrash.sort((a,b)=>b.score-a.score).slice(0,10)
+      boxesRef.current=trackerRef.current.update([...lf,...lp,...topT],now)
+      setCount(boxesRef.current.length); onCount?.(boxesRef.current.length)
+      frames++
+      if(now-t0>600){setFps(Math.round(frames*1000/(now-t0)));frames=0;t0=now}
+      await new Promise(r=>requestAnimationFrame(r))
+    }
+  }
+
+  async function startWebcam(f){
+    const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:f,width:{ideal:1280},height:{ideal:720}},audio:false})
+    const v=videoRef.current; v.srcObject=stream; await v.play(); srcElRef.current=v
+  }
+  function startStream(){
+    return new Promise((resolve,reject)=>{
+      const img=streamImgRef.current; img.crossOrigin='anonymous'
+      const onLoad=()=>{img.removeEventListener('load',onLoad);srcElRef.current=img;resolve()}
+      img.addEventListener('load',onLoad)
+      img.addEventListener('error',()=>reject(new Error('stream unavailable')),{once:true})
+      img.src=api.streamUrl()+(api.streamUrl().includes('?')?'&':'?')+'t='+Date.now()
+      setTimeout(()=>{if(img.naturalWidth){srcElRef.current=img;resolve()}},1500)
+    })
+  }
+  async function start(src=source,f=facing){
+    if(!detRef.current) return
+    try{
+      if(src==='webcam')await startWebcam(f); else await startStream()
+      fitCanvas(); runningRef.current=true; setStatus('running'); draw(); detectLoop()
+    }catch(e){
+      setStatus('error'); setMsg(src==='webcam'?'Camera unavailable: '+(e?.message??e)+' (needs HTTPS + permission)':'Drone stream unavailable: '+(e?.message??e))
+    }
+  }
+  function stop(){
+    runningRef.current=false; cancelAnimationFrame(rafRef.current)
+    const v=videoRef.current; if(v?.srcObject){v.srcObject.getTracks().forEach(t=>t.stop());v.srcObject=null}
+    if(streamImgRef.current)streamImgRef.current.src=''
+    srcElRef.current=null; boxesRef.current=[]; tileBoxesRef.current.clear()
+    tileGridRef.current=null; activeTileRef.current=null; trackerRef.current.reset()
+    emaRef.current=60; gridSizeRef.current=2; setStatus(s=>s==='running'?'ready':s)
+  }
+  async function switchSource(next){if(next===source)return;const was=runningRef.current;stop();setSource(next);if(was)await start(next)}
+  async function flip(){const next=facing==='environment'?'user':'environment';setFacing(next);if(runningRef.current&&source==='webcam'){stop();await start('webcam',next)}}
+
+  async function getSaveFolder(){
+    if(folderHandleRef.current)return folderHandleRef.current
+    if(typeof window.showDirectoryPicker==='function'){
+      try{const h=await window.showDirectoryPicker({mode:'readwrite',startIn:'downloads'});folderHandleRef.current=h;return h}catch{}
+    }
+    return null
+  }
+  async function saveBlob(blob,filename){
+    const folder=await getSaveFolder()
+    if(folder){try{const fh=await folder.getFileHandle(filename,{create:true}),w=await fh.createWritable();await w.write(blob);await w.close();return}catch(e){console.warn('[save]',e)}}
+    const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=filename;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)
+  }
+  function toggleRecording(){
+    if(isRecording){if(mediaRecorderRef.current&&mediaRecorderRef.current.state!=='inactive')mediaRecorderRef.current.stop();setIsRecording(false);return}
+    const cv=canvasRef.current; if(!cv)return
+    const stream=cv.captureStream(30)
+    const mimeType=MediaRecorder.isTypeSupported('video/webm; codecs=vp9')?'video/webm; codecs=vp9':'video/webm'
+    const recorder=new MediaRecorder(stream,{mimeType})
+    mediaRecorderRef.current=recorder; chunksRef.current=[]
+    recorder.ondataavailable=e=>{if(e.data&&e.data.size>0)chunksRef.current.push(e.data)}
+    recorder.onstop=async()=>{
+      videoCountRef.current++
+      const blob=new Blob(chunksRef.current,{type:'video/webm'}),filename=`video${videoCountRef.current}.webm`
+      await saveBlob(blob,filename); setMsg(`Saved ${filename}`); setTimeout(()=>setMsg(''),2000)
+    }
+    recorder.start(); setIsRecording(true)
+  }
+  async function takeSnapshot(){
+    const cv=canvasRef.current,el=srcElRef.current; if(!cv||!el)return
+    const [vw,vh]=srcSize(el); if(!vw||!vh)return
+    const ctx=cv.getContext('2d'),cw=cv.width,ch=cv.height
+    const scale=Math.min(cw/vw,ch/vh),dw=vw*scale,dh=vh*scale,ox=(cw-dw)/2,oy=(ch-dh)/2
+    ctx.clearRect(0,0,cw,ch); ctx.drawImage(el,ox,oy,dw,dh); drawBoxes(ctx,cw,ch,vw,vh,ox,oy,dw,dh)
+    snapshotCountRef.current++
+    const filename=`pic${snapshotCountRef.current}.png`
+    cv.toBlob(async blob=>{await saveBlob(blob,filename);setMsg(`Saved ${filename}`);setTimeout(()=>setMsg(''),2000)},'image/png')
+  }
+
+  useEffect(()=>{const f=()=>fitCanvas();window.addEventListener('resize',f);return()=>window.removeEventListener('resize',f)},[defaultSource,autoStart])
+
+  const allModelsOn = trashDetection && humanDetection && plantSuppression
+  function toggleAllModels(){const next=!allModelsOn;setTrashDetection(next);setHumanDetection(next);setPlantSuppression(next)}
+
+  return (
+    <div className="relative h-full w-full overflow-hidden rounded-2xl bg-[#0B1220]">
+      <video ref={videoRef} playsInline muted className="hidden" />
+      <img   ref={streamImgRef} alt="" className="hidden" />
+      <canvas ref={canvasRef} className="h-full w-full" />
+
+      {/* status pill */}
+      <div className="absolute left-3 top-3 z-20 flex items-center gap-2 rounded-full bg-black/60 px-3 py-1.5 backdrop-blur"
+        style={{border:'1px solid rgba(255,255,255,0.08)'}}>
+        <StatusOrb level={status==='running'?'ok':status==='error'?'bad':'warn'} size={9} pulse={status!=='running'} />
+        <span className="text-[11px] font-semibold text-white/90">
+          {status==='running'?`AI LIVE · ${fps} fps · ${count} found`:status==='error'?'AI ERROR':msg}
+        </span>
+      </div>
+
+      {/* source toggle */}
+      <div className="absolute right-3 top-3 z-20 flex gap-1 rounded-xl p-0.5 backdrop-blur"
+        style={{background:'rgba(11,18,32,0.72)',border:'1px solid rgba(255,255,255,0.08)'}}>
+        {[['webcam','Webcam'],['stream','Drone']].map(([id,label])=>(
+          <button key={id} type="button" onClick={()=>switchSource(id)}
+            className="rounded-lg px-3 py-1 text-[11px] font-bold transition-all"
+            style={{background:source===id?'linear-gradient(180deg,#6BB8FF,#3B9EFF)':'transparent',color:source===id?'#04121f':'rgba(255,255,255,0.55)'}}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* ALL MODELS master button */}
+      {status!=='init'&&status!=='error'&&(
+        <div className="absolute bottom-5 left-1/2 z-20 -translate-x-1/2">
+          <button onClick={toggleAllModels}
+            className="rounded-2xl px-8 py-3 text-[13px] font-extrabold tracking-widest transition-all duration-200 active:scale-95"
+            style={{
+              background:allModelsOn?'linear-gradient(135deg,#32D74B,#0e8f28)':'linear-gradient(135deg,#FF453A,#8b1a14)',
+              boxShadow:allModelsOn?'0 0 28px rgba(50,215,75,0.5)':'0 0 28px rgba(255,69,58,0.5)',
+              color:'#fff',border:allModelsOn?'1px solid rgba(50,215,75,0.4)':'1px solid rgba(255,69,58,0.4)',
+            }}>
+            {allModelsOn?'⬡  ALL MODELS  ON':'⬡  ALL MODELS  OFF'}
+          </button>
+        </div>
+      )}
+
+      {/* start/stop row */}
+      <div className="absolute bottom-20 left-1/2 z-20 -translate-x-1/2 flex flex-wrap items-center justify-center gap-2">
+        {status!=='running'?(
+          <button disabled={status==='init'} onClick={()=>start()}
+            className="rounded-2xl px-6 py-2.5 text-sm font-bold text-white disabled:opacity-40 transition-all active:scale-95"
+            style={{background:'linear-gradient(180deg,var(--accent2,#6BB8FF),var(--accent-hex,#3B9EFF))',boxShadow:'0 0 18px rgba(59,158,255,0.35)'}}>
+            {status==='init'?'Loading...':(source==='webcam'?'▶  Start Detection':'▶  Start Drone Feed')}
+          </button>
+        ):(
+          <>
+            <button onClick={toggleRecording}
+              className="rounded-2xl px-4 py-2 text-[12px] font-bold text-white transition-all active:scale-95"
+              style={{background:isRecording?'linear-gradient(135deg,#FF453A,#8b1a14)':'rgba(255,69,58,0.18)',border:'1px solid rgba(255,69,58,0.5)',boxShadow:isRecording?'0 0 16px rgba(255,69,58,0.6)':'none'}}>
+              {isRecording?'⏹  Stop Rec':'⏺  Record'}
+            </button>
+            <button onClick={takeSnapshot}
+              className="rounded-2xl px-4 py-2 text-[12px] font-bold text-white transition-all active:scale-95"
+              style={{background:'rgba(50,215,75,0.15)',border:'1px solid rgba(50,215,75,0.4)'}}>
+              📸  Snap
+            </button>
+            <button onClick={stop}
+              className="rounded-2xl px-4 py-2 text-[12px] font-semibold text-white/70 transition-all active:scale-95"
+              style={{background:'rgba(255,255,255,0.08)',border:'1px solid rgba(255,255,255,0.12)'}}>
+              ■  Stop
+            </button>
+            {source==='webcam'&&(
+              <button onClick={flip}
+                className="rounded-2xl px-4 py-2 text-[12px] font-semibold text-white/70 transition-all active:scale-95"
+                style={{background:'rgba(255,255,255,0.08)',border:'1px solid rgba(255,255,255,0.12)'}}>
+                ⇄  Flip
+              </button>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* settings gear — bottom right, hover reveals panel */}
+      <div className="group absolute bottom-5 right-4 z-30">
+        {/* slide-up settings panel */}
+        <div className="pointer-events-none mb-3 flex flex-col items-end gap-2
+          opacity-0 translate-y-3 scale-95
+          group-hover:pointer-events-auto group-hover:opacity-100 group-hover:translate-y-0 group-hover:scale-100"
+          style={{transition:'opacity 0.25s ease,transform 0.25s cubic-bezier(.34,1.56,.64,1)',transformOrigin:'bottom right'}}>
+
+          {/* Confidence */}
+          <div className="flex items-center gap-3 rounded-2xl px-4 py-2.5 backdrop-blur"
+            style={{background:'rgba(11,18,32,0.85)',border:'1px solid rgba(255,255,255,0.09)',boxShadow:'0 8px 24px rgba(0,0,0,0.4)',minWidth:'220px'}}>
+            <span>🎯</span>
+            <span className="flex-1 text-[12px] font-semibold text-white/80">Confidence</span>
+            <input type="range" min={0.05} max={0.9} step={0.05} defaultValue={confThr}
+              onChange={e=>{ confRef.current=Number(e.target.value) }}
+              className="w-24 accent-[#3B9EFF]" />
+            <span className="w-8 text-right font-mono text-[11px] text-[#3B9EFF]">{Math.round(confThr*100)}%</span>
+          </div>
+
+          {/* Long Range */}
+          <div className="flex items-center gap-3 rounded-2xl px-4 py-2.5 backdrop-blur cursor-pointer"
+            onClick={()=>setLongRange(v=>!v)}
+            style={{background:'rgba(11,18,32,0.85)',border:'1px solid rgba(255,255,255,0.09)',boxShadow:'0 8px 24px rgba(0,0,0,0.4)',minWidth:'220px'}}>
+            <span>🗺️</span>
+            <span className="flex-1 text-[12px] font-semibold text-white/80">Long Range</span>
+            <SToggle on={longRange} color="#3B9EFF" />
+          </div>
+
+          {/* Trash */}
+          <div className="flex items-center gap-3 rounded-2xl px-4 py-2.5 backdrop-blur cursor-pointer"
+            onClick={()=>setTrashDetection(v=>!v)}
+            style={{background:'rgba(11,18,32,0.85)',border:'1px solid rgba(255,255,255,0.09)',boxShadow:'0 8px 24px rgba(0,0,0,0.4)',minWidth:'220px'}}>
+            <span>🗑️</span>
+            <span className="flex-1 text-[12px] font-semibold text-white/80">Trash Detect</span>
+            <SToggle on={trashDetection} color="#3B9EFF" />
+          </div>
+
+          {/* Human */}
+          <div className="flex items-center gap-3 rounded-2xl px-4 py-2.5 backdrop-blur cursor-pointer"
+            onClick={()=>setHumanDetection(v=>!v)}
+            style={{background:'rgba(11,18,32,0.85)',border:'1px solid rgba(255,255,255,0.09)',boxShadow:'0 8px 24px rgba(0,0,0,0.4)',minWidth:'220px'}}>
+            <span>🧑</span>
+            <span className="flex-1 text-[12px] font-semibold text-white/80">Human Detect</span>
+            <SToggle on={humanDetection} color="#FF6B6B" />
+          </div>
+
+          {/* Plant */}
+          <div className="flex items-center gap-3 rounded-2xl px-4 py-2.5 backdrop-blur cursor-pointer"
+            onClick={()=>setPlantSuppression(v=>!v)}
+            style={{background:'rgba(11,18,32,0.85)',border:'1px solid rgba(255,255,255,0.09)',boxShadow:'0 8px 24px rgba(0,0,0,0.4)',minWidth:'220px'}}>
+            <span>🌿</span>
+            <span className="flex-1 text-[12px] font-semibold text-white/80">Plant Filter</span>
+            <SToggle on={plantSuppression} color="#4CAF50" />
+          </div>
+        </div>
+
+        {/* Gear icon */}
+        <button className="flex h-12 w-12 items-center justify-center rounded-full backdrop-blur
+          transition-all duration-300 group-hover:rotate-90 group-hover:scale-110"
+          style={{background:'linear-gradient(135deg,rgba(59,65,255,0.6),rgba(107,184,255,0.3))',border:'1px solid rgba(107,184,255,0.35)',boxShadow:'0 0 20px rgba(59,158,255,0.3),0 4px 12px rgba(0,0,0,0.5)'}}>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </button>
+      </div>
+
+      {status==='error'&&(
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-6 text-center">
+          <p className="max-w-sm rounded-2xl px-6 py-4 text-sm text-white/80"
+            style={{background:'rgba(255,69,58,0.15)',border:'1px solid rgba(255,69,58,0.3)'}}>
+            {msg}
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function SToggle({ on, color }) {
+  return (
+    <div style={{
+      position:'relative',width:44,height:24,borderRadius:12,flexShrink:0,
+      background:on?color:'rgba(255,255,255,0.15)',
+      border:on?`1px solid ${color}`:'1px solid rgba(255,255,255,0.2)',
+      boxShadow:on?`0 0 10px ${color}88`:'none',
+      transition:'background 0.2s,box-shadow 0.2s',
+    }}>
+      <span style={{
+        position:'absolute',top:2,left:on?22:2,width:18,height:18,borderRadius:'50%',
+        background:'#fff',boxShadow:'0 1px 4px rgba(0,0,0,0.35)',
+        transition:'left 0.2s cubic-bezier(.34,1.56,.64,1)',
+      }} />
+    </div>
+  )
+}

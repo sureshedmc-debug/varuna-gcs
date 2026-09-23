@@ -1,0 +1,286 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1. Extend label dictionary with human label": [
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093109781
+      },
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093128464
+      },
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093178341
+      }
+    ],
+    "2.1 Create suppressOverlapping function in WebcamDetect.jsx": [
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093109971
+      },
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093184921
+      },
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093279036
+      }
+    ],
+    "3.1 Add faceDetRef state reference": [
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093110348
+      },
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093185640
+      },
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093279703
+      }
+    ],
+    "3.2 Load face detector in initialization useEffect": [
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093110498
+      },
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093285945
+      },
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093684622
+      }
+    ],
+    "3.3 Implement graceful degradation for face detector load failure": [
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093111274
+      },
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093707029
+      }
+    ],
+    "3.4 Add face detector disposal to cleanup": [
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093111555
+      },
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093707943
+      }
+    ],
+    "4. Checkpoint - Verify initialization and error handling": [
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093111810
+      },
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093715827
+      }
+    ],
+    "5.1 Add face detection call before trash detection": [
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093112184
+      },
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093741025
+      },
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093834311
+      }
+    ],
+    "5.2 Implement per-frame error handling for face detection": [
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093112575
+      },
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093835041
+      }
+    ],
+    "5.3 Apply overlap suppression after trash detection": [
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093112926
+      },
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093835691
+      }
+    ],
+    "5.4 Label face boxes for display": [
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093113149
+      },
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093836321
+      }
+    ],
+    "5.5 Combine face and trash boxes for tracking": [
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093113387
+      },
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093837060
+      }
+    ],
+    "6.1 Add conditional styling based on label type": [
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093113687
+      },
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093857737
+      },
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093918080
+      }
+    ],
+    "6.2 Verify color and glow application": [
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093113949
+      },
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093918760
+      }
+    ],
+    "7.1 Modify status pill to show dual-model info": [
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093114186
+      },
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093919780
+      }
+    ],
+    "7.2 Include face count in total detection count": [
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093114417
+      },
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093920614
+      }
+    ],
+    "8. Checkpoint - Verify integration and rendering": [
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093114626
+      },
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093921587
+      }
+    ],
+    "12. Final checkpoint - Complete integration validation": [
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093114885
+      },
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093922530
+      }
+    ],
+    "2. Implement overlap suppression utility function": [
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093279197
+      }
+    ],
+    "3. Initialize face detector in WebcamDetect component": [
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093708311
+      }
+    ],
+    "5. Integrate face detection into detection loop": [
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093837173
+      }
+    ],
+    "6. Update canvas rendering for face box styling": [
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093918872
+      }
+    ],
+    "7. Update status reporting": [
+      {
+        "executionId": "a838c76d-cc91-4e51-8c4b-fd82aa5c20aa",
+        "chatSessionId": "sess_6f1f73c5-7ec6-4063-beb2-c2c108e1f4c5",
+        "timestamp": 1790093920722
+      }
+    ]
+  }
+}

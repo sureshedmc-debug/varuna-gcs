@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 657.9889999999999 439.9" width="657.9889999999999" height="439.9" style="--bg:#1F1F1F;--fg:#CCCCCC;--line:#CCCCCC;--accent:#0078D4;--muted:#CCCCCCCC;--surface:#181818;--border:#CCCCCC;background:var(--bg)">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap');
+  text { font-family: 'Inter', system-ui, sans-serif; }
+  svg {
+    /* Derived from --bg and --fg (overridable via --line, --accent, etc.) */
+    --_text:          var(--fg);
+    --_text-sec:      var(--muted, color-mix(in srgb, var(--fg) 60%, var(--bg)));
+    --_text-muted:    var(--muted, color-mix(in srgb, var(--fg) 40%, var(--bg)));
+    --_text-faint:    color-mix(in srgb, var(--fg) 25%, var(--bg));
+    --_line:          var(--line, color-mix(in srgb, var(--fg) 50%, var(--bg)));
+    --_arrow:         var(--accent, color-mix(in srgb, var(--fg) 85%, var(--bg)));
+    --_node-fill:     var(--surface, color-mix(in srgb, var(--fg) 3%, var(--bg)));
+    --_node-stroke:   var(--border, color-mix(in srgb, var(--fg) 20%, var(--bg)));
+    --_group-fill:    var(--bg);
+    --_group-hdr:     color-mix(in srgb, var(--fg) 5%, var(--bg));
+    --_inner-stroke:  color-mix(in srgb, var(--fg) 12%, var(--bg));
+    --_key-badge:     color-mix(in srgb, var(--fg) 10%, var(--bg));
+  }
+</style>
+<defs>
+  <marker id="arrowhead" markerWidth="8" markerHeight="5" refX="7" refY="2.5" orient="auto">
+    <polygon points="0 0, 8 2.5, 0 5" fill="var(--_arrow)" stroke="var(--_arrow)" stroke-width="0.75" stroke-linejoin="round" />
+  </marker>
+  <marker id="arrowhead-start" markerWidth="8" markerHeight="5" refX="1" refY="2.5" orient="auto-start-reverse">
+    <polygon points="8 0, 0 2.5, 8 5" fill="var(--_arrow)" stroke="var(--_arrow)" stroke-width="0.75" stroke-linejoin="round" />
+  </marker>
+</defs>
+<polyline class="edge" data-from="Frame" data-to="A" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="335.84875,76.9 335.84875,100.9 255.29474999999996,100.9 255.29474999999996,124.9" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="Frame" data-to="B" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="335.84875,76.9 335.84875,100.9 416.40274999999997,100.9 416.40274999999997,124.9" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="A" data-to="Fusion" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="Catches all general debris" points="255.29474999999996,161.8 255.29474999999996,266.1 305.6390833333333,266.1 305.6390833333333,278.1" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="B" data-to="Fusion" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="High-precision bottle identification" points="416.40274999999997,161.8 416.40274999999997,266.1 366.05841666666663,266.1 366.05841666666663,278.1" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="Fusion" data-to="Out1" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="335.84875,315 335.84875,339 184.3515,339 184.3515,363" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="Fusion" data-to="Out2" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="335.84875,315 335.84875,339 487.34599999999995,339 487.34599999999995,363" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<g class="edge-label" data-from="A" data-to="Fusion" data-label="Catches all general debris">
+  <rect x="184.79474999999996" y="204.8" width="140.608" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
+  <text x="255.09874999999997" y="219.95000000000002" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">Catches all general debris</text>
+</g>
+<g class="edge-label" data-from="B" data-to="Fusion" data-label="High-precision bottle identification">
+  <rect x="329.40274999999997" y="204.8" width="173.87199999999999" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
+  <text x="416.33874999999995" y="219.95000000000002" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">High-precision bottle identification</text>
+</g>
+<g class="node" data-id="Frame" data-label="Camera Frame / Drone Stream" data-shape="rectangle">
+  <rect x="227.06525" y="40" width="217.56699999999995" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="335.84875" y="58.45" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">Camera Frame / Drone Stream</text>
+</g>
+<g class="node" data-id="A" data-label="trash.onnx" data-shape="rectangle">
+  <rect x="202.45674999999997" y="124.9" width="105.676" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="255.29474999999996" y="143.35000000000002" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">trash.onnx</text>
+</g>
+<g class="node" data-id="B" data-label="plastic_bottle.onnx" data-shape="rectangle">
+  <rect x="340.59374999999994" y="124.9" width="151.618" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="416.40274999999997" y="143.35000000000002" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">plastic_bottle.onnx</text>
+</g>
+<g class="node" data-id="Fusion" data-label="Detection Fusion &amp; NMS" data-shape="rectangle">
+  <rect x="245.21974999999998" y="278.1" width="181.25799999999998" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="335.84875" y="296.55" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">Detection Fusion &amp; NMS</text>
+</g>
+<g class="node" data-id="Out1" data-label="🔵 'Trash' — Bags, Wrappers, Cans, Paper" data-shape="rectangle">
+  <rect x="40" y="363" width="288.703" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="184.3515" y="381.45" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">🔵 &#39;Trash&#39; — Bags, Wrappers, Cans, Paper</text>
+</g>
+<g class="node" data-id="Out2" data-label="🟢 'Plastic bottle' — Specialized Bottle ID" data-shape="rectangle">
+  <rect x="356.703" y="363" width="261.28599999999994" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="487.34599999999995" y="381.45" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">🟢 &#39;Plastic bottle&#39; — Specialized Bottle ID</text>
+</g>
+</svg>

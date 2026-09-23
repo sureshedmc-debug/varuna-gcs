@@ -1,0 +1,33 @@
+{
+  "name": "varuna-gcs",
+  "private": true,
+  "version": "2.0.0",
+  "type": "module",
+  "description": "VARUNA AI — ground-control UI for the river-cleanup drone (Raspberry Pi + FastAPI backend).",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "check:clean": "node scripts/check-clean-build.mjs"
+  },
+  "dependencies": {
+    "framer-motion": "^11.3.0",
+    "leaflet": "^1.9.4",
+    "onnxruntime-web": "^1.20.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-leaflet": "^4.2.1",
+    "three": "^0.169.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.19",
+    "kill-port": "^2.0.1",
+    "postcss": "^8.4.39",
+    "tailwindcss": "^3.4.7",
+    "vite": "^5.3.4"
+  },
+  "allowScripts": {
+    "esbuild@0.21.5": true
+  }
+}
