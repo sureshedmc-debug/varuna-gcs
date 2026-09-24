@@ -12,7 +12,7 @@ import { fmtClock, fmtCoord, num } from '../lib/format'
 import { useTrashStats, resetTrashStats } from '../lib/detectionStats'
 import { useTrashLog, clearTrashLog, mapsLink } from '../lib/trashLog'
 import { useMissionRecording, captureMissionPoster, clearMissionRecording } from '../lib/missionRecording'
-import { getGeminiKey, setGeminiKey, generateReportNarrative } from '../lib/geminiClient'
+import { getReportKey, setReportKey, generateReportNarrative } from '../lib/reportAi'
 import { renderReportCharts } from '../lib/reportChart'
 import { buildTrashDataset, downloadWordReport, fallbackNarrative } from '../lib/reportDoc'
 
@@ -229,7 +229,7 @@ export default function DetectionsScreen() {
   const trashStats = useTrashStats()
   const sightings = useTrashLog()
   const video = useMissionRecording()
-  const [apiKey, setApiKey] = useState(getGeminiKey())
+  const [apiKey, setApiKey] = useState(getReportKey())
   const [reporting, setReporting] = useState(false)
   const [expanded, setExpanded] = useState(null)
   const [showReport, setShowReport] = useState(true)
@@ -275,7 +275,7 @@ export default function DetectionsScreen() {
   async function generateReport() {
     setReporting(true)
     // Persist the key for next time (empty is allowed → falls back to a local report).
-    setGeminiKey(apiKey)
+    setReportKey(apiKey)
     try {
       const data = buildTrashDataset(rows, trashStats)
       if (data.summary.total === 0 && !trashStats.peak && !clips.length) {
@@ -299,17 +299,19 @@ export default function DetectionsScreen() {
       let narrative
       if (apiKey.trim()) {
         try {
-          // Gemini gets a trimmed copy (no photos/poster) — the Word file itself has those.
+          // Groq gets a compact copy (no photos/links, first 40 rows) to stay within
+          // free-tier token limits — the Word file itself still lists every location.
           const { video: _v, ...slim } = data
-          narrative = await generateReportNarrative({ ...slim, detections: slim.detections.slice(0, 150).map(({ photo, ...d }) => d) }, { key: apiKey.trim() })
+          const rows = slim.detections.slice(0, 40).map(({ photo, mapUrl, lastSeen, ...d }) => d)
+          narrative = await generateReportNarrative({ ...slim, detections: rows, detectionsShown: `${rows.length} of ${slim.detections.length}` }, { key: apiKey.trim() })
           toast.push({ level: 'ok', title: 'AI analysis ready', msg: 'Building Word document…' })
         } catch (e) {
           narrative = fallbackNarrative(data)
-          toast.push({ level: 'warn', title: 'Gemini unavailable', msg: `${e.message || e}. Used a built-in report instead.` })
+          toast.push({ level: 'warn', title: 'Groq AI unavailable', msg: `${e.message || e}. Used a built-in report instead.` })
         }
       } else {
         narrative = fallbackNarrative(data)
-        toast.push({ level: 'warn', title: 'No API key', msg: 'Generated a built-in report (add a Gemini key for AI analysis).' })
+        toast.push({ level: 'warn', title: 'No API key', msg: 'Generated a built-in report (add a Groq key for AI analysis).' })
       }
 
       const filename = downloadWordReport({ data, narrative, charts })
@@ -383,18 +385,18 @@ export default function DetectionsScreen() {
                 Generates a Word document with 3D graphs, analysis, and every trash location with its coordinates and a Google Maps link.
               </p>
 
-              <label className="mb-1 text-[10px] uppercase tracking-wider text-muted">Gemini API key</label>
+              <label className="mb-1 text-[10px] uppercase tracking-wider text-muted">Groq API key (for reports)</label>
               <input
                 type="password"
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
-                placeholder="Paste your Gemini API key"
+                placeholder="Paste a Groq API key (gsk_…)"
                 autoComplete="off"
                 spellCheck={false}
                 className="inp touch mb-1 w-full px-3 text-sm"
               />
               <p className="mb-3 text-[10px] text-muted">
-                Stored only in this browser. No key → a built-in report is generated instead.
+                Separate from the ASK AI assistant&apos;s key. Get one free at console.groq.com. Stored only in this browser. No key → a built-in report is generated instead.
               </p>
 
               <Btn disabled={reporting} onClick={generateReport} className="mb-2">

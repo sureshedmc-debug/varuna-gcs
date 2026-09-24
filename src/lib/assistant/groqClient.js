@@ -65,9 +65,13 @@ async function timedFetch(url, opts) {
 
 let working = null // { model, forSetting } — the model that last worked for the current setting
 
-/** One chat-completions call; falls back through FALLBACK_MODELS if a model is gone. */
-export async function groqChat({ messages, tools }) {
-  const key = getGroqKey()
+/**
+ * One chat-completions call; falls back through FALLBACK_MODELS if a model is gone.
+ * `key` overrides the assistant's key (the Word report uses its own Groq key);
+ * `json: true` asks for a JSON object reply.
+ */
+export async function groqChat({ messages, tools, key: keyOverride, temperature = 0.3, maxTokens = 800, json = false }) {
+  const key = keyOverride || getGroqKey()
   if (!key) throw new Error('NO_KEY')
   const first = getGroqModel()
   if (working && working.forSetting !== first) working = null // setting changed
@@ -75,7 +79,8 @@ export async function groqChat({ messages, tools }) {
   const models = working ? [working.model, ...all.filter((m) => m !== working.model)] : all
   let lastErr
   for (const model of models) {
-    const body = { model, messages, temperature: 0.3, max_tokens: 800 }
+    const body = { model, messages, temperature, max_tokens: maxTokens }
+    if (json) body.response_format = { type: 'json_object' }
     if (tools?.length) {
       body.tools = tools
       body.tool_choice = 'auto' // only valid alongside tools
