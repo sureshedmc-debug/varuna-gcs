@@ -4,14 +4,17 @@ import { api } from '../api/client'
 import { useSystem } from '../components/SystemContext'
 import { usePolling, useNow } from '../hooks/usePolling'
 import { useToast } from '../components/Toast'
-import { StatusOrb, StaleBadge } from '../components/ui'
+import { StatusOrb, StaleBadge, SwipeConfirm } from '../components/ui'
 import { ViewToggle, EYE, EYE_OFF, SWAP } from '../components/ViewToggle'
 import { ThemeToggle } from '../components/ThemeToggle'
 import { Bars, Line, LoadBar } from '../components/MiniChart'
+import { Marker } from 'react-leaflet'
+import { useLivePosition, useHomePoint } from '../hooks/useLaptopGps'
+import { useActiveMission, missionFor } from '../lib/missionStore'
+import { cmd } from '../lib/commands'
 
 const HoloDrone = lazy(() => import('../components/HoloDrone'))
-import { RadialLaunch } from '../components/RadialLaunch'
-import MapCanvas from '../components/MapCanvas'
+import MapCanvas, { Drone3DMarker, homeIcon } from '../components/MapCanvas'
 import VideoHUD from '../components/VideoHUD'
 import { pick, bool, num, fmtClock, fmtCoord, DASH } from '../lib/format'
 
@@ -44,12 +47,29 @@ function readT(t) {
   }
 }
 
+/* ---------- home-tab-only palette (simple flat slate cards, single teal
+   accent) — scoped to this file; every other screen keeps the app's default
+   glass/blue look untouched via the shared `.glass` class + `--accent`. ---------- */
+const HOME = {
+  panel: 'rgba(15,18,23,0.74)',
+  border: 'rgba(255,255,255,0.06)',
+  chip: 'rgba(255,255,255,0.04)',
+  accent: '#2DD4BF',
+  accentSoft: 'rgba(45,212,191,0.14)',
+  text: '#E7ECEF',
+  muted: '#8891A0',
+}
+const LEVEL_COLOR = { ok: '#34D399', warn: '#F59E0B', bad: '#EF4444', idle: HOME.muted }
+function cardStyle(radius = 12) {
+  return { background: HOME.panel, border: `1px solid ${HOME.border}`, borderRadius: radius, backdropFilter: 'blur(10px)' }
+}
+
 /* ---------- reusable panel sections ---------- */
 function Panel({ title, right, children, className = '' }) {
   return (
-    <div className={`glass p-3.5 ${className}`}>
-      <div className="mb-3 flex items-center justify-between">
-        <span className="eyebrow">{title}</span>
+    <div className={`p-2.5 ${className}`} style={cardStyle()}>
+      <div className="mb-1.5 flex items-center justify-between">
+        <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: HOME.muted }}>{title}</span>
         {right}
       </div>
       {children}
@@ -62,23 +82,20 @@ function AircraftCard({ t, armed, connected }) {
   const battLevel = Number.isNaN(voltN) ? 'idle' : voltN >= 11.1 ? 'ok' : voltN >= 10.5 ? 'warn' : 'bad'
   const battPct = t.batt != null ? `${num(t.batt, 0)}%` : `${num(t.volt, 1)} V`
   return (
-    <div className="glass overflow-hidden">
-      <div className="flex items-center justify-between px-3.5 pt-3">
-        <span className="eyebrow">Selected Aircraft</span>
+    <div className="overflow-hidden" style={cardStyle()}>
+      <div className="flex items-center justify-between px-2.5 pt-2">
+        <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: HOME.muted }}>Selected Aircraft</span>
         <span
-          className="rounded-md px-2 py-0.5 text-[10px] font-bold"
-          style={{
-            background: armed ? 'rgba(59,158,255,0.16)' : 'rgba(52,211,153,0.16)',
-            color: armed ? '#6BB8FF' : '#6EE7B7',
-          }}
+          className="rounded-md px-1.5 py-0.5 text-[9px] font-bold"
+          style={{ background: armed ? HOME.accentSoft : 'rgba(52,211,153,0.14)', color: armed ? HOME.accent : '#6EE7B7' }}
         >
           {armed === undefined ? 'UNKNOWN' : armed ? 'IN FLIGHT' : 'STANDBY'}
         </span>
       </div>
-      <div className="flex items-center gap-3 p-3.5">
-        <div className="flex h-14 w-16 shrink-0 items-center justify-center rounded-lg bg-black/30">
-          <svg viewBox="0 0 48 48" width="46" height="46" className="text-accent">
-            <g fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+      <div className="flex items-center gap-2.5 p-2.5">
+        <div className="flex h-10 w-11 shrink-0 items-center justify-center rounded-md bg-black/25">
+          <svg viewBox="0 0 48 48" width="30" height="30" style={{ color: HOME.accent }}>
+            <g fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
               <circle cx="12" cy="12" r="6" /><circle cx="36" cy="12" r="6" />
               <circle cx="12" cy="36" r="6" /><circle cx="36" cy="36" r="6" />
               <path d="M14 14l8 8m12-8l-8 8m0 4l-8 8m20 0l-8-8" />
@@ -87,8 +104,8 @@ function AircraftCard({ t, armed, connected }) {
           </svg>
         </div>
         <div className="min-w-0 flex-1">
-          <div className="text-lg font-bold text-ink">VARUNA-01</div>
-          <div className="mt-1 grid grid-cols-1 gap-1 text-xs">
+          <div className="text-sm font-bold" style={{ color: HOME.text }}>VARUNA-01</div>
+          <div className="mt-0.5 grid grid-cols-1 gap-0.5 text-[11px]">
             <Row k="Battery" v={battPct} level={battLevel} />
             <Row k="Link" v={connected ? 'Strong' : 'Lost'} level={connected ? 'ok' : 'bad'} />
             <Row k="Altitude" v={`${num(t.alt, 1)} m`} />
@@ -101,10 +118,10 @@ function AircraftCard({ t, armed, connected }) {
 function Row({ k, v, level }) {
   return (
     <div className="flex items-center justify-between">
-      <span className="text-muted">{k}</span>
-      <span className="flex items-center gap-1.5 font-mono tnum font-semibold" style={{ color: level ? undefined : '#EDEFF2' }}>
-        {level && <StatusOrb level={level} size={7} />}
-        <span style={level ? { color: { ok: '#34D399', warn: '#F59E0B', bad: '#EF4444', idle: '#8A9099' }[level] } : undefined}>{v}</span>
+      <span style={{ color: HOME.muted }}>{k}</span>
+      <span className="flex items-center gap-1 font-mono tnum font-semibold" style={{ color: level ? undefined : HOME.text }}>
+        {level && <StatusOrb level={level} size={6} />}
+        <span style={level ? { color: LEVEL_COLOR[level] } : undefined}>{v}</span>
       </span>
     </div>
   )
@@ -112,19 +129,19 @@ function Row({ k, v, level }) {
 
 function OverviewTiles({ battSeries, sptSeries, satSeries, aiOn }) {
   return (
-    <div className="grid grid-cols-2 gap-2">
+    <div className="grid grid-cols-2 gap-1.5">
       <Tile label="Battery" value={battSeries.length ? `${num(battSeries.at(-1), 1)}V` : DASH}>
-        <Line data={battSeries.length ? battSeries : [0, 0]} color="#34D399" width={82} height={26} />
+        <Line data={battSeries.length ? battSeries : [0, 0]} color="#34D399" width={64} height={18} />
       </Tile>
       <Tile label="Speed" value={sptSeries.length ? `${num(sptSeries.at(-1), 1)}` : DASH}>
-        <Line data={sptSeries.length ? sptSeries : [0, 0]} color="#3B9EFF" width={82} height={26} />
+        <Line data={sptSeries.length ? sptSeries : [0, 0]} color={HOME.accent} width={64} height={18} />
       </Tile>
       <Tile label="GPS sats" value={satSeries.length ? num(satSeries.at(-1), 0) : DASH}>
-        <Bars data={satSeries.length ? satSeries.slice(-10) : [0]} color="#34D399" width={82} height={26} />
+        <Bars data={satSeries.length ? satSeries.slice(-10) : [0]} color="#34D399" width={64} height={18} />
       </Tile>
       <Tile label="AI link" value={aiOn ? 'Active' : 'Off'}>
-        <div className="flex h-[26px] items-center">
-          <StatusOrb level={aiOn ? 'ok' : 'idle'} size={11} pulse={aiOn} />
+        <div className="flex h-[18px] items-center">
+          <StatusOrb level={aiOn ? 'ok' : 'idle'} size={9} pulse={aiOn} />
         </div>
       </Tile>
     </div>
@@ -132,9 +149,9 @@ function OverviewTiles({ battSeries, sptSeries, satSeries, aiOn }) {
 }
 function Tile({ label, value, children }) {
   return (
-    <div className="rounded-lg bg-chip p-2.5">
-      <div className="text-[10px] text-muted">{label}</div>
-      <div className="mb-1 font-mono text-base font-bold tnum text-ink">{value}</div>
+    <div className="rounded-md p-1.5" style={{ background: HOME.chip }}>
+      <div className="text-[9px]" style={{ color: HOME.muted }}>{label}</div>
+      <div className="mb-0.5 font-mono text-[13px] font-bold tnum" style={{ color: HOME.text }}>{value}</div>
       {children}
     </div>
   )
@@ -148,11 +165,11 @@ function HealthTiles({ health, ai, cam, gpsOk }) {
     { k: 'AI', ok: bool(pick(ai, ['model_loaded', 'ai_enabled'])) },
   ]
   return (
-    <div className="grid grid-cols-4 gap-2">
+    <div className="grid grid-cols-4 gap-1.5">
       {items.map((it) => (
-        <div key={it.k} className="rounded-lg bg-chip p-2 text-center">
-          <StatusOrb level={it.ok === true ? 'ok' : it.ok === false ? 'bad' : 'idle'} size={10} pulse={it.ok === false} />
-          <div className="mt-1 text-[10px] font-semibold text-ink">{it.k}</div>
+        <div key={it.k} className="rounded-md p-1.5 text-center" style={{ background: HOME.chip }}>
+          <StatusOrb level={it.ok === true ? 'ok' : it.ok === false ? 'bad' : 'idle'} size={8} pulse={it.ok === false} />
+          <div className="mt-0.5 text-[9px] font-semibold" style={{ color: HOME.text }}>{it.k}</div>
         </div>
       ))}
     </div>
@@ -165,29 +182,29 @@ function EventLog({ entries }) {
   const alerts = entries.filter((e) => e.kind === 'alert').length
   return (
     <div>
-      <div className="mb-2 flex gap-1">
+      <div className="mb-1.5 flex gap-1">
         {[['all', 'ALL'], ['alert', 'ALERTS'], ['info', 'INFO'], ['mission', 'MISSION']].map(([k, l]) => (
           <button
             key={k}
             onClick={() => setTab(k)}
-            className="relative rounded-md px-2.5 py-1 text-[10px] font-semibold tracking-wide"
-            style={{ background: tab === k ? 'rgba(255,255,255,0.09)' : 'transparent', color: tab === k ? '#EDEFF2' : '#8A9099' }}
+            className="relative rounded px-2 py-0.5 text-[9px] font-semibold tracking-wide"
+            style={{ background: tab === k ? HOME.accentSoft : 'transparent', color: tab === k ? HOME.text : HOME.muted }}
           >
             {l}
             {k === 'alert' && alerts > 0 && (
-              <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-bad text-[9px] font-bold text-white">{alerts}</span>
+              <span className="absolute -right-1 -top-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-bad text-[8px] font-bold text-white">{alerts}</span>
             )}
           </button>
         ))}
       </div>
-      <div className="flex max-h-44 flex-col gap-1 overflow-y-auto pr-1">
-        {filtered.length === 0 && <div className="py-4 text-center text-xs text-muted">No events.</div>}
+      <div className="flex max-h-32 flex-col gap-1 overflow-y-auto pr-1">
+        {filtered.length === 0 && <div className="py-3 text-center text-[11px]" style={{ color: HOME.muted }}>No events.</div>}
         {filtered.map((e, i) => (
-          <div key={i} className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs" style={{ background: e.kind === 'alert' ? 'rgba(239,68,68,0.1)' : 'rgba(255,255,255,0.03)' }}>
-            <StatusOrb level={e.kind === 'alert' ? 'bad' : e.kind === 'mission' ? 'warn' : 'ok'} size={7} />
-            <span className="w-14 shrink-0 font-mono tnum text-[10px] text-muted">{e.time}</span>
-            <span className="shrink-0 font-semibold" style={{ color: e.kind === 'alert' ? '#FCA5A5' : '#EDEFF2' }}>{e.code}</span>
-            <span className="truncate text-muted">{e.text}</span>
+          <div key={i} className="flex items-center gap-1.5 rounded px-1.5 py-1 text-[11px]" style={{ background: e.kind === 'alert' ? 'rgba(239,68,68,0.1)' : HOME.chip }}>
+            <StatusOrb level={e.kind === 'alert' ? 'bad' : e.kind === 'mission' ? 'warn' : 'ok'} size={6} />
+            <span className="w-12 shrink-0 font-mono tnum text-[9px]" style={{ color: HOME.muted }}>{e.time}</span>
+            <span className="shrink-0 font-semibold" style={{ color: e.kind === 'alert' ? '#FCA5A5' : HOME.text }}>{e.code}</span>
+            <span className="truncate" style={{ color: HOME.muted }}>{e.text}</span>
           </div>
         ))}
       </div>
@@ -197,29 +214,36 @@ function EventLog({ entries }) {
 
 /* ---------- the screen ---------- */
 export default function MissionControlScreen({ onNavigate }) {
-  const { telemetry, health, pi, backendReachable, now } = useSystem()
+  const { telemetry, health, pi, backendReachable, simulated, now } = useSystem()
   const toast = useToast()
   const ai = usePolling(api.aiStatus, 5000)
   const cam = usePolling(api.cameraStatus, 6000)
   const det = usePolling(() => api.aiDetections(20), 6000)
-  const [busy, setBusy] = useState(false)
   const [view, setView] = useState('3D')
   const [panelsHidden, setPanelsHidden] = useState(false)
   const [mainView, setMainView] = useState('map') // 'map' | 'video' (DJI-style swap)
+  const [rthOpen, setRthOpen] = useState(false)
+  const [rthId, setRthId] = useState(0)
 
   const t = readT(telemetry.data)
   const connected = telemetry.status === 'live' || telemetry.status === 'polling'
   const aiOn = bool(pick(ai.data, ['ai_enabled', 'enabled', 'live_boxes'])) ?? false
-  const hasFix = t.lat != null && t.lng != null && Number(t.lat) !== 0
-  const center = hasFix ? [Number(t.lat), Number(t.lng)] : null
+  // Live position: drone GPS when it has a fix, otherwise laptop GPS (test mode).
+  const live = useLivePosition(telemetry.data)
+  const center = live.position
+  const hasFix = !!center
 
-  // Patrol plan overlay: rings + orange flight-path arrows around the aircraft.
-  const patrol = center
-    ? [
-        { lat: center[0] + 0.0016, lng: center[1] + 0.0013, label: 'W1', radius: 110 },
-        { lat: center[0] + 0.0005, lng: center[1] + 0.0028, label: 'W2', radius: 95 },
-        { lat: center[0] - 0.0015, lng: center[1] + 0.0011, label: 'W3', radius: 125 },
-      ]
+  // Home point (the "H" RTL marker): the drone's reported home if the backend
+  // sends one, otherwise the first position seen this session. A drone fix
+  // always replaces a laptop-GPS home.
+  const homePoint = useHomePoint(telemetry.data, live, simulated)
+
+  // The real planned flight path, once one has actually been uploaded from
+  // the Mission tab — nothing invented here. No mission uploaded → no
+  // overlay, just the aircraft's live position (see MapCanvas/PatrolOverlay).
+  const activeMission = missionFor(useActiveMission(), simulated ? 'sim' : 'real')
+  const patrol = activeMission?.waypoints?.length
+    ? activeMission.waypoints.map((w, i) => ({ lat: w.lat, lng: w.lng, label: String(i + 1), radius: 40 }))
     : null
 
   const battSeries = useRolling(t.volt)
@@ -234,16 +258,27 @@ export default function MissionControlScreen({ onNavigate }) {
   const aiLoad = Number.isNaN(aiConf) ? 0 : aiConf * 100
   const linkLoad = connected ? 82 : 8
 
-  async function toggleArm() {
-    setBusy(true)
+  async function returnHome() {
     try {
-      toast.fromResult(await api.arm(!t.armed), t.armed ? 'Disarm sent' : 'Arm sent')
-    } catch {
-      toast.push({ level: 'bad', title: 'Command failed', msg: 'Could not reach the drone.' })
-    } finally {
-      setBusy(false)
+      toast.fromResult(await cmd.rtl(), 'Returning to Home')
+    } catch (e) {
+      toast.push({ level: 'bad', title: `Command failed: ${e?.message || e}` })
     }
   }
+  function openRth() {
+    setRthId((n) => n + 1)
+    setRthOpen(true)
+  }
+
+  const homeMarker = homePoint && (
+    <Marker
+      position={homePoint}
+      icon={homeIcon()}
+      title="Home point — tap for Return to Home"
+      eventHandlers={{ click: openRth }}
+    />
+  )
+  const drone3d = center && <Drone3DMarker position={center} />
 
   // Build event log from real data: warnings (alerts) + detections (info).
   const entries = []
@@ -261,19 +296,19 @@ export default function MissionControlScreen({ onNavigate }) {
         <OverviewTiles battSeries={battSeries} sptSeries={sptSeries} satSeries={satSeries} aiOn={aiOn} />
       </Panel>
       <Panel title="Diagnostics">
-        <div className="rounded-lg bg-black/25">
-          <Suspense fallback={<div style={{ height: 150 }} />}>
-            <HoloDrone height={150} />
+        <div className="rounded-md bg-black/25">
+          <Suspense fallback={<div style={{ height: 90 }} />}>
+            <HoloDrone height={90} />
           </Suspense>
         </div>
-        <div className="mt-2 flex flex-col gap-2">
+        <div className="mt-1.5 flex flex-col gap-1.5">
           <LoadBar label="Camera" pct={camLoad} color="#34D399" />
-          <LoadBar label="AI model" pct={aiLoad} color="#3B9EFF" />
+          <LoadBar label="AI model" pct={aiLoad} color={HOME.accent} />
           <LoadBar label="Comms link" pct={linkLoad} color="#34D399" />
         </div>
       </Panel>
       <Panel title="Platform Health">
-        <HealthTiles health={health.data} ai={ai.data} cam={cam.data} gpsOk={hasFix ? (Number(t.sats) >= 6 ? true : undefined) : false} />
+        <HealthTiles health={health.data} ai={ai.data} cam={cam.data} gpsOk={live.droneFix ? (Number(t.sats) >= 6 ? true : undefined) : false} />
       </Panel>
       <Panel title="Event Log">
         <EventLog entries={entries} />
@@ -282,21 +317,23 @@ export default function MissionControlScreen({ onNavigate }) {
   )
 
   const videoBlock = (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-1.5">
       <div className="flex items-center justify-between">
-        <span className="eyebrow">Live Feed · VARUNA-01</span>
-        <div className="flex gap-1 rounded-lg bg-chip p-0.5">
+        <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: HOME.muted }}>Live Feed</span>
+        <div className="flex gap-0.5 rounded-md p-0.5" style={{ background: HOME.chip }}>
           {['2D', '3D'].map((v) => (
-            <button key={v} onClick={() => setView(v)} className="rounded-md px-3 py-1 text-[11px] font-bold" style={{ background: view === v ? 'linear-gradient(180deg,#6BB8FF,#3B9EFF)' : 'transparent', color: view === v ? '#FFFFFF' : '#8A9099' }}>{v}</button>
+            <button key={v} onClick={() => setView(v)} className="rounded px-2 py-0.5 text-[10px] font-bold" style={{ background: view === v ? HOME.accent : 'transparent', color: view === v ? '#04211C' : HOME.muted }}>{v}</button>
           ))}
         </div>
       </div>
-      <VideoHUD speed={t.speed} altitude={t.alt} aiOn={aiOn} />
-      <div className="grid grid-cols-3 gap-2 text-center">
+      <div className="overflow-hidden rounded-lg" style={{ height: 110 }}>
+        <VideoHUD speed={t.speed} altitude={t.alt} aiOn={aiOn} />
+      </div>
+      <div className="grid grid-cols-3 gap-1.5 text-center">
         {[['MODE', t.mode || DASH], ['HDG', `${num(t.heading, 0)}°`], ['SATS', num(t.sats, 0)]].map(([k, v]) => (
-          <div key={k} className="rounded-lg bg-chip py-1.5">
-            <div className="text-[9px] text-muted">{k}</div>
-            <div className="font-mono text-sm font-bold tnum text-ink">{v}</div>
+          <div key={k} className="rounded-md py-1" style={{ background: HOME.chip }}>
+            <div className="text-[8px]" style={{ color: HOME.muted }}>{k}</div>
+            <div className="font-mono text-xs font-bold tnum" style={{ color: HOME.text }}>{v}</div>
           </div>
         ))}
       </div>
@@ -315,7 +352,9 @@ export default function MissionControlScreen({ onNavigate }) {
         {/* Background = the active main view (DJI-style swap between map & video) */}
         <div className="absolute inset-0 z-0 isolate overflow-hidden rounded-2xl border border-line">
           {mainView === 'map' ? (
-            <MapCanvas center={center} hasFix={hasFix} waypoints={patrol} />
+            <MapCanvas center={center} hasFix={hasFix} waypoints={patrol} droneMarker={drone3d}>
+              {homeMarker}
+            </MapCanvas>
           ) : (
             <VideoHUD speed={t.speed} altitude={t.alt} aiOn={aiOn} fill />
           )}
@@ -346,7 +385,7 @@ export default function MissionControlScreen({ onNavigate }) {
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -20 }}
               transition={{ type: 'spring', stiffness: 260, damping: 26 }}
-              className="absolute left-3 top-3 z-20 flex w-[330px] flex-col gap-2.5 overflow-y-auto pr-1"
+              className="absolute left-3 top-3 z-20 flex w-[250px] flex-col gap-2 overflow-y-auto pr-1"
               style={{ maxHeight: 'calc(100% - 24px)' }}
             >
               {panels}
@@ -356,55 +395,29 @@ export default function MissionControlScreen({ onNavigate }) {
 
         {/* Right live-feed widget — always kept when in map view (the "live widget") */}
         {mainView === 'map' && (
-          <motion.div layout className="absolute right-3 top-3 z-20 w-[380px]">
-            <div className="glass p-3">{videoBlock}</div>
+          <motion.div layout className="absolute right-3 top-3 z-20 w-[280px]">
+            <div className="p-2.5" style={cardStyle()}>{videoBlock}</div>
           </motion.div>
         )}
 
-        {/* PIP of the inactive view — tap to swap (hidden when widgets hidden) */}
-        <AnimatePresence>
-          {!panelsHidden && (
-            <motion.button
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 20 }}
-              onClick={() => setMainView((v) => (v === 'map' ? 'video' : 'map'))}
-              className="group isolate absolute bottom-3 left-3 z-20 h-32 w-52 overflow-hidden rounded-xl border border-white/15 shadow-elev"
-              title="Tap to swap main view"
-            >
-              {mainView === 'map' ? (
-                <VideoHUD speed={t.speed} altitude={t.alt} aiOn={aiOn} fill />
-              ) : (
-                <MapCanvas center={center} hasFix={hasFix} waypoints={patrol} zoom={15} />
-              )}
-              <span className="absolute inset-x-0 bottom-0 bg-black/60 py-0.5 text-center text-[9px] font-semibold tracking-wider text-white">
-                TAP TO SWAP
-              </span>
-            </motion.button>
-          )}
-        </AnimatePresence>
-
-        {/* Center radial launch control */}
-        <AnimatePresence>
-          {!panelsHidden && (
-            <motion.div initial={{ opacity: 0, scale: 0.85 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.85 }} className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
-              <div className="pointer-events-auto">
-                <RadialLaunch armed={t.armed} busy={busy} onArm={toggleArm} tone="mint" />
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+        {/* Position source (map view only) */}
+        {mainView === 'map' && (
+          <div className="absolute left-1/2 top-3 z-20 flex -translate-x-1/2 items-center gap-1.5">
+            <PositionChip live={live} />
+            {simulated && <SimBadge />}
+          </div>
+        )}
 
         {/* Bottom-right mini card */}
         <AnimatePresence>
           {!panelsHidden && (
-            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }} className="absolute bottom-3 right-3 z-20 glass flex items-center gap-3 px-3 py-2">
-              <StatusOrb level={connected ? 'ok' : 'bad'} size={10} pulse={!connected} />
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }} className="absolute bottom-3 right-3 z-20 flex items-center gap-2 px-2.5 py-1.5" style={cardStyle()}>
+              <StatusOrb level={connected ? 'ok' : 'bad'} size={8} pulse={!connected} />
               <div>
-                <div className="text-xs font-bold text-ink">VARUNA-01</div>
-                <div className="text-[10px] text-muted">{t.armed ? 'IN FLIGHT' : 'STANDBY'} · {t.batt != null ? `${num(t.batt, 0)}%` : `${num(t.volt, 1)}V`}</div>
+                <div className="text-[11px] font-bold" style={{ color: HOME.text }}>VARUNA-01</div>
+                <div className="text-[9px]" style={{ color: HOME.muted }}>{t.armed ? 'IN FLIGHT' : 'STANDBY'} · {t.batt != null ? `${num(t.batt, 0)}%` : `${num(t.volt, 1)}V`}</div>
               </div>
-              <button onClick={() => onNavigate('live')} className="ml-2 rounded-lg bg-accent/20 px-3 py-1.5 text-[11px] font-bold text-accent">OPEN LIVE</button>
+              <button onClick={() => onNavigate('live')} className="ml-1.5 rounded-md px-2 py-1 text-[10px] font-bold" style={{ background: HOME.accentSoft, color: HOME.accent }}>OPEN LIVE</button>
             </motion.div>
           )}
         </AnimatePresence>
@@ -413,16 +426,48 @@ export default function MissionControlScreen({ onNavigate }) {
       {/* ===== Mobile: stacked ===== */}
       <div className="flex flex-col gap-3 md:hidden">
         <div className="relative h-56 overflow-hidden rounded-2xl border border-line">
-          <MapCanvas center={center} hasFix={hasFix} waypoints={patrol} zoom={15} />
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-            <div className="pointer-events-auto scale-90">
-              <RadialLaunch armed={t.armed} busy={busy} onArm={toggleArm} tone="mint" />
-            </div>
+          <MapCanvas center={center} hasFix={hasFix} waypoints={patrol} zoom={15} droneMarker={drone3d}>
+            {homeMarker}
+          </MapCanvas>
+          <div className="absolute left-2 top-2 z-[500] flex items-center gap-1.5">
+            <PositionChip live={live} />
+            {simulated && <SimBadge />}
           </div>
         </div>
-        <div className="glass p-3">{videoBlock}</div>
+        <div className="p-2.5" style={cardStyle()}>{videoBlock}</div>
         {panels}
       </div>
+
+      <SwipeConfirm open={rthOpen} openId={rthId} cmd="rth" onClose={() => setRthOpen(false)} onConfirm={returnHome} />
     </motion.div>
+  )
+}
+
+/** Flags that the aircraft below is a virtual (simulated) one, not real hardware. */
+function SimBadge() {
+  return (
+    <div className="flex items-center gap-1.5 px-2 py-1" style={{ ...cardStyle(999), border: '1px solid rgba(245,158,11,0.4)' }}>
+      <span style={{ fontSize: 8 }}>🛈</span>
+      <span className="text-[10px] font-bold" style={{ color: '#F59E0B' }}>SIMULATED</span>
+    </div>
+  )
+}
+
+/** Small chip telling the operator where the map position comes from. */
+function PositionChip({ live, className = '' }) {
+  const text =
+    live.source === 'drone'
+      ? 'Drone GPS'
+      : live.source === 'laptop'
+        ? `Laptop GPS (test)${live.accuracy != null ? ` · ±${Math.round(live.accuracy)} m` : ''}`
+        : live.error
+          ? `No GPS · ${live.error}`
+          : 'Waiting for GPS…'
+  const level = live.source === 'drone' ? 'ok' : live.source === 'laptop' ? 'warn' : 'bad'
+  return (
+    <div className={`flex items-center gap-1.5 px-2.5 py-1 ${className}`} style={cardStyle(999)}>
+      <StatusOrb level={level} size={7} pulse={!live.source} />
+      <span className="text-[10px] font-semibold" style={{ color: HOME.text }}>{text}</span>
+    </div>
   )
 }

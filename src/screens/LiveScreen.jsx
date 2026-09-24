@@ -4,11 +4,12 @@ import { api } from '../api/client'
 import { useSystem } from '../components/SystemContext'
 import { usePolling } from '../hooks/usePolling'
 import { useToast } from '../components/Toast'
-import { Btn, StaleBadge, StatusOrb } from '../components/ui'
+import { Btn, StaleBadge, StatusOrb, CommandButton, CommandPanel } from '../components/ui'
 import { ViewToggle, EYE, EYE_OFF, SWAP } from '../components/ViewToggle'
 import VideoHUD from '../components/VideoHUD'
 import MapCanvas from '../components/MapCanvas'
 import { pick, num, bool, fmtCoord, DASH } from '../lib/format'
+import { cmd } from '../lib/commands'
 
 const WebcamDetect = lazy(() => import('../components/WebcamDetect'))
 const AI_CAM = <path d="M4 7h3l1.5-2h7L17 7h3a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V8a1 1 0 011-1zm8 3a3.5 3.5 0 100 7 3.5 3.5 0 000-7z" fill="currentColor" />
@@ -45,7 +46,7 @@ function Metric({ label, value, unit, level }) {
 }
 
 export default function LiveScreen() {
-  const { telemetry, now } = useSystem()
+  const { telemetry, now, simulated } = useSystem()
   const toast = useToast()
   const ai = usePolling(api.aiStatus, 5000)
   const [busy, setBusy] = useState(null)
@@ -67,8 +68,8 @@ export default function LiveScreen() {
     setBusy(key)
     try {
       toast.fromResult(await fn(), okMsg)
-    } catch {
-      toast.push({ level: 'bad', title: 'Request failed', msg: 'Could not reach the drone.' })
+    } catch (e) {
+      toast.push({ level: 'bad', title: `Command failed: ${e?.message || e}` })
     } finally {
       setBusy(null)
     }
@@ -89,7 +90,7 @@ export default function LiveScreen() {
     if (v == null) return
     const alt = Number(v)
     if (Number.isNaN(alt) || alt <= 0) return toast.push({ level: 'warn', title: 'Enter a valid altitude' })
-    run('takeoff', () => api.takeoff(alt), 'Takeoff commanded')
+    run('takeoff', () => cmd.takeoff(alt), 'Taking off')
   }
   const swap = () => setMainView((v) => (v === 'video' ? 'map' : 'video'))
 
@@ -103,7 +104,8 @@ export default function LiveScreen() {
           </Suspense>
         ) : mainView === 'video' ? (
           <Suspense fallback={<div className="flex h-full w-full items-center justify-center text-sm text-muted">Loading AI detector...</div>}>
-            <WebcamDetect confThr={conf} defaultSource="webcam" autoStart />
+            {/* Raise the detector's Start/Stop/Record row above the flight-command panel below. */}
+            <WebcamDetect confThr={conf} defaultSource="webcam" autoStart controlsLift={hideWidgets ? 0 : 135} />
           </Suspense>
         ) : (
           <MapCanvas center={center} hasFix={hasFix} />
@@ -117,6 +119,11 @@ export default function LiveScreen() {
             <StatusOrb level={connected ? 'ok' : 'bad'} size={10} pulse={!connected} />
             <span className="text-sm font-bold text-ink">LIVE · VARUNA-01</span>
             <StaleBadge lastUpdate={telemetry.lastUpdate} now={now} connected={connected} />
+            {simulated && (
+              <span className="rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ background: 'rgba(245,158,11,0.16)', color: '#F59E0B' }}>
+                SIMULATED
+              </span>
+            )}
           </div>
           <div className="flex flex-wrap gap-2">
             <Btn variant={aiOn ? 'primary' : 'ghost'} className="px-4 text-sm" disabled={busy === 'ai'} onClick={toggleAI}>
@@ -205,15 +212,14 @@ export default function LiveScreen() {
       {/* Bottom-center flight control */}
       <AnimatePresence>
         {!hideWidgets && mainView !== 'webcam' && (
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }} className="absolute inset-x-0 bottom-16 z-20 flex justify-center px-3">
-            <div className="glass flex w-full max-w-2xl flex-wrap items-center justify-center gap-2 p-2.5">
-              <Btn variant={t.armed ? 'danger' : 'primary'} className="min-w-[100px] flex-1 text-sm" disabled={busy === 'arm'} onClick={() => run('arm', () => api.arm(!t.armed), t.armed ? 'Disarm sent' : 'Arm sent')}>
-                {t.armed ? 'Disarm' : 'Arm'}
-              </Btn>
-              <Btn variant="secondary" className="min-w-[100px] flex-1 text-sm" disabled={busy === 'takeoff'} onClick={takeoff}>Takeoff</Btn>
-              <Btn variant="secondary" className="min-w-[100px] flex-1 text-sm" disabled={busy === 'rtl'} onClick={() => run('rtl', api.rtl, 'RTL commanded')}>RTL</Btn>
-              <Btn variant="danger" className="min-w-[100px] flex-1 text-sm" disabled={busy === 'land'} onClick={() => run('land', api.land, 'Land commanded')}>Land</Btn>
-            </div>
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }} className="pointer-events-none absolute inset-x-0 bottom-16 z-20 flex justify-center px-3">
+            <CommandPanel className="pointer-events-auto">
+              <CommandButton cmd={t.armed ? 'disarm' : 'arm'} disabled={busy === 'arm'} onConfirm={() => run('arm', () => cmd.arm(!t.armed), t.armed ? 'Motors disarmed' : 'Motors armed')} />
+              <CommandButton cmd="takeoff" disabled={busy === 'takeoff'} onConfirm={takeoff} />
+              <CommandButton cmd="rth" disabled={busy === 'rtl'} onConfirm={() => run('rtl', cmd.rtl, 'Returning to Home')} />
+              <CommandButton cmd="land" disabled={busy === 'land'} onConfirm={() => run('land', cmd.land, 'Landing')} />
+              <CommandButton cmd="stop" disabled={busy === 'stop'} onConfirm={() => run('stop', cmd.emergencyStop, 'Emergency stop sent')} />
+            </CommandPanel>
           </motion.div>
         )}
       </AnimatePresence>

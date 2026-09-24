@@ -1,7 +1,11 @@
-import { useEffect } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { MapContainer, TileLayer, Marker, Circle, Polyline, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
+
+// Lazy so three.js only loads when a 3D drone marker is actually shown.
+const HoloDrone = lazy(() => import('./HoloDrone'))
 
 // Esri World Imagery — client-side satellite tiles (no key), matching the
 // reference's satellite look. This is a map-tile host, not the backend.
@@ -79,6 +83,79 @@ function PatrolOverlay({ home, waypoints }) {
   )
 }
 
+/** DJI-style yellow "H" home-point (Return-to-Home) icon. Cached — Leaflet re-sets icons on every new object. */
+let _homeIcon = null
+export function homeIcon() {
+  if (!_homeIcon) {
+    _homeIcon = L.divIcon({
+      className: '',
+      html: `<div style="width:30px;height:30px;border-radius:50%;background:#F5B400;color:#1a1300;display:flex;align-items:center;justify-content:center;font:800 15px Inter,Arial,sans-serif;border:2px solid #fff;box-shadow:0 0 0 3px rgba(245,180,0,0.35),0 0 14px rgba(245,180,0,0.6);cursor:pointer">H</div>`,
+      iconSize: [30, 30],
+      iconAnchor: [15, 15],
+    })
+  }
+  return _homeIcon
+}
+
+/**
+ * A live, rotating 3D drone rendered on the map at `position`. The Leaflet
+ * marker hosts a DOM node that React renders HoloDrone into via a portal.
+ */
+export function Drone3DMarker({ position, size = 96 }) {
+  const map = useMap()
+  const markerRef = useRef(null)
+  const [host, setHost] = useState(null)
+
+  useEffect(() => {
+    const el = document.createElement('div')
+    el.style.width = `${size}px`
+    el.style.height = `${size}px`
+    el.style.pointerEvents = 'none'
+    const icon = L.divIcon({ className: '', html: el, iconSize: [size, size], iconAnchor: [size / 2, size / 2] })
+    const m = L.marker(position, { icon, interactive: false, keyboard: false, zIndexOffset: 1000 }).addTo(map)
+    markerRef.current = m
+    setHost(el)
+    return () => {
+      m.remove()
+      markerRef.current = null
+      setHost(null)
+    }
+    // position intentionally omitted: the marker is created once, then moved below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map, size])
+
+  const lat = position?.[0]
+  const lng = position?.[1]
+  useEffect(() => {
+    if (markerRef.current && lat != null && lng != null) markerRef.current.setLatLng([lat, lng])
+  }, [lat, lng])
+
+  if (!host) return null
+  return createPortal(
+    <div style={{ position: 'relative', width: size, height: size }}>
+      <div
+        style={{
+          position: 'absolute',
+          left: '50%',
+          top: '50%',
+          width: 40,
+          height: 40,
+          marginLeft: -20,
+          marginTop: -20,
+          borderRadius: '50%',
+          background: 'rgba(59,158,255,0.18)',
+          border: '1px solid rgba(59,158,255,0.6)',
+          boxShadow: '0 0 14px rgba(59,158,255,0.5)',
+        }}
+      />
+      <Suspense fallback={null}>
+        <HoloDrone height={size} wire={false} />
+      </Suspense>
+    </div>,
+    host,
+  )
+}
+
 function Recenter({ center }) {
   const map = useMap()
   useEffect(() => {
@@ -87,7 +164,8 @@ function Recenter({ center }) {
   return null
 }
 
-export default function MapCanvas({ center, hasFix, waypoints, children, zoom = 16 }) {
+// droneMarker (optional): a node rendered instead of the default dot marker.
+export default function MapCanvas({ center, hasFix, waypoints, children, zoom = 16, droneMarker }) {
   const c = center || [17.385, 78.4867]
   return (
     <MapContainer
@@ -102,7 +180,7 @@ export default function MapCanvas({ center, hasFix, waypoints, children, zoom = 
         <>
           <Circle center={c} radius={150} pathOptions={{ color: ORANGE, weight: 1, opacity: 0.5, fillColor: ORANGE, fillOpacity: 0.04 }} />
           <PatrolOverlay home={c} waypoints={waypoints} />
-          <Marker position={c} icon={droneIcon(true)} />
+          {droneMarker ?? <Marker position={c} icon={droneIcon(true)} />}
         </>
       )}
       {center && <Recenter center={center} />}

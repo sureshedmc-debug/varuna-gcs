@@ -1,9 +1,9 @@
 // Assembles the trash-detection report as a Word-compatible document (.doc) and
 // downloads it. The file is MHTML (multipart/related, the same "single file web
-// page" format Word itself saves): the HTML body plus each chart PNG as its own
-// MIME part. Desktop Microsoft Word renders these embedded images reliably
-// (unlike base64 data: URIs in plain HTML), and it also opens in Word-for-web,
-// Google Docs and LibreOffice.
+// page" format Word itself saves): the HTML body plus each image as its own
+// MIME part. Desktop Microsoft Word renders these embedded images (unlike
+// base64 data: URIs in plain HTML) as long as they use absolute locations —
+// see ASSET_BASE — and it also opens in Word-for-web, Google Docs and LibreOffice.
 
 function esc(s) {
   return String(s ?? '')
@@ -14,6 +14,7 @@ function esc(s) {
 }
 
 function fmtNum(v) {
+  if (typeof v === 'string' && v !== '') return esc(v) // pre-formatted, e.g. "63%"
   return v == null || v === '' || Number.isNaN(Number(v)) ? '—' : String(v)
 }
 
@@ -29,20 +30,45 @@ function fmtTime(ts) {
   }
 }
 
-/** Build the analysis dataset from the raw detection list + live-cam stats. */
+const ORIGIN_LABEL = { pi: 'Pi onboard AI', webcam: 'Webcam (live AI)', stream: 'Drone feed (live AI)' }
+const POS_LABEL = { drone: 'Drone GPS', laptop: 'Laptop GPS', sim: 'Simulated drone' }
+
+function mapsUrl(lat, lng) {
+  return `https://www.google.com/maps?q=${Number(lat).toFixed(6)},${Number(lng).toFixed(6)}`
+}
+function metersBetween(a, b) {
+  const R = 6371000
+  const r = (d) => (d * Math.PI) / 180
+  const s = Math.sin(r(b[0] - a[0]) / 2) ** 2 + Math.cos(r(a[0])) * Math.cos(r(b[0])) * Math.sin(r(b[1] - a[1]) / 2) ** 2
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)))
+}
+
+/**
+ * Build the analysis dataset from the detection rows + live-cam stats. Rows
+ * may be raw backend records ({class, confidence, lat, lng, located,
+ * timestamp}) or the Detections tab's merged rows, which add count, origin,
+ * alt, posSource, time and lastSeen (geotagged live-AI sightings).
+ */
 export function buildTrashDataset(list = [], trashStats = { peak: 0, last: 0, updatedAt: 0 }) {
   const byClass = {}
+  const byOrigin = {}
   const buckets = { '0-50': 0, '50-70': 0, '70-85': 0, '85-100': 0 }
   let confSum = 0
   let confN = 0
   let located = 0
+  let totalItems = 0
   const detections = []
+  const pts = []
 
   for (const d of list) {
     const cls = d.class || 'debris'
-    byClass[cls] = (byClass[cls] || 0) + 1
+    const count = Math.max(1, Number(d.count) || 1)
+    totalItems += count
+    byClass[cls] = (byClass[cls] || 0) + count
+    const originLabel = ORIGIN_LABEL[d.origin || 'pi'] || d.origin
+    byOrigin[originLabel] = (byOrigin[originLabel] || 0) + 1
     const rawConf = Number(d.confidence)
-    const pct = Number.isNaN(rawConf) ? null : Math.round((rawConf <= 1 ? rawConf * 100 : rawConf))
+    const pct = d.confidence == null || Number.isNaN(rawConf) ? null : Math.round(rawConf <= 1 ? rawConf * 100 : rawConf)
     if (pct != null) {
       confSum += pct
       confN++
@@ -51,16 +77,45 @@ export function buildTrashDataset(list = [], trashStats = { peak: 0, last: 0, up
       else if (pct < 85) buckets['70-85']++
       else buckets['85-100']++
     }
-    const isLoc = d.located !== false && d.lat != null && d.lng != null
-    if (isLoc) located++
+    const lat = Number(d.lat)
+    const lng = Number(d.lng)
+    const isLoc = d.located !== false && d.lat != null && d.lng != null && Number.isFinite(lat) && Number.isFinite(lng)
+    if (isLoc) {
+      located++
+      pts.push([lat, lng])
+    }
+    const alt = Number(d.alt)
     detections.push({
       class: cls,
+      count,
       confidence: pct,
-      lat: isLoc ? Number(d.lat) : null,
-      lng: isLoc ? Number(d.lng) : null,
+      lat: isLoc ? lat : null,
+      lng: isLoc ? lng : null,
+      alt: d.alt != null && Number.isFinite(alt) ? Math.round(alt * 10) / 10 : null,
       located: isLoc,
-      timestamp: d.timestamp ?? null,
+      mapUrl: isLoc ? mapsUrl(lat, lng) : null,
+      origin: originLabel,
+      positionSource: isLoc ? (POS_LABEL[d.posSource] || 'GPS') + (Number(d.accuracy) > 0 ? ` (±${Math.round(d.accuracy)} m)` : '') : null,
+      timestamp: d.time ?? d.timestamp ?? null,
+      lastSeen: d.lastSeen ?? null,
+      photo: d.photo || null, // captured frame at the moment of detection (data URL), if any
     })
+  }
+
+  // Survey area: centre of all trash locations, bounding corners, and diagonal span.
+  let area = null
+  if (pts.length) {
+    const c = [pts.reduce((a, p) => a + p[0], 0) / pts.length, pts.reduce((a, p) => a + p[1], 0) / pts.length]
+    const lats = pts.map((p) => p[0])
+    const lngs = pts.map((p) => p[1])
+    const sw = [Math.min(...lats), Math.min(...lngs)]
+    const ne = [Math.max(...lats), Math.max(...lngs)]
+    area = {
+      centre: { lat: +c[0].toFixed(6), lng: +c[1].toFixed(6), mapUrl: mapsUrl(c[0], c[1]) },
+      southWest: { lat: +sw[0].toFixed(6), lng: +sw[1].toFixed(6) },
+      northEast: { lat: +ne[0].toFixed(6), lng: +ne[1].toFixed(6) },
+      spanMeters: Math.round(metersBetween(sw, ne)),
+    }
   }
 
   return {
@@ -72,13 +127,16 @@ export function buildTrashDataset(list = [], trashStats = { peak: 0, last: 0, up
     },
     summary: {
       total: list.length,
+      totalItems,
       located,
       unlocated: list.length - located,
       avgConfidence: confN ? Math.round(confSum / confN) : null,
       byClass,
+      byOrigin,
       confidenceBuckets: buckets,
     },
-    detections: detections.slice(0, 300),
+    area,
+    detections: detections.slice(0, 2000),
   }
 }
 
@@ -95,7 +153,8 @@ function section(title, body) {
 function metricsTable(data) {
   const s = data.summary
   const rows = [
-    ['Total detections', s.total],
+    ['Trash locations / detections', s.total],
+    ['Trash items seen (max per location)', s.totalItems ?? s.total],
     ['Located (with GPS)', s.located],
     ['Unlocated', s.unlocated],
     ['Average confidence', s.avgConfidence != null ? s.avgConfidence + '%' : '—'],
@@ -116,18 +175,118 @@ function byClassTable(data) {
     .join('')}</table>`
 }
 
-function detectionTable(data) {
-  const rows = data.detections || []
+function byOriginTable(data) {
+  const entries = Object.entries(data.summary.byOrigin || {})
+  if (!entries.length) return ''
+  return `<h2>Detection Sources</h2><table class="tbl"><tr><th>Source</th><th>Records</th></tr>${entries
+    .map(([k, v]) => `<tr><td>${esc(k)}</td><td class="num">${fmtNum(v)}</td></tr>`)
+    .join('')}</table>`
+}
+
+function areaBlock(data) {
+  const a = data.area
+  if (!a) return ''
+  const rows = [
+    ['Centre of trash locations', `${a.centre.lat}, ${a.centre.lng}`, a.centre.mapUrl],
+    ['South-west corner', `${a.southWest.lat}, ${a.southWest.lng}`, mapsUrl(a.southWest.lat, a.southWest.lng)],
+    ['North-east corner', `${a.northEast.lat}, ${a.northEast.lng}`, mapsUrl(a.northEast.lat, a.northEast.lng)],
+    ['Area span (diagonal)', `${a.spanMeters} m`, null],
+  ]
+  return `<h2>Survey Area</h2><table class="tbl"><tr><th>Item</th><th>Coordinates</th><th>Map</th></tr>${rows
+    .map(
+      (r) =>
+        `<tr><td>${esc(r[0])}</td><td class="num">${esc(r[1])}</td><td>${
+          r[2] ? `<a href="${esc(r[2])}">Open in Google Maps</a>` : '—'
+        }</td></tr>`,
+    )
+    .join('')}</table>`
+}
+
+// Every trash location: photo, coordinates, altitude, source, time and a clickable map link.
+function locationTable(data) {
+  const rows = (data.detections || []).filter((d) => d.located)
   if (!rows.length) return ''
+  const hasPhotos = rows.some((d) => d.photoName)
   const body = rows
-    .map((d, i) => {
-      const loc = d.located ? `${d.lat?.toFixed?.(5) ?? d.lat}, ${d.lng?.toFixed?.(5) ?? d.lng}` : 'Unlocated'
-      return `<tr><td class="num">${i + 1}</td><td>${esc(d.class)}</td><td class="num">${
-        d.confidence != null ? d.confidence + '%' : '—'
-      }</td><td>${esc(loc)}</td><td>${fmtTime(d.timestamp)}</td></tr>`
-    })
+    .map(
+      (d, i) =>
+        `<tr>${hasPhotos ? `<td>${d.photoName ? imgTag(d.photoName, 120, 'trash photo') : '—'}</td>` : ''}<td class="num">${i + 1}</td><td>${esc(d.class)}</td><td class="num">${fmtNum(d.count)}</td><td class="num">${
+          d.confidence != null ? d.confidence + '%' : '—'
+        }</td><td class="num">${d.lat.toFixed(6)}</td><td class="num">${d.lng.toFixed(6)}</td><td class="num">${
+          d.alt != null ? d.alt + ' m' : '—'
+        }</td><td>${esc(d.origin)}<br/><span class="small">${esc(d.positionSource || '')}</span></td><td>${fmtTime(
+          d.timestamp,
+        )}</td><td><a href="${esc(d.mapUrl)}">Open map</a></td></tr>`,
+    )
     .join('')
-  return `<h2>Detection Log (${rows.length})</h2><table class="tbl"><tr><th>#</th><th>Type</th><th>Confidence</th><th>Location</th><th>Time</th></tr>${body}</table>`
+  return `<h2>Trash Locations (${rows.length})</h2>
+    <p class="small">Each location is where the camera was when the AI detected trash: the drone&rsquo;s live GPS (WebSocket link) for Drone-feed detections, or the laptop&rsquo;s location for Webcam detections (&plusmn; shows its accuracy). Nearby sightings of the same spot are merged; "Items" is the most pieces seen there at once${
+      hasPhotos ? ', and the photo is the frame the AI actually detected it in' : ''
+    }.</p>
+    <table class="tbl"><tr>${hasPhotos ? '<th>Photo</th>' : ''}<th>#</th><th>Type</th><th>Items</th><th>Conf.</th><th>Latitude</th><th>Longitude</th><th>Alt.</th><th>Source</th><th>Time</th><th>Link</th></tr>${body}</table>
+    <h2>Location Links</h2>
+    <p class="small">Full links for copying into a browser or GPS app.</p>
+    ${rows
+      .map((d, i) => `<p class="link">${i + 1}. ${d.lat.toFixed(6)}, ${d.lng.toFixed(6)} &mdash; <a href="${esc(d.mapUrl)}">${esc(d.mapUrl)}</a></p>`)
+      .join('')}`
+}
+
+function fmtDuration(ms) {
+  const s = Math.round(ms / 1000)
+  const m = Math.floor(s / 60)
+  const r = s % 60
+  return `${m}:${String(r).padStart(2, '0')}`
+}
+function fmtBytes(n) {
+  if (!Number.isFinite(n)) return '—'
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`
+}
+
+// Final section: the recorded mission video clips. Word/MHTML can't embed a
+// playable video (no OLE, no <video> support in Word), so each clip is
+// downloaded as its own file alongside the report; this lists them and
+// embeds a still frame for reference.
+function videoBlock(data) {
+  const v = data.video
+  if (!v?.clips?.length) return ''
+  const total = v.clips.reduce((a, c) => a + c.durationMs, 0)
+  const one = v.clips.length === 1
+  return `<h2>Mission Video</h2>
+    <p>The AI-view video of this mission (${fmtDuration(total)} in total) was recorded every time detection ran and saved alongside this report as ${
+      one ? 'a separate file' : `${v.clips.length} separate files, one per detection run`
+    }. Word documents cannot hold a playable video, so click a file name below to play it &mdash; keep the video file${one ? '' : 's'} in the same folder as this report (both download to your Downloads folder) &mdash; or open ${one ? 'it' : 'them'} in a browser or a media player such as VLC.</p>
+    <table class="tbl"><tr><th>#</th><th>File</th><th>Started</th><th>Length</th><th>Size</th></tr>${v.clips
+      .map(
+        (c, i) =>
+          `<tr><td class="num">${i + 1}</td><td><a href="${esc(c.filename)}">${esc(c.filename)}</a></td><td>${fmtTime(c.startedAt)}</td><td class="num">${fmtDuration(
+            c.durationMs,
+          )}</td><td class="num">${fmtBytes(c.sizeBytes)}</td></tr>`,
+      )
+      .join('')}</table>
+    ${
+      v.posterName
+        ? `<p class="chart">${imgTag(v.posterName, 480, 'Mission video preview')}</p><p class="cap">A frame from the mission video</p>`
+        : ''
+    }`
+}
+
+function unlocatedTable(data) {
+  const rows = (data.detections || []).filter((d) => !d.located)
+  if (!rows.length) return ''
+  const hasPhotos = rows.some((d) => d.photoName)
+  return `<h2>Unlocated Detections (${rows.length})</h2><p class="small">No GPS fix at the moment of detection &mdash; re-survey these.</p><table class="tbl"><tr>${
+    hasPhotos ? '<th>Photo</th>' : ''
+  }<th>#</th><th>Type</th><th>Items</th><th>Conf.</th><th>Source</th><th>Time</th></tr>${rows
+    .map(
+      (d, i) =>
+        `<tr>${
+          hasPhotos ? `<td>${d.photoName ? imgTag(d.photoName, 120, 'trash photo') : '—'}</td>` : ''
+        }<td class="num">${i + 1}</td><td>${esc(d.class)}</td><td class="num">${fmtNum(d.count)}</td><td class="num">${
+          d.confidence != null ? d.confidence + '%' : '—'
+        }</td><td>${esc(d.origin)}</td><td>${fmtTime(d.timestamp)}</td></tr>`,
+    )
+    .join('')}</table>`
 }
 
 function chartsBlock(charts) {
@@ -137,12 +296,54 @@ function chartsBlock(charts) {
     charts
       .map(
         (c) =>
-          `<p class="chart"><img src="${c.name}" style="width:640px;height:auto;" alt="${esc(
-            c.title,
-          )}"/></p><p class="cap">${esc(c.title)}</p>`,
+          `<p class="chart">${imgTag(c.name, 620, c.title)}</p><p class="cap">${esc(c.title)}</p>`,
       )
       .join('')
   )
+}
+
+// Every embedded image is referenced by the SAME absolute URL in its <img src>
+// and in its MIME part's Content-Location. Desktop Word only matches the two
+// when they're absolute: with bare relative names it treats each picture as a
+// link to a file on disk (C:\varuna\image001.png) and shows a broken image.
+const ASSET_BASE = 'file:///C:/varuna/'
+let IMG_DIMS = {} // name -> [w, h] in px, filled by buildMhtml before rendering
+
+// Word ignores CSS sizes on MHTML images and keeps each picture's natural size
+// unless BOTH width and height attributes are set, so scale to fit here.
+function imgTag(name, maxW, alt) {
+  const [w0, h0] = IMG_DIMS[name] || [maxW, Math.round(maxW * 0.6)]
+  const w = Math.min(maxW, w0)
+  const h = Math.max(1, Math.round((h0 * w) / w0))
+  return `<img src="${ASSET_BASE}${name}" width="${w}" height="${h}" alt="${esc(alt || '')}"/>`
+}
+
+// Pixel size of a PNG/JPEG data URL, read straight from its header bytes.
+function imageSize(dataUrl) {
+  try {
+    const bin = atob((dataUrl.split(',')[1] || '').trim())
+    const at = (i) => bin.charCodeAt(i)
+    if (at(0) === 0x89 && at(1) === 0x50) {
+      // PNG: IHDR width/height are big-endian at bytes 16..23
+      const u32 = (i) => ((at(i) << 24) | (at(i + 1) << 16) | (at(i + 2) << 8) | at(i + 3)) >>> 0
+      return [u32(16), u32(20)]
+    }
+    if (at(0) === 0xff && at(1) === 0xd8) {
+      // JPEG: walk the markers to the first start-of-frame
+      let i = 2
+      while (i + 9 < bin.length) {
+        if (at(i) !== 0xff) { i++; continue }
+        const m = at(i + 1)
+        if ((m >= 0xc0 && m <= 0xc3) || (m >= 0xc5 && m <= 0xc7) || (m >= 0xc9 && m <= 0xcb) || (m >= 0xcd && m <= 0xcf)) {
+          return [(at(i + 7) << 8) | at(i + 8), (at(i + 5) << 8) | at(i + 6)]
+        }
+        i += 2 + ((at(i + 2) << 8) | at(i + 3))
+      }
+    }
+  } catch {
+    /* fall through */
+  }
+  return null
 }
 
 function buildHtml({ data, narrative, charts }) {
@@ -167,6 +368,9 @@ function buildHtml({ data, narrative, charts }) {
       ul { margin: 4pt 0 8pt 18pt; }
       li { margin: 2pt 0; }
       .cover { border-left: 6pt solid #16A34A; padding: 8pt 0 8pt 14pt; margin-bottom: 12pt; }
+      .small { color: #555; font-size: 9pt; }
+      .link { font-size: 9pt; margin: 1pt 0; font-family: 'Consolas', monospace; }
+      a { color: #0b57d0; }
     </style>`
 
   // MSO word document header
@@ -190,13 +394,17 @@ function buildHtml({ data, narrative, charts }) {
     ${n.keyFindings ? `<h2>Key Findings</h2>${bullets(n.keyFindings)}` : ''}
     ${chartsBlock(charts)}
     ${byClassTable(data)}
+    ${byOriginTable(data)}
+    ${areaBlock(data)}
     ${section('Detection Type Analysis', n.classAnalysis)}
     ${section('Spatial Analysis', n.spatialAnalysis)}
     ${section('Temporal Analysis', n.temporalAnalysis)}
     ${section('Environmental Impact', n.environmentalImpact)}
     ${n.recommendations ? `<h2>Recommendations</h2>${bullets(n.recommendations)}` : ''}
     ${section('Data Quality Notes', n.dataQualityNotes)}
-    ${detectionTable(data)}
+    ${locationTable(data)}
+    ${unlocatedTable(data)}
+    ${videoBlock(data)}
     <p class="cap">Report produced by VARUNA GCS. Analysis generated with Google Gemini.</p>
   </body></html>`
 
@@ -217,13 +425,37 @@ function wrap76(b64) {
 const HTML_LOCATION = 'file:///C:/varuna/report.html'
 
 // Assemble the MHTML (multipart/related) document: HTML body + one image part
-// per chart, referenced by relative Content-Location so Word resolves them.
+// per chart/photo/poster (see ASSET_BASE for how Word matches them up).
 function buildMhtml({ data, narrative, charts }) {
-  const named = (charts || [])
+  const namedCharts = (charts || [])
     .filter((c) => c && c.dataUrl)
-    .map((c, i) => ({ ...c, name: `image${String(i + 1).padStart(3, '0')}.png` }))
+    .map((c, i) => ({ ...c, name: `image${String(i + 1).padStart(3, '0')}.png`, mime: 'image/png' }))
 
-  const html = buildHtml({ data, narrative, charts: named })
+  // Trash photos: name each one and embed it as its own JPEG part.
+  const imageParts = [...namedCharts]
+  let photoSeq = 0
+  const detections = (data.detections || []).map((d) => {
+    if (!d.photo) return d
+    photoSeq++
+    const name = `photo${String(photoSeq).padStart(3, '0')}.jpg`
+    imageParts.push({ name, dataUrl: d.photo, mime: 'image/jpeg' })
+    return { ...d, photoName: name }
+  })
+
+  // Mission-video poster frame, if the caller captured one.
+  let video = data.video || null
+  if (video?.posterDataUrl) {
+    const name = 'video-poster.jpg'
+    imageParts.push({ name, dataUrl: video.posterDataUrl, mime: 'image/jpeg' })
+    video = { ...video, posterName: name }
+  }
+
+  IMG_DIMS = {}
+  for (const c of imageParts) {
+    const d = imageSize(c.dataUrl)
+    if (d && d[0] > 0 && d[1] > 0) IMG_DIMS[c.name] = d
+  }
+  const html = buildHtml({ data: { ...data, detections, video }, narrative, charts: namedCharts })
   const boundary = '----=_NextPart_VARUNA_Report_Boundary'
 
   const parts = []
@@ -236,13 +468,13 @@ function buildMhtml({ data, narrative, charts }) {
   parts.push(`Content-Location: ${HTML_LOCATION}`)
   parts.push('')
   parts.push(html)
-  for (const c of named) {
+  for (const c of imageParts) {
     const b64 = (c.dataUrl.split(',')[1] || '').trim()
     if (!b64) continue
     parts.push(`--${boundary}`)
-    parts.push(`Content-Type: image/png`)
+    parts.push(`Content-Type: ${c.mime || 'image/png'}`)
     parts.push(`Content-Transfer-Encoding: base64`)
-    parts.push(`Content-Location: ${c.name}`)
+    parts.push(`Content-Location: ${ASSET_BASE}${c.name}`)
     parts.push('')
     parts.push(wrap76(b64))
   }
@@ -284,6 +516,7 @@ export function fallbackNarrative(data) {
       `Total detections: ${s.total}`,
       classes ? `Composition: ${classes}` : 'No per-type breakdown available',
       `Geolocated: ${s.located} / ${s.total}`,
+      ...(data.area ? [`Survey area centre: ${data.area.centre.lat}, ${data.area.centre.lng} (span ~${data.area.spanMeters} m)`] : []),
       `Live-camera peak trash: ${data.liveCamera.peakTrash}`,
     ],
     classAnalysis: classes
@@ -291,7 +524,9 @@ export function fallbackNarrative(data) {
       : 'No classified debris types were available in this dataset.',
     spatialAnalysis:
       s.located > 0
-        ? `${s.located} detection(s) carried GPS coordinates and can be mapped to cleanup waypoints. ${s.unlocated} lacked a fix and should be re-surveyed.`
+        ? `${s.located} trash location(s) carried GPS coordinates and can be used directly as cleanup waypoints` +
+          (data.area ? `, spread across about ${data.area.spanMeters} m around ${data.area.centre.lat}, ${data.area.centre.lng}` : '') +
+          `. ${s.unlocated} lacked a fix and should be re-surveyed. Every location is listed below with a Google Maps link.`
         : 'No detections carried GPS coordinates, so spatial hotspots could not be mapped in this run.',
     temporalAnalysis: 'Timestamps for each detection are listed in the detection log below.',
     environmentalImpact:

@@ -1,5 +1,5 @@
-import { lazy, Suspense, useMemo, useState } from 'react'
-import { MapContainer, TileLayer, Marker, Polyline, Circle, useMapEvents } from 'react-leaflet'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
+import { MapContainer, TileLayer, Marker, Polyline, Polygon, Circle, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { AnimatePresence, motion } from 'framer-motion'
@@ -7,15 +7,21 @@ import { api } from '../api/client'
 import { useSystem } from '../components/SystemContext'
 import { useToast } from '../components/Toast'
 import { usePolling } from '../hooks/usePolling'
-import { Btn, StatusOrb } from '../components/ui'
-import { pick, fmtCoord, num } from '../lib/format'
+import { Btn, StatusOrb, CommandButton, CommandPanel } from '../components/ui'
+import { fmtCoord, num } from '../lib/format'
+import { useLivePosition, useHomePoint } from '../hooks/useLaptopGps'
+import { homeIcon, Drone3DMarker } from '../components/MapCanvas'
+import { cmd, isOk } from '../lib/commands'
+import { planKey, useActiveMission, getActiveMission, missionFor } from '../lib/missionStore'
+import { usePlanDraft, consumePlanDraft, setMissionMapView } from '../lib/planDraftStore'
+import { MAX_ALT, MAX_SPEED } from '../lib/missionPatterns'
+
+const DEFAULT_HOME = [17.385, 78.4867]
 
 const HoloDrone = lazy(() => import('../components/HoloDrone'))
 
 const SAT_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
 const BLUE = '#3B9EFF'
-const MAX_ALT = 120 // hard max height cap (m)
-const MAX_SPEED = 15 // max speed cap
 
 function wpIcon(n) {
   return L.divIcon({
@@ -40,6 +46,36 @@ function bearing(a, b) {
 }
 function ClickToAdd({ onAdd }) {
   useMapEvents({ click: (e) => onAdd(e.latlng) })
+  return null
+}
+// Re-centre once whenever the position source changes (none → laptop → drone),
+// not on every GPS update, so it never fights the operator while planning.
+function RecenterOnSource({ center, source }) {
+  const map = useMap()
+  const last = useRef(null)
+  useEffect(() => {
+    if (!source || last.current === source) return
+    last.current = source
+    map.setView(center, map.getZoom(), { animate: true })
+  }, [source, center, map])
+  return null
+}
+
+// Reports the map centre so the AI assistant can plan "the lake I'm looking at".
+function ReportMapView() {
+  const map = useMapEvents({ moveend: () => setMissionMapView([map.getCenter().lat, map.getCenter().lng]) })
+  useEffect(() => {
+    setMissionMapView([map.getCenter().lat, map.getCenter().lng])
+  }, [map])
+  return null
+}
+// Zoom the map to a freshly loaded AI draft.
+function FitToDraft({ draft }) {
+  const map = useMap()
+  useEffect(() => {
+    if (!draft?.waypoints?.length) return
+    map.fitBounds(L.latLngBounds(draft.waypoints), { padding: [60, 60], maxZoom: 18 })
+  }, [draft?.id, map]) // eslint-disable-line react-hooks/exhaustive-deps
   return null
 }
 
@@ -73,23 +109,66 @@ function Slider({ label, value, set, min, max, step, unit }) {
 let wpid = 1
 
 export default function MissionScreen() {
-  const { telemetry } = useSystem()
+  const { telemetry, simulated } = useSystem()
   const toast = useToast()
   const saved = usePolling(api.missionList, 15000)
-  const [wps, setWps] = useState([])
-  const [name, setName] = useState('Mission ' + new Date().toLocaleDateString())
-  const [alt, setAlt] = useState(10) // global altitude (m) — default 10, capped
-  const [speed, setSpeed] = useState(5) // global speed — default 5
+  const target = simulated ? 'sim' : 'real'
+  // Coming back to this tab after uploading: reopen that plan (already saved
+  // and uploaded) instead of an empty editor, so it can still be started.
+  const [restored] = useState(() => {
+    const m = missionFor(getActiveMission(), target)
+    if (!m) return null
+    const plan = {
+      name: m.name,
+      wps: m.waypoints.map((w) => ({ id: wpid++, lat: w.lat, lng: w.lng, action: w.action || 'waypoint' })),
+      alt: Number(m.altitude) || 10,
+      speed: Number(m.speedKmh) || 5,
+    }
+    return { ...plan, key: planKey(plan.name, plan.wps, Math.min(plan.alt, MAX_ALT), plan.speed) }
+  })
+  const [wps, setWps] = useState(restored?.wps || [])
+  const [name, setName] = useState(restored?.name || 'Mission ' + new Date().toLocaleDateString())
+  const [alt, setAlt] = useState(restored?.alt ?? 10) // global altitude (m) — default 10, capped
+  const [speed, setSpeed] = useState(restored?.speed ?? 5) // global speed — default 5
   const [busy, setBusy] = useState(null)
   const [open, setOpen] = useState(true)
   const [confirming, setConfirming] = useState(false)
+  const [savedKey, setSavedKey] = useState(restored?.key ?? null)
+  const [uploadedKey, setUploadedKey] = useState(restored?.key ?? null)
+  const [aiDraft, setAiDraft] = useState(null) // plan loaded from the AI assistant (shown with a banner + lake outline)
 
-  const home = useMemo(() => {
-    const lat = Number(pick(telemetry.data, ['lat', 'latitude']))
-    const lng = Number(pick(telemetry.data, ['lng', 'lon', 'longitude']))
-    if (!Number.isNaN(lat) && !Number.isNaN(lng) && lat !== 0) return [lat, lng]
-    return [17.385, 78.4867]
-  }, [telemetry.data])
+  // A plan generated by the AI assistant: load it into the editor as an unsaved
+  // draft. The operator still reviews it and does Save → Upload → Start.
+  const draft = usePlanDraft()
+  useEffect(() => {
+    if (!draft || draft.consumed) return
+    consumePlanDraft(draft.id)
+    setWps(draft.waypoints.map(([lat, lng]) => ({ id: wpid++, lat, lng, action: 'waypoint' })))
+    setAlt(draft.altitude)
+    setSpeed(draft.speedKmh)
+    setName(draft.name)
+    setAiDraft(draft)
+    setOpen(true)
+  }, [draft])
+
+  // Drone GPS when it has a fix, otherwise laptop GPS (test mode), otherwise a default.
+  const live = useLivePosition(telemetry.data)
+  // The fixed launch/home point — the path is drawn from here and never
+  // drifts, even while the aircraft (dronePos, below) is off flying a mission.
+  const homePoint = useHomePoint(telemetry.data, live, simulated)
+  const home = homePoint || DEFAULT_HOME
+  // The aircraft's current (possibly moving, mid-mission) position.
+  const dronePos = live.position
+  // Only a mission that the current aircraft (sim or real) actually received.
+  const activeMission = missionFor(useActiveMission(), target)
+  const running = activeMission?.status === 'running'
+
+  // Save → Upload → Run is a strict pipeline: editing the plan after saving
+  // (or saving after uploading) changes this key, which automatically
+  // invalidates the later checkpoints until the operator redoes them.
+  const currentKey = planKey(name, wps, Math.min(alt, MAX_ALT), speed)
+  const isSaved = savedKey === currentKey
+  const isUploaded = uploadedKey === currentKey && !!activeMission
 
   const addWp = (ll) => setWps((s) => [...s, { id: wpid++, lat: ll.lat, lng: ll.lng, action: 'waypoint' }])
   const moveWp = (id, ll) => setWps((s) => s.map((w) => (w.id === id ? { ...w, lat: ll.lat, lng: ll.lng } : w)))
@@ -105,8 +184,12 @@ export default function MissionScreen() {
       return c
     })
 
-  function askUpload() {
+  function saveMission() {
     if (!wps.length) return toast.push({ level: 'warn', title: 'Add at least one waypoint' })
+    setSavedKey(currentKey)
+    toast.push({ level: 'ok', title: 'Mission saved', msg: 'Now upload it to enable Start.' })
+  }
+  function askUpload() {
     setConfirming(true)
   }
   async function doUpload() {
@@ -114,11 +197,13 @@ export default function MissionScreen() {
     setBusy('upload')
     try {
       const cappedAlt = Math.min(alt, MAX_ALT)
-      const payload = wps.map((w, i) => ({ id: i + 1, lat: w.lat, lng: w.lng, alt: cappedAlt, speed: Number(speed), action: w.action }))
-      toast.fromResult(await api.missionUpload(name, payload), 'Mission uploaded')
+      const simpleWps = wps.map((w) => ({ lat: w.lat, lng: w.lng, action: w.action }))
+      const res = await cmd.missionUpload(name, simpleWps, { altitude: cappedAlt, speedKmh: Number(speed) })
+      toast.fromResult(res, 'Mission uploaded')
+      if (isOk(res)) setUploadedKey(currentKey)
       saved.refresh()
-    } catch {
-      toast.push({ level: 'bad', title: 'Upload failed' })
+    } catch (e) {
+      toast.push({ level: 'bad', title: `Upload failed: ${e?.message || e}` })
     } finally {
       setBusy(null)
     }
@@ -126,9 +211,20 @@ export default function MissionScreen() {
   async function start() {
     setBusy('start')
     try {
-      toast.fromResult(await api.missionStart(), 'Mission started')
-    } catch {
-      toast.push({ level: 'bad', title: 'Start failed' })
+      toast.fromResult(await cmd.missionStart(), 'Mission started')
+    } catch (e) {
+      toast.push({ level: 'bad', title: `Command failed: ${e?.message || e}` })
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function emergencyStop() {
+    setBusy('stop')
+    try {
+      toast.fromResult(await cmd.emergencyStop(), 'Emergency stop sent')
+    } catch (e) {
+      toast.push({ level: 'bad', title: `Command failed: ${e?.message || e}` })
     } finally {
       setBusy(null)
     }
@@ -148,6 +244,18 @@ export default function MissionScreen() {
         <MapContainer center={home} zoom={16} zoomControl={false} attributionControl={false} style={{ height: '100%', width: '100%', background: '#0E1116' }}>
           <TileLayer url={SAT_URL} maxZoom={19} />
           <ClickToAdd onAdd={addWp} />
+          <RecenterOnSource center={home} source={live.source} />
+          <ReportMapView />
+          <FitToDraft draft={aiDraft} />
+          {aiDraft?.polygon && (
+            <Polygon
+              positions={aiDraft.polygon.geometry.coordinates.map((ring) => ring.map(([lng, lat]) => [lat, lng]))}
+              pathOptions={{ color: '#5AC8FA', weight: 1.5, opacity: 0.8, fillColor: '#5AC8FA', fillOpacity: 0.08, dashArray: '6 6' }}
+              interactive={false}
+            />
+          )}
+          {live.source && <Marker position={home} icon={homeIcon()} interactive={false} />}
+          {dronePos && <Drone3DMarker position={dronePos} size={64} />}
           {line.length > 1 && <Polyline positions={line} pathOptions={{ color: BLUE, weight: 2.5, opacity: 0.9, dashArray: '2 8' }} />}
           {arrows.map((a, i) => (
             <Marker key={`a${i}`} position={a.mid} icon={arrowIcon(a.ang)} interactive={false} />
@@ -165,15 +273,56 @@ export default function MissionScreen() {
       <div className="absolute left-3 top-3 z-20 glass flex items-center gap-2 px-3 py-2">
         <span className="text-sm font-bold text-ink">MISSION PLANNER</span>
         <span className="hidden text-xs text-muted sm:inline">· tap map to add waypoints · drag to move</span>
+        <span
+          className="ml-1 rounded-full px-2 py-0.5 text-[10px] font-bold"
+          style={
+            live.source === 'drone'
+              ? { background: 'rgba(50,215,75,0.16)', color: '#32D74B' }
+              : live.source === 'laptop'
+                ? { background: 'rgba(255,159,10,0.16)', color: '#FF9F0A' }
+                : { background: 'rgba(255,69,58,0.16)', color: '#FF453A' }
+          }
+          title={live.error || undefined}
+        >
+          {live.source === 'drone' ? 'DRONE GPS' : live.source === 'laptop' ? 'LAPTOP GPS · TEST' : 'NO GPS · DEFAULT'}
+        </span>
+        {simulated && (
+          <span className="ml-1 rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ background: 'rgba(245,158,11,0.16)', color: '#F59E0B' }}>
+            SIMULATED
+          </span>
+        )}
       </div>
 
       {/* Floating editor panel */}
-      <motion.div layout className="absolute right-3 top-3 z-20 w-[330px] max-w-[calc(100vw-24px)]">
-        <div className="glass p-3.5">
+      {/* z-30 + capped height: a long plan must never slide under the aircraft
+          preview (bottom-right, z-20) and hide the Start button. */}
+      <motion.div layout className="absolute right-3 top-3 z-30 w-[330px] max-w-[calc(100vw-24px)]">
+        <div className="glass max-h-[calc(100vh-66px-24px)] overflow-y-auto p-3.5">
           <div className="mb-2 flex items-center justify-between">
             <span className="eyebrow">Flight Plan · {wps.length} WP</span>
             <button onClick={() => setOpen((o) => !o)} className="text-xs text-accent">{open ? 'Hide' : 'Show'}</button>
           </div>
+          {open && aiDraft && (
+            <div className="mb-3 rounded-lg border border-accent/30 bg-accent/10 p-2.5 text-[11px]">
+              <div className="flex items-start justify-between gap-2">
+                <span className="font-bold text-accent">✨ AI draft</span>
+                <button
+                  onClick={() => {
+                    setWps([])
+                    setAiDraft(null)
+                  }}
+                  className="font-semibold text-muted hover:text-bad"
+                >
+                  Discard
+                </button>
+              </div>
+              <div className="mt-0.5 text-ink">{aiDraft.summary}</div>
+              {aiDraft.warnings?.map((w) => (
+                <div key={w} className="mt-0.5 text-warn">⚠ {w}</div>
+              ))}
+              <div className="mt-1 text-muted">Review the path, then Save → Upload → Start.</div>
+            </div>
+          )}
           {open && (
             <>
               <input value={name} onChange={(e) => setName(e.target.value)} className="inp mb-3 w-full px-3 py-2 text-sm" placeholder="Mission name" />
@@ -202,9 +351,25 @@ export default function MissionScreen() {
                   </motion.div>
                 ))}
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                <Btn variant="secondary" disabled={busy === 'upload'} onClick={askUpload}>Upload</Btn>
-                <Btn disabled={busy === 'start'} onClick={start}>Start</Btn>
+              <div className="grid grid-cols-2 items-center gap-2">
+                <Btn variant={isSaved ? 'secondary' : 'primary'} disabled={!wps.length} onClick={saveMission}>
+                  {isSaved ? '✓ Saved' : 'Save'}
+                </Btn>
+                <Btn variant={isUploaded ? 'secondary' : 'primary'} disabled={!isSaved || busy === 'upload'} onClick={askUpload}>
+                  {busy === 'upload' ? 'Uploading…' : isUploaded ? '✓ Uploaded' : 'Upload'}
+                </Btn>
+              </div>
+              <div className="mt-3 flex flex-col items-center gap-1.5">
+                <CommandButton cmd="mission" disabled={!isUploaded || running || busy === 'start'} onConfirm={start} />
+                <span className="text-center text-[10px] text-faint">
+                  {!isSaved
+                    ? 'Save the plan, then upload it, then Start.'
+                    : !isUploaded
+                      ? 'Upload the saved mission to enable Start.'
+                      : running
+                        ? 'Mission running…'
+                        : 'Ready — press Start to fly it.'}
+                </span>
               </div>
             </>
           )}
@@ -228,6 +393,13 @@ export default function MissionScreen() {
             </div>
           )}
         </div>
+      </div>
+
+      {/* Emergency stop (bottom-center) — always visible, even with the editor collapsed */}
+      <div className="absolute bottom-3 left-1/2 z-20 -translate-x-1/2">
+        <CommandPanel>
+          <CommandButton cmd="stop" disabled={busy === 'stop'} onConfirm={emergencyStop} />
+        </CommandPanel>
       </div>
 
       {/* Aircraft preview (bottom-right) — realistic 3D model */}

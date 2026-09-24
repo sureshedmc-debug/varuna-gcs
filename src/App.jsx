@@ -1,4 +1,4 @@
-import { useState, lazy, Suspense } from 'react'
+import { useEffect, useState, lazy, Suspense } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { ToastProvider } from './components/Toast'
 import { SystemProvider, useSystem } from './components/SystemContext'
@@ -6,6 +6,9 @@ import { WarningBanner, deriveWarnings } from './components/WarningBanner'
 import { PinGate, getStoredSession } from './components/PinGate'
 import { Rail } from './components/Rail'
 import { TopBar } from './components/TopBar'
+import { registerNavigator } from './lib/planDraftStore'
+
+const Assistant = lazy(() => import('./components/Assistant'))
 import IntroScreen from './screens/IntroScreen'
 import MissionControlScreen from './screens/MissionControlScreen'
 import SystemScreen from './screens/SystemScreen'
@@ -25,7 +28,10 @@ const SCREENS = {
 
 function Shell({ onLock }) {
   const [tab, setTab] = useState('home')
+  const [assistantOpen, setAssistantOpen] = useState(false)
   const { pi, backendReachable } = useSystem()
+  // Lets the AI assistant switch tabs (e.g. open Missions after planning).
+  useEffect(() => registerNavigator(setTab), [])
   const Screen = SCREENS[tab]
   const warnings = deriveWarnings({ pi: pi.data, backendReachable })
   const isMap = tab === 'home'
@@ -34,7 +40,7 @@ function Shell({ onLock }) {
   return (
     <div className="relative min-h-screen">
       {!fullBleed && <div className="ambient" />}
-      <TopBar onLock={onLock} />
+      <TopBar onLock={onLock} onAssistant={() => setAssistantOpen((v) => !v)} assistantOpen={assistantOpen} />
       <Rail active={tab} onChange={setTab} onLock={onLock} />
       <WarningBanner warnings={warnings} />
       <main className={`relative z-10 pt-[56px] ${fullBleed ? 'px-2 pb-2 md:pl-[80px] md:pr-2' : 'px-2.5 pb-24 md:pb-4 md:pl-[86px] md:pr-4'}`}>
@@ -59,6 +65,9 @@ function Shell({ onLock }) {
           </motion.div>
         </AnimatePresence>
       </main>
+      <Suspense fallback={null}>
+        <Assistant open={assistantOpen} onClose={() => setAssistantOpen(false)} tab={tab} />
+      </Suspense>
     </div>
   )
 }

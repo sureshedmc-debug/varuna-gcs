@@ -118,6 +118,19 @@ export const api = {
     request('/api/mavlink/takeoff', { method: 'POST', body: { altitude } }),
   rtl: () => request('/api/mavlink/rtl', { method: 'POST' }),
   land: () => request('/api/mavlink/land', { method: 'POST' }),
+  // Emergency stop: abort any running mission and land at the current position.
+  // Switching the flight controller into LAND overrides AUTO/mission mode. Tries
+  // the land command first; if it errors or is rejected, forces LAND via a mode
+  // change (ArduPilot mode name). Uses only the existing land + mode endpoints.
+  emergencyStop: async () => {
+    try {
+      const r = await request('/api/mavlink/land', { method: 'POST' })
+      if (r && r.success !== false && !r._httpError) return r
+    } catch {
+      /* fall through to the mode change */
+    }
+    return request('/api/mavlink/mode', { method: 'POST', body: { mode: 'LAND' } })
+  },
   mavlinkStatus: () => request('/api/mavlink/status'),
   getPrefer: () => request('/api/mavlink/prefer'),
   setPrefer: (mode) => request('/api/mavlink/prefer', { method: 'POST', body: { mode } }),

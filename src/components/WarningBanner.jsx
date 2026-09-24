@@ -7,7 +7,7 @@ import { StatusOrb } from './ui'
  */
 export function WarningBanner({ warnings = [] }) {
   return (
-    <div className="fixed inset-x-0 top-[54px] z-50 flex flex-col items-center gap-1 px-2 pt-2 md:pl-[86px]">
+    <div className="pointer-events-none fixed inset-x-0 top-[54px] z-50 flex flex-col items-center gap-1 px-2 pt-2 md:pl-[86px]">
       <AnimatePresence>
         {warnings.map((w) => (
           <motion.div
@@ -16,7 +16,7 @@ export function WarningBanner({ warnings = [] }) {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -30 }}
             transition={{ type: 'spring', stiffness: 300, damping: 26 }}
-            className="flex w-full max-w-3xl items-center gap-3 rounded-xl px-4 py-2.5 shadow-elev"
+            className="pointer-events-auto flex w-full max-w-3xl items-center gap-3 rounded-xl px-4 py-2.5 shadow-elev"
             style={{
               background: w.level === 'bad' ? 'rgba(239,68,68,0.18)' : 'rgba(245,158,11,0.16)',
               border: `1px solid ${w.level === 'bad' ? '#EF4444' : '#F59E0B'}66`,

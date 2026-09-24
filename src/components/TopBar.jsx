@@ -12,7 +12,7 @@ function Stat({ label, value }) {
 }
 
 /** Top mission status bar spanning the app (matches the reference top strip). */
-export function TopBar({ onLock }) {
+export function TopBar({ onLock, onAssistant, assistantOpen }) {
   const { telemetry, backendReachable } = useSystem()
   const t = telemetry.data || {}
   const s = telemetry.status
@@ -39,6 +39,17 @@ export function TopBar({ onLock }) {
           <StatusOrb level={level} size={9} pulse={s === 'polling' || s === 'connecting'} />
           <span className="text-[11px] font-semibold tracking-wider text-ink">{conn}</span>
         </div>
+        {onAssistant && (
+          <button
+            onClick={onAssistant}
+            title="VARUNA Assist — voice & chat co-pilot"
+            className="flex h-9 items-center gap-1.5 rounded-lg px-3 text-[11px] font-bold tracking-wider transition-colors"
+            style={{ background: assistantOpen ? 'var(--accent-hex)' : 'rgba(59,158,255,0.15)', color: assistantOpen ? '#fff' : 'var(--accent-hex)' }}
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 2l1.8 5.2L19 9l-5.2 1.8L12 16l-1.8-5.2L5 9l5.2-1.8L12 2zm7 11l.9 2.6 2.6.9-2.6.9L19 20l-.9-2.6-2.6-.9 2.6-.9L19 13z" fill="currentColor" /></svg>
+            <span className="hidden sm:inline">ASK AI</span>
+          </button>
+        )}
         <button
           onClick={onLock}
           title="Lock app"

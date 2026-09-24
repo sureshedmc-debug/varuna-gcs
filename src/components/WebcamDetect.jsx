@@ -4,6 +4,11 @@ import { filterDetections } from '../lib/labels'
 import { BoxTracker } from '../lib/track'
 import { api } from '../api/client'
 import { recordTrashCount } from '../lib/detectionStats'
+import { recordTrashSighting } from '../lib/trashLog'
+import { startMissionRecording, stopMissionRecording } from '../lib/missionRecording'
+import { useSystem } from './SystemContext'
+import { useLivePosition, useLaptopGps } from '../hooks/useLaptopGps'
+import { pick } from '../lib/format'
 import { StatusOrb } from './ui'
 
 const ACCENT = '#3b41ff'
@@ -21,7 +26,9 @@ const ADAPTIVE_CONF = {
   successBoost: 0.10, failurePenalty: 0.05, maxAdaptiveConf: 0.4, minAdaptiveConf: 0.02,
 }
 
-export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam', autoStart = false, onCount }) {
+// controlsLift: extra px to raise the Start/Stop/Record row, for hosts that
+// overlay their own bottom panel (e.g. the Live tab's flight commands).
+export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam', autoStart = false, onCount, controlsLift = 0 }) {
   const videoRef     = useRef(null)
   const streamImgRef = useRef(null)
   const canvasRef    = useRef(null)
@@ -68,6 +75,34 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
   const [isRecording,      setIsRecording]      = useState(false)
 
   confRef.current = confThr
+
+  // Position for geotagging trash, matched to where the camera actually is:
+  //  - Drone mode: the drone GPS streamed over the WebSocket (telemetry), or
+  //    the laptop's GPS when the drone has no fix.
+  //  - Webcam mode: the camera is the laptop's, so always the laptop's own
+  //    location — never the drone's (or the simulator's) position.
+  // Kept in refs so the detect loop always reads the latest fix.
+  const { telemetry, simulated } = useSystem()
+  const live = useLivePosition(telemetry.data)
+  const laptop = useLaptopGps(true)
+  const geoRef = useRef({ pos: null, posSource: null, alt: null, accuracy: null })
+  geoRef.current =
+    source === 'webcam'
+      ? {
+          pos: laptop.pos ? [laptop.pos.lat, laptop.pos.lng] : null,
+          posSource: laptop.pos ? 'laptop' : null,
+          alt: null,
+          accuracy: laptop.pos?.accuracy ?? null,
+        }
+      : {
+          pos: live.position,
+          posSource: live.source === 'drone' && simulated ? 'sim' : live.source,
+          alt: live.source === 'drone' ? Number(pick(telemetry.data, ['altitude', 'alt', 'relative_alt'])) : null,
+          accuracy: live.accuracy ?? null,
+        }
+  const sourceRef = useRef(source)
+  sourceRef.current = source
+  const lastGeoTagRef = useRef(0)
   useEffect(() => { longRangeRef.current        = longRange        }, [longRange])
   useEffect(() => { humanDetectionRef.current   = humanDetection   }, [humanDetection])
   useEffect(() => { plantSuppressionRef.current = plantSuppression }, [plantSuppression])
@@ -214,6 +249,18 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
       else{finalTrash=filterDetections(merged,[])}
       if(plantSuppressionRef.current&&plantBoxes.length>0)finalTrash=suppressByPlants(finalTrash,plantBoxes,0.15)
       recordTrashCount(finalTrash.length) // share trash-only count with the Detections tab
+      // Stamp trash with the aircraft's live position (≤ 2x/sec) for the Detections tab + report,
+      // and grab a photo of this frame (the boxed view, exactly what the operator saw).
+      if(finalTrash.length>0&&now-lastGeoTagRef.current>=500){
+        lastGeoTagRef.current=now
+        const g=geoRef.current
+        recordTrashSighting({
+          lat:g.pos?g.pos[0]:null, lng:g.pos?g.pos[1]:null, alt:g.alt,
+          count:finalTrash.length, confidence:Math.max(...finalTrash.map(b=>Number(b.score)||0)),
+          source:sourceRef.current, posSource:g.posSource, accuracy:g.accuracy,
+          photo:capturePhoto(),
+        })
+      }
       const lf=humanDetectionRef.current?faceBoxes.map(b=>({...b,label:'Human',color:HUMAN_COLOR,cls:'human'})):[]
       const lp=humanDetectionRef.current?personBoxes.map(b=>({...b,label:'Human',color:HUMAN_COLOR,cls:'human'})):[]
       const topT=finalTrash.sort((a,b)=>b.score-a.score).slice(0,10)
@@ -244,12 +291,17 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
     try{
       if(src==='webcam')await startWebcam(f); else await startStream()
       fitCanvas(); runningRef.current=true; setStatus('running'); draw(); detectLoop()
+      // Record the whole mission (the boxed view, exactly what the operator saw)
+      // from Start to Stop, so a full video — not just still detections — is
+      // available for the report.
+      try{startMissionRecording(canvasRef.current.captureStream(15))}catch(e){console.warn('[mission-video]',e)}
     }catch(e){
       setStatus('error'); setMsg(src==='webcam'?'Camera unavailable: '+(e?.message??e)+' (needs HTTPS + permission)':'Drone stream unavailable: '+(e?.message??e))
     }
   }
   function stop(){
     runningRef.current=false; cancelAnimationFrame(rafRef.current)
+    stopMissionRecording()
     const v=videoRef.current; if(v?.srcObject){v.srcObject.getTracks().forEach(t=>t.stop());v.srcObject=null}
     if(streamImgRef.current)streamImgRef.current.src=''
     srcElRef.current=null; boxesRef.current=[]; tileBoxesRef.current.clear()
@@ -286,6 +338,21 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
     }
     recorder.start(); setIsRecording(true)
   }
+  // Small JPEG of the current (already-boxed) canvas frame, for a trash
+  // sighting's photo in the Detections tab + report. Downscaled to keep each
+  // photo a few KB — this runs up to twice a second while trash is on screen.
+  const photoCanvasRef = useRef(null)
+  function capturePhoto(){
+    const cv=canvasRef.current; if(!cv||!cv.width||!cv.height) return null
+    if(!photoCanvasRef.current) photoCanvasRef.current=document.createElement('canvas')
+    const pc=photoCanvasRef.current
+    const scale=Math.min(1,360/cv.width)
+    pc.width=Math.round(cv.width*scale); pc.height=Math.round(cv.height*scale)
+    const ctx=pc.getContext('2d'); if(!ctx) return null
+    ctx.drawImage(cv,0,0,pc.width,pc.height)
+    try{return pc.toDataURL('image/jpeg',0.6)}catch{return null}
+  }
+
   async function takeSnapshot(){
     const cv=canvasRef.current,el=srcElRef.current; if(!cv||!el)return
     const [vw,vh]=srcSize(el); if(!vw||!vh)return
@@ -345,7 +412,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
       )}
 
       {/* start/stop row */}
-      <div className="absolute bottom-20 left-1/2 z-20 -translate-x-1/2 flex flex-wrap items-center justify-center gap-2">
+      <div className="absolute left-1/2 z-20 -translate-x-1/2 flex flex-wrap items-center justify-center gap-2" style={{bottom:80+controlsLift}}>
         {status!=='running'?(
           <button disabled={status==='init'} onClick={()=>start()}
             className="rounded-2xl px-6 py-2.5 text-sm font-bold text-white disabled:opacity-40 transition-all active:scale-95"

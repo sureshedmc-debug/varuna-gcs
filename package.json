@@ -11,6 +11,14 @@
     "check:clean": "node scripts/check-clean-build.mjs"
   },
   "dependencies": {
+    "@turf/along": "^7.4.0",
+    "@turf/area": "^7.4.0",
+    "@turf/boolean-point-in-polygon": "^7.4.0",
+    "@turf/buffer": "^7.4.0",
+    "@turf/circle": "^7.4.0",
+    "@turf/helpers": "^7.4.0",
+    "@turf/intersect": "^7.4.0",
+    "@turf/length": "^7.4.0",
     "framer-motion": "^11.3.0",
     "leaflet": "^1.9.4",
     "onnxruntime-web": "^1.20.1",
