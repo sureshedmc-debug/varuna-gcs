@@ -52,8 +52,32 @@ function persist() {
     /* private mode / quota */
   }
 }
-function emit() {
+// Serialising up to 2000 entries is slow, and the detector records up to
+// twice a second — so writes are batched (at most one per second) and flushed
+// when the page is hidden/closed. Screens still update instantly via the event.
+let persistTimer = null
+function schedulePersist() {
+  if (persistTimer) return
+  persistTimer = setTimeout(() => {
+    persistTimer = null
+    persist()
+  }, 1000)
+}
+function flushPersist() {
+  if (!persistTimer) return
+  clearTimeout(persistTimer)
+  persistTimer = null
   persist()
+}
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', flushPersist)
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) flushPersist()
+  })
+}
+
+function emit() {
+  schedulePersist()
   try {
     window.dispatchEvent(new CustomEvent(EVT))
   } catch {
@@ -77,7 +101,7 @@ export function getTrashLog() {
  * @param {number} [s.accuracy]       position accuracy (± m), if known
  * @param {string} [s.photo]          JPEG data URL of this frame, if captured
  */
-export function recordTrashSighting({ lat, lng, count, confidence, source, posSource, alt, accuracy, photo }) {
+export function recordTrashSighting({ lat, lng, count, confidence, source, posSource, alt, accuracy, photo, className, estWidthM, estHeightM }) {
   const n = Number(count)
   if (!Number.isFinite(n) || n <= 0) return
   const now = Date.now()
@@ -106,11 +130,15 @@ export function recordTrashSighting({ lat, lng, count, confidence, source, posSo
     // Prefer the sharpest evidence: the first photo taken of this spot is
     // usually enough; only replace it if a clearly more confident frame comes in.
     if (photo && (!match.photo || (conf ?? 0) > (match.confidence ?? 0))) match.photo = photo
+    // Best size seen so far for this spot (biggest box on the sharpest frame).
+    if (Number.isFinite(Number(estWidthM)) && (match.estWidthM == null || Number(estWidthM) > match.estWidthM)) match.estWidthM = Number(estWidthM)
+    if (Number.isFinite(Number(estHeightM)) && (match.estHeightM == null || Number(estHeightM) > match.estHeightM)) match.estHeightM = Number(estHeightM)
+    if (className && match.class === 'trash') match.class = className
   } else {
     log = [
       {
         id: `t-${++seq}`,
-        class: 'trash',
+        class: className || 'trash',
         lat: located ? lat : null,
         lng: located ? lng : null,
         located,
@@ -121,6 +149,8 @@ export function recordTrashSighting({ lat, lng, count, confidence, source, posSo
         source,
         posSource: located ? posSource : null,
         photo: photo || null,
+        estWidthM: Number.isFinite(Number(estWidthM)) ? Number(estWidthM) : null,
+        estHeightM: Number.isFinite(Number(estHeightM)) ? Number(estHeightM) : null,
         firstSeen: now,
         lastSeen: now,
         frames: 1,
@@ -134,6 +164,7 @@ export function recordTrashSighting({ lat, lng, count, confidence, source, posSo
 export function clearTrashLog() {
   log = []
   emit()
+  flushPersist() // a clear is saved right away
 }
 
 /** React hook: the live sighting list (newest first). */

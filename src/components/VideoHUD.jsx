@@ -11,7 +11,7 @@ function Tape({ label, value, unit, align = 'left', step = 5 }) {
   const ticks = [4, 3, 2, 1, 0, -1, -2, -3, -4].map((k) => base + k * step)
   return (
     <div
-      className={`pointer-events-none flex flex-col ${align === 'left' ? 'items-start' : 'items-end'} gap-1 rounded-lg bg-black/35 px-2 py-2 backdrop-blur-sm`}
+      className={`pointer-events-none flex flex-col ${align === 'left' ? 'items-start' : 'items-end'} gap-1 rounded-lg bg-black/50 px-2 py-2`}
       style={{ minWidth: 62 }}
     >
       <span className="text-[9px] font-semibold tracking-wider text-white/60">{label}</span>
@@ -75,13 +75,13 @@ export default function VideoHUD({ speed, altitude, aiOn, fill = false }) {
       </div>
 
       {/* AI badge */}
-      <div className="absolute left-2 top-2 flex items-center gap-1.5 rounded-full bg-black/55 px-2.5 py-1 backdrop-blur">
+      <div className="absolute left-2 top-2 flex items-center gap-1.5 rounded-full bg-black/70 px-2.5 py-1">
         <StatusOrb level={aiOn ? 'ok' : 'idle'} size={8} pulse={aiOn} />
         <span className="text-[10px] font-semibold text-white">{aiOn ? 'AI DETECTION' : 'AI OFF'}</span>
       </div>
 
       {/* REC */}
-      <div className="absolute right-2 top-2 flex items-center gap-1.5 rounded-full bg-black/55 px-2.5 py-1 backdrop-blur">
+      <div className="absolute right-2 top-2 flex items-center gap-1.5 rounded-full bg-black/70 px-2.5 py-1">
         <span className="h-2 w-2 rounded-full bg-bad" style={{ boxShadow: '0 0 8px #EF4444' }} />
         <span className="text-[10px] font-semibold tracking-wider text-white">LIVE</span>
       </div>

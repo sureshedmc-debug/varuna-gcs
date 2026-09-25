@@ -21,7 +21,8 @@ function emit() {
 export function startMissionRecording(stream) {
   if (recorder && recorder.state !== 'inactive') return // already recording
   chunks = []
-  const mimeType = ['video/webm; codecs=vp9', 'video/webm'].find((t) => window.MediaRecorder?.isTypeSupported?.(t)) || 'video/webm'
+  // VP8 first: same .webm file, far cheaper to encode than VP9, so recording doesn't make the app lag.
+  const mimeType = ['video/webm; codecs=vp8', 'video/webm; codecs=vp9', 'video/webm'].find((t) => window.MediaRecorder?.isTypeSupported?.(t)) || 'video/webm'
   let rec
   try {
     rec = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 1_500_000 })

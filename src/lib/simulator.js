@@ -73,8 +73,19 @@ let runKind = null // 'mission' | 'rtl' | null — what to resume after a takeof
 let legSpeedMs = 5 / 3.6 // horizontal speed for the current run
 
 const subs = new Set()
+let lastEmitted = null
+let lastEmitAt = 0
 function emit() {
+  lastEmitted = { ...state }
+  lastEmitAt = Date.now()
   subs.forEach((fn) => fn({ ...state }))
+}
+// Per-tick emit: skipped while nothing changed (e.g. parked on the ground), so
+// the app isn't re-rendered 4×/s for nothing. A 1 s heartbeat keeps the
+// telemetry "last update" fresh, exactly as the real feed would.
+function emitIfChanged() {
+  const changed = !lastEmitted || Object.keys(state).some((k) => state[k] !== lastEmitted[k])
+  if (changed || Date.now() - lastEmitAt >= 1000) emit()
 }
 export function getSimState() {
   return { ...state }
@@ -276,7 +287,7 @@ function tick() {
     state.battery_voltage = 10.5 + (state.battery_percent / 100) * 2.1
   }
 
-  emit()
+  emitIfChanged()
 }
 
 const intervalId = setInterval(tick, TICK_MS)

@@ -25,7 +25,8 @@ export default function HoloDrone({ height = 150, wire = true, color }) {
     const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches
     const W = () => mount.clientWidth || 260
     const H = () => mount.clientHeight || height
-    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1))
+    // 1.5× is visually identical on these small canvases and ~45% fewer pixels than 2×.
+    renderer.setPixelRatio(Math.min(1.5, window.devicePixelRatio || 1))
     renderer.setSize(W(), H())
     renderer.setClearColor(0x000000, 0)
     mount.appendChild(renderer.domElement)
@@ -71,10 +72,11 @@ export default function HoloDrone({ height = 150, wire = true, color }) {
     }
 
     let raf = 0, running = true, t = 0
+    let onScreen = true // false while scrolled away / inside a hidden panel
     const clock = new THREE.Clock()
     const render = () => renderer.render(scene, camera)
     function loop() {
-      if (!running) return
+      if (!running || !onScreen) return
       const dt = Math.min(clock.getDelta(), 0.05)
       t += dt
       drone.rotation.y += dt * 0.5
@@ -91,22 +93,36 @@ export default function HoloDrone({ height = 150, wire = true, color }) {
     }
     function onVis() {
       if (document.hidden) { running = false; cancelAnimationFrame(raf) }
-      else if (!reduce) { running = true; clock.getDelta(); loop() }
+      else if (!reduce) { running = true; cancelAnimationFrame(raf); clock.getDelta(); loop() }
     }
     function onResize() { camera.aspect = W() / H(); camera.updateProjectionMatrix(); renderer.setSize(W(), H()); render() }
     window.addEventListener('resize', onResize)
     document.addEventListener('visibilitychange', onVis)
+    // Stop drawing while not visible on screen (off-screen, display:none parent).
+    let io = null
+    if (typeof IntersectionObserver !== 'undefined') {
+      io = new IntersectionObserver(([e]) => {
+        const vis = e.isIntersecting
+        if (vis === onScreen) return
+        onScreen = vis
+        cancelAnimationFrame(raf)
+        if (vis && running && !reduce) { clock.getDelta(); loop() }
+      })
+      io.observe(mount)
+    }
     if (reduce) render(); else loop()
 
     return () => {
       running = false
       cancelAnimationFrame(raf)
+      io?.disconnect()
       window.removeEventListener('resize', onResize)
       document.removeEventListener('visibilitychange', onVis)
       scene.traverse((o) => {
         if (o.geometry) o.geometry.dispose()
         if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => m.dispose())
       })
+      renderer.forceContextLoss() // free the GL context now (browsers cap live contexts at ~16)
       renderer.dispose()
       if (renderer.domElement.parentNode === mount) mount.removeChild(renderer.domElement)
     }

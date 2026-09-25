@@ -57,70 +57,33 @@
 //
 // All dims cast with Number() to avoid BigInt64Array TypeError on WebGPU.
 
-import { loadOrt, createSession } from './detector'
-
-const IN = 320
-const PAD_RGB = [114, 114, 114]
+import { acquireCoco } from './cocoRunner'
 
 // COCO class IDs to treat as plant-related (vases hold flowers, potted plants are vegetation)
 const PLANT_CLASSES = [58, 80] // 58 = potted plant, 80 = vase
 
 export async function createPlantDetector(onProgress) {
-  const ort = await loadOrt()
   onProgress && onProgress('Loading plant detection model...')
 
-  let session, ep
+  // Shared with the person detector (same model): loaded once, run once per frame.
+  const coco = acquireCoco(onProgress)
+  let runner, ep
   try {
-    const result = await createSession(ort, '/models/coco-yolo.onnx', onProgress)
-    session = result.session
-    ep = result.ep
+    runner = await coco.ready
+    ep = runner.ep
   } catch (e) {
+    coco.release()
     console.warn('[plant] coco-yolo.onnx not found or failed:', e.message)
     return { detectPlants: async () => [], dispose: () => {}, ep: null, available: false }
   }
 
-  const inputName  = session.inputNames[0]
-  const outputName = session.outputNames[0]
-
-  const cv = document.createElement('canvas')
-  cv.width  = IN
-  cv.height = IN
-  const cx  = cv.getContext('2d', { willReadFrequently: true })
-  const buf = new Float32Array(3 * IN * IN)
-
-  function preprocess(source, sw, sh) {
-    const ratio = Math.min(IN / sw, IN / sh)
-    const nw    = Math.round(sw * ratio)
-    const nh    = Math.round(sh * ratio)
-    const padX  = Math.floor((IN - nw) / 2)
-    const padY  = Math.floor((IN - nh) / 2)
-    cx.fillStyle = `rgb(${PAD_RGB[0]},${PAD_RGB[1]},${PAD_RGB[2]})`
-    cx.fillRect(0, 0, IN, IN)
-    cx.drawImage(source, 0, 0, sw, sh, padX, padY, nw, nh)
-    const { data } = cx.getImageData(0, 0, IN, IN)
-    const area = IN * IN
-    for (let i = 0; i < area; i++) {
-      buf[i]           = data[i * 4]     / 255
-      buf[area + i]    = data[i * 4 + 1] / 255
-      buf[area * 2 + i]= data[i * 4 + 2] / 255
-    }
-    return { ratio, padX, padY }
-  }
-
-  async function detectPlants(source, { confThr = 0.20, iouThr = 0.30 } = {}) {
-    const sw = source.videoWidth  || source.width        || source.naturalWidth  || 0
-    const sh = source.videoHeight || source.height       || source.naturalHeight || 0
-    if (!sw || !sh) return []
-
-    const { ratio, padX, padY } = preprocess(source, sw, sh)
-    const tensor = new ort.Tensor('float32', buf, [1, 3, IN, IN])
-    const result = await session.run({ [inputName]: tensor })
-    const out    = result[outputName]
-    const data   = out.getData ? await out.getData() : out.data
-
-    // Cast ALL dims to Number — out.dims is BigInt64Array on WebGPU
-    const n          = Number(out.dims[2])
-    const numClasses = Number(out.dims[1]) - 4
+  // `frame`: optional per-frame token — reuses the person detector's pass on the same frame.
+  let disposed = false
+  async function detectPlants(source, { confThr = 0.20, iouThr = 0.30, frame } = {}) {
+    if (disposed) return [] // the shared session may now belong to another detector
+    const r = await runner.run(source, frame)
+    if (!r) return []
+    const { data, n, numClasses, ratio, padX, padY, sw, sh } = r
 
     const boxes = []
     for (let i = 0; i < n; i++) {
@@ -153,13 +116,12 @@ export async function createPlantDetector(onProgress) {
       boxes.push({ x1, y1, x2, y2, score: bestScore })
     }
 
-    const result2 = nms(boxes, iouThr)
-    console.log('[plant] detected:', result2.length, 'boxes at confThr:', confThr)
-    return result2
+    return nms(boxes, iouThr)
   }
 
   function dispose() {
-    try { session.release && session.release() } catch { /* noop */ }
+    disposed = true
+    coco.release()
   }
 
   return { detectPlants, dispose, ep, available: true }

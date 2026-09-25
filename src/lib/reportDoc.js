@@ -49,7 +49,11 @@ function metersBetween(a, b) {
  * timestamp}) or the Detections tab's merged rows, which add count, origin,
  * alt, posSource, time and lastSeen (geotagged live-AI sightings).
  */
+import { DEFAULT_AVG_WEIGHT_G, DEFAULT_FOV_DEG, estimateWeightG, getFovSettings } from './sizeEstimate'
+
 export function buildTrashDataset(list = [], trashStats = { peak: 0, last: 0, updatedAt: 0 }) {
+  const fov = getFovSettings()
+  const avgW = fov.avgWeightG || DEFAULT_AVG_WEIGHT_G
   const byClass = {}
   const byOrigin = {}
   const buckets = { '0-50': 0, '50-70': 0, '70-85': 0, '85-100': 0 }
@@ -85,6 +89,7 @@ export function buildTrashDataset(list = [], trashStats = { peak: 0, last: 0, up
       pts.push([lat, lng])
     }
     const alt = Number(d.alt)
+    const wG = estimateWeightG(cls, count, avgW)
     detections.push({
       class: cls,
       count,
@@ -99,6 +104,9 @@ export function buildTrashDataset(list = [], trashStats = { peak: 0, last: 0, up
       timestamp: d.time ?? d.timestamp ?? null,
       lastSeen: d.lastSeen ?? null,
       photo: d.photo || null, // captured frame at the moment of detection (data URL), if any
+      estWidthM: Number.isFinite(Number(d.estWidthM)) ? Number(d.estWidthM) : null,
+      estHeightM: Number.isFinite(Number(d.estHeightM)) ? Number(d.estHeightM) : null,
+      estWeightG: wG,
     })
   }
 
@@ -118,6 +126,7 @@ export function buildTrashDataset(list = [], trashStats = { peak: 0, last: 0, up
     }
   }
 
+  const totalEstWeightG = detections.reduce((a, d) => a + (Number(d.estWeightG) || 0), 0)
   return {
     generatedAt: new Date().toISOString(),
     liveCamera: {
@@ -134,6 +143,8 @@ export function buildTrashDataset(list = [], trashStats = { peak: 0, last: 0, up
       byClass,
       byOrigin,
       confidenceBuckets: buckets,
+      totalEstWeightG,
+      fovAssumption: `${Math.round(fov.fovHorizontalDeg || DEFAULT_FOV_DEG.horizontal)}° × ${Math.round(fov.fovVerticalDeg || DEFAULT_FOV_DEG.vertical)}°`,
     },
     area,
     detections: detections.slice(0, 2000),
@@ -160,6 +171,8 @@ function metricsTable(data) {
     ['Average confidence', s.avgConfidence != null ? s.avgConfidence + '%' : '—'],
     ['Live-camera peak trash', data.liveCamera.peakTrash],
     ['Live-camera last reading', data.liveCamera.lastTrash],
+    ['Estimated total weight (rough)', s.totalEstWeightG >= 1000 ? `~${(s.totalEstWeightG / 1000).toFixed(1)} kg` : `~${s.totalEstWeightG || 0} g`],
+    ['Camera FOV assumption', s.fovAssumption || '—'],
   ]
   return `<table class="tbl"><tr><th>Metric</th><th>Value</th></tr>${rows
     .map((r) => `<tr><td>${esc(r[0])}</td><td class="num">${fmtNum(r[1])}</td></tr>`)

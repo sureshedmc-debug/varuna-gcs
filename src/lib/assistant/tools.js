@@ -13,8 +13,11 @@ import { getMissionRecording } from '../missionRecording'
 import { findWaterByName, findWaterNear, circleArea } from '../waterBody'
 import { buildPlan, clipToWorkArea, distanceM, WORK_RADIUS_M, LONG_FLIGHT_MIN } from '../missionPatterns'
 import { setPlanDraft, navigateTo, getMissionMapView } from '../planDraftStore'
+import { buildHotspotPlan, clusterHotspots } from '../hotspots'
+import { getImpactStats } from '../impactStats'
+import { resolvePeriod, filterByDateRange, summarizeSightings } from '../trashQuery'
 
-const TABS = ['home', 'live', 'mission', 'detections', 'system']
+const TABS = ['home', 'live', 'mission', 'detections', 'replay', 'system']
 const ASSIST_MAX_TAKEOFF = 30 // m
 const S = { OBJECT: 'object', STRING: 'string', NUMBER: 'number' }
 
@@ -30,7 +33,7 @@ const DECLARATIONS = [
     description: 'Switch the app to a tab.',
     parameters: {
       type: S.OBJECT,
-      properties: { tab: { type: S.STRING, enum: TABS, description: 'home = Map tab, live = Live camera, mission = Missions planner, detections, system' } },
+      properties: { tab: { type: S.STRING, enum: TABS, description: 'home = Map tab, live = Live camera, mission = Missions planner, detections, replay = mission replay, system' } },
       required: ['tab'],
     },
   },
@@ -56,6 +59,40 @@ const DECLARATIONS = [
         radius_m: { type: S.NUMBER, description: 'Plan a circle of this radius around the reference point instead of a mapped lake.' },
       },
       required: ['pattern'],
+    },
+  },
+  {
+    name: 'plan_hotspot_mission',
+    description:
+      'Create a mission that visits the trash hotspots the app has recorded so far (nearest-neighbor route). Use this for phrases like "plan mission on the worst hotspots", "clean the worst spots", "go where the trash is". Draft opens on the Missions tab; operator still reviews then Save → Upload → Start.',
+    parameters: {
+      type: S.OBJECT,
+      properties: {
+        max_hotspots: { type: S.NUMBER, description: 'How many worst hotspots to visit (default 8, cap 60).' },
+        altitude_m: { type: S.NUMBER, description: 'Only if the user specified it. Default 10.' },
+        speed_kmh: { type: S.NUMBER, description: 'Only if the user specified it. Default 5, max 15.' },
+      },
+    },
+  },
+  {
+    name: 'get_mission_debrief',
+    description:
+      'How the most recent mission went: items found this session, worst hotspot coordinates, mission video status, cumulative impact totals. Call when the user asks "how did the mission go", "kaisa raha", "mission ka result", "give me a debrief".',
+    parameters: { type: S.OBJECT, properties: {} },
+  },
+  {
+    name: 'query_trash_history',
+    description:
+      'Real-date summary of trash detections over a time period (today, yesterday, this week, last week, or a custom start/end date). Optionally compare two periods side by side. Use real numbers only — do not invent counts or dates.',
+    parameters: {
+      type: S.OBJECT,
+      properties: {
+        period: { type: S.STRING, enum: ['today', 'yesterday', 'this_week', 'last_week', 'custom'], description: 'Which period to summarise.' },
+        start_date: { type: S.STRING, description: 'ISO date (YYYY-MM-DD) when period=custom.' },
+        end_date: { type: S.STRING, description: 'ISO date (YYYY-MM-DD) when period=custom.' },
+        compare_to: { type: S.STRING, enum: ['today', 'yesterday', 'this_week', 'last_week'], description: 'Optional: also summarise a second period for comparison.' },
+      },
+      required: ['period'],
     },
   },
   {
@@ -202,6 +239,74 @@ async function planMission(args, ctx) {
   }
 }
 
+async function planHotspotMission(args, ctx) {
+  const c = ctx()
+  const home = c.homePoint || c.live?.position || c.laptopPos
+  const log = getTrashLog()
+  const plan = buildHotspotPlan(log, {
+    home,
+    maxHotspots: args.max_hotspots,
+    altitude: args.altitude_m ?? 10,
+    speedKmh: args.speed_kmh ?? 5,
+  })
+  if (!plan.ok) return { ok: false, error: plan.reason }
+  const summary = `Hotspot route · ${plan.waypoints.length} stops · ${(plan.lengthM / 1000).toFixed(1)} km · ~${plan.minutes} min`
+  setPlanDraft({
+    name: `AI · Hotspots (${plan.waypoints.length})`,
+    waypoints: plan.waypoints,
+    altitude: plan.altitude,
+    speedKmh: plan.speedKmh,
+    pattern: 'hotspot',
+    lakeName: `${plan.waypoints.length} hotspots`,
+    polygon: null,
+    summary,
+    warnings: plan.warnings,
+  })
+  navigateTo('mission')
+  return {
+    ok: true,
+    stops: plan.waypoints.length,
+    path_length_km: num(plan.lengthM / 1000, 2),
+    estimated_minutes: plan.minutes,
+    altitude_m: plan.altitude,
+    speed_kmh: plan.speedKmh,
+    top_items: plan.hotspots.slice(0, 3).map((h) => ({ items: h.itemsTotal, lat: num(h.lat, 6), lng: num(h.lng, 6) })),
+    warnings: plan.warnings,
+    next_step: 'Draft loaded on the Missions tab. Review, then Save → Upload → swipe Start.',
+  }
+}
+
+function missionDebrief() {
+  const log = getTrashLog()
+  const rec = getMissionRecording()
+  const hotspots = clusterHotspots(log)
+  const top = hotspots[0]
+  const items = log.reduce((a, e) => a + (Number(e.count) || 0), 0)
+  return {
+    items_found: items,
+    trash_locations: log.length,
+    worst_hotspot: top ? { lat: num(top.lat, 6), lng: num(top.lng, 6), items: top.itemsTotal } : null,
+    mission_video_clips: rec.clips.length,
+    video_recording_now: rec.recording,
+    impact: getImpactStats(),
+    last_detection: log[0] ? new Date(log[0].lastSeen || log[0].firstSeen || 0).toLocaleTimeString() : null,
+  }
+}
+
+function trashHistoryQuery(args) {
+  const a = args || {}
+  const p = resolvePeriod(a.period, a.start_date, a.end_date)
+  if (!p) return { ok: false, error: 'Unknown period. Use today, yesterday, this_week, last_week, or custom with start_date/end_date.' }
+  const log = getTrashLog()
+  const primary = { period: p.label, ...summarizeSightings(filterByDateRange(log, p.start, p.end)) }
+  const out = { ok: true, primary }
+  if (a.compare_to) {
+    const p2 = resolvePeriod(a.compare_to)
+    if (p2) out.compare = { period: p2.label, ...summarizeSightings(filterByDateRange(log, p2.start, p2.end)) }
+  }
+  return out
+}
+
 const CMD_KEY = { arm: 'arm', disarm: 'disarm', takeoff: 'takeoff', rth: 'rth', land: 'land', stop: 'stop', start_mission: 'mission' }
 
 async function flightCommand(args, ctx) {
@@ -275,6 +380,8 @@ function appStatus(ctx) {
 
 /** Execute one tool call. Always resolves with a JSON-able object (errors included). */
 export async function runTool(name, args, ctx) {
+  // The operator dismissed or interrupted this turn: do nothing (no tab switches, no pop-ups).
+  if (ctx()?.active && !ctx().active()) return { ok: false, error: 'Cancelled — the operator dismissed the assistant.' }
   try {
     switch (name) {
       case 'get_app_status':
@@ -286,6 +393,12 @@ export async function runTool(name, args, ctx) {
         return detectionsSummary()
       case 'plan_mission':
         return await planMission(args || {}, ctx)
+      case 'plan_hotspot_mission':
+        return await planHotspotMission(args || {}, ctx)
+      case 'get_mission_debrief':
+        return missionDebrief()
+      case 'query_trash_history':
+        return trashHistoryQuery(args)
       case 'request_flight_command':
         return await flightCommand(args || {}, ctx)
       default:

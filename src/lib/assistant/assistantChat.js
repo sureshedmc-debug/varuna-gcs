@@ -34,8 +34,16 @@ export function createAssistantChat(ctx, onEvent = () => {}) {
     while (turns.length > 1 && flat().length > MAX_HISTORY) turns = turns.slice(1)
   }
 
-  /** Send one user message (typed, or a voice transcript). Resolves with the reply text. */
-  async function send(text) {
+  // Turns run one at a time so two quick inputs never interleave the history.
+  let chain = Promise.resolve()
+  function send(text) {
+    const p = chain.then(() => runTurn(text))
+    chain = p.catch(() => {})
+    return p
+  }
+
+  /** One user message (typed, or a voice transcript). Resolves with the reply text. */
+  async function runTurn(text) {
     const turn = [{ role: 'user', content: text }]
     let reply = ''
     try {

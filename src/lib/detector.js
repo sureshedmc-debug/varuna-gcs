@@ -88,10 +88,9 @@ export async function createDetector(onProgress, modelUrl = '/models/trash.onnx'
     const boxes = []
 
     // Auto-detect layout from tensor shape - cast to Number for TypedArray safety
-    const d0 = Number(dims[0]), d1 = Number(dims[1]), d2 = Number(dims[2])
+    const d1 = Number(dims[1]), d2 = Number(dims[2])
     const isTransposed = d1 < d2
     const n = isTransposed ? d2 : d1
-    console.log('[trash] dims:', [d0, d1, d2], 'isTransposed:', isTransposed, 'n:', n, 'confThr:', confThr)
 
     for (let i = 0; i < n; i++) {
       let cxp, cyp, wp, hp, score
@@ -126,7 +125,6 @@ export async function createDetector(onProgress, modelUrl = '/models/trash.onnx'
       if (x2 <= x1 || y2 <= y1) continue
       boxes.push({ x1, y1, x2, y2, score, cls: 0, label: classNames[0] })
     }
-    console.log('[trash] boxes before NMS:', boxes.length, 'top scores:', boxes.slice(0,5).map(b=>b.score.toFixed(2)))
     return nms(boxes, iouThr)
   }
 

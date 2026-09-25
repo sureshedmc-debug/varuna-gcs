@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react'
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { MapContainer, TileLayer, Marker, Polyline, Polygon, Circle, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -23,21 +23,38 @@ const HoloDrone = lazy(() => import('../components/HoloDrone'))
 const SAT_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
 const BLUE = '#3B9EFF'
 
+// Cached icons + constant styles: react-leaflet rebuilds a marker (setIcon) or
+// restyles a path whenever it receives a NEW object, and this screen
+// re-renders with every telemetry update.
+const iconCache = new Map()
+function cachedIcon(key, make) {
+  let ic = iconCache.get(key)
+  if (!ic) {
+    ic = make()
+    iconCache.set(key, ic)
+  }
+  return ic
+}
+const PATH_STYLE = { color: BLUE, weight: 2.5, opacity: 0.9, dashArray: '2 8' }
+const RING_STYLE = { color: BLUE, weight: 1.2, opacity: 0.6, dashArray: '4 6', fillColor: BLUE, fillOpacity: 0.05 }
+const LAKE_STYLE = { color: '#5AC8FA', weight: 1.5, opacity: 0.8, fillColor: '#5AC8FA', fillOpacity: 0.08, dashArray: '6 6' }
+
 function wpIcon(n) {
-  return L.divIcon({
+  return cachedIcon(`wp:${n}`, () => L.divIcon({
     className: '',
     html: `<div style="width:26px;height:26px;border-radius:50%;background:linear-gradient(180deg,#6BB8FF,#3B9EFF);color:#04121F;display:flex;align-items:center;justify-content:center;font:700 12px Inter;box-shadow:0 0 12px ${BLUE}aa;border:2px solid #0E1116">${n}</div>`,
     iconSize: [26, 26],
     iconAnchor: [13, 13],
-  })
+  }))
 }
-function arrowIcon(angle) {
-  return L.divIcon({
+function arrowIcon(angle0) {
+  const angle = Math.round(angle0) // 1° steps: invisible, lets icons be reused
+  return cachedIcon(`arrow:${angle}`, () => L.divIcon({
     className: '',
     html: `<div style="transform:rotate(${angle}deg);width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-bottom:12px solid ${BLUE};filter:drop-shadow(0 0 4px ${BLUE}aa)"></div>`,
     iconSize: [12, 12],
     iconAnchor: [6, 6],
-  })
+  }))
 }
 function bearing(a, b) {
   const dLat = b[0] - a[0]
@@ -108,6 +125,30 @@ function Slider({ label, value, set, min, max, step, unit }) {
 
 let wpid = 1
 
+// The editable waypoint rows. Memoised so a telemetry update doesn't re-render
+// (and re-measure, for the reorder animation) every row.
+const WaypointRows = memo(function WaypointRows({ wps, onPatch, onReorder, onRemove }) {
+  return (
+    <div className="mb-2 flex max-h-[30vh] flex-col gap-1.5 overflow-y-auto pr-1">
+      {wps.length === 0 && <div className="py-4 text-center text-sm text-muted">No waypoints yet.</div>}
+      {wps.map((w, i) => (
+        <motion.div key={w.id} layout className="flex items-center gap-2 rounded-lg bg-chip px-2.5 py-2">
+          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-accent/20 text-xs font-bold text-accent">{i + 1}</span>
+          <span className="flex-1 font-mono text-[10px] tnum text-muted">{fmtCoord(w.lat)}, {fmtCoord(w.lng)}</span>
+          <select value={w.action} onChange={(e) => onPatch(w.id, { action: e.target.value })} className="inp px-1 py-1 text-xs">
+            <option value="waypoint">waypoint</option>
+            <option value="loiter">loiter</option>
+            <option value="land">land</option>
+          </select>
+          <button onClick={() => onReorder(w.id, -1)} className="rounded bg-chip2 px-1.5 py-0.5 text-xs text-ink">↑</button>
+          <button onClick={() => onReorder(w.id, 1)} className="rounded bg-chip2 px-1.5 py-0.5 text-xs text-ink">↓</button>
+          <button onClick={() => onRemove(w.id)} className="rounded bg-bad/15 px-1.5 py-0.5 text-xs text-bad">✕</button>
+        </motion.div>
+      ))}
+    </div>
+  )
+})
+
 export default function MissionScreen() {
   const { telemetry, simulated } = useSystem()
   const toast = useToast()
@@ -170,19 +211,23 @@ export default function MissionScreen() {
   const isSaved = savedKey === currentKey
   const isUploaded = uploadedKey === currentKey && !!activeMission
 
-  const addWp = (ll) => setWps((s) => [...s, { id: wpid++, lat: ll.lat, lng: ll.lng, action: 'waypoint' }])
-  const moveWp = (id, ll) => setWps((s) => s.map((w) => (w.id === id ? { ...w, lat: ll.lat, lng: ll.lng } : w)))
-  const patchWp = (id, p) => setWps((s) => s.map((w) => (w.id === id ? { ...w, ...p } : w)))
-  const removeWp = (id) => setWps((s) => s.filter((w) => w.id !== id))
-  const reorder = (id, d) =>
-    setWps((s) => {
-      const i = s.findIndex((w) => w.id === id)
-      const j = i + d
-      if (i < 0 || j < 0 || j >= s.length) return s
-      const c = [...s]
-      ;[c[i], c[j]] = [c[j], c[i]]
-      return c
-    })
+  // Stable (useCallback) so the memoised map layers / rows below can skip re-rendering.
+  const addWp = useCallback((ll) => setWps((s) => [...s, { id: wpid++, lat: ll.lat, lng: ll.lng, action: 'waypoint' }]), [])
+  const moveWp = useCallback((id, ll) => setWps((s) => s.map((w) => (w.id === id ? { ...w, lat: ll.lat, lng: ll.lng } : w))), [])
+  const patchWp = useCallback((id, p) => setWps((s) => s.map((w) => (w.id === id ? { ...w, ...p } : w))), [])
+  const removeWp = useCallback((id) => setWps((s) => s.filter((w) => w.id !== id)), [])
+  const reorder = useCallback(
+    (id, d) =>
+      setWps((s) => {
+        const i = s.findIndex((w) => w.id === id)
+        const j = i + d
+        if (i < 0 || j < 0 || j >= s.length) return s
+        const c = [...s]
+        ;[c[i], c[j]] = [c[j], c[i]]
+        return c
+      }),
+    [],
+  )
 
   function saveMission() {
     if (!wps.length) return toast.push({ level: 'warn', title: 'Add at least one waypoint' })
@@ -230,11 +275,33 @@ export default function MissionScreen() {
     }
   }
 
-  const line = [home, ...wps.map((w) => [w.lat, w.lng])]
-  const arrows = []
-  for (let i = 0; i < line.length - 1; i++) {
-    arrows.push({ mid: [(line[i][0] + line[i + 1][0]) / 2, (line[i][1] + line[i + 1][1]) / 2], ang: bearing(line[i], line[i + 1]) })
-  }
+  // Path, arrows and waypoint markers only rebuild when the plan (or home) changes —
+  // not on every telemetry update.
+  const planLayers = useMemo(() => {
+    const line = [home, ...wps.map((w) => [w.lat, w.lng])]
+    const arrows = []
+    for (let i = 0; i < line.length - 1; i++) {
+      arrows.push({ mid: [(line[i][0] + line[i + 1][0]) / 2, (line[i][1] + line[i + 1][1]) / 2], ang: bearing(line[i], line[i + 1]) })
+    }
+    return (
+      <>
+        {line.length > 1 && <Polyline positions={line} pathOptions={PATH_STYLE} />}
+        {arrows.map((a, i) => (
+          <Marker key={`a${i}`} position={a.mid} icon={arrowIcon(a.ang)} interactive={false} />
+        ))}
+        {wps.map((w, i) => (
+          <div key={w.id}>
+            <Circle center={line[i + 1]} radius={90} pathOptions={RING_STYLE} />
+            <Marker position={line[i + 1]} icon={wpIcon(i + 1)} draggable eventHandlers={{ dragend: (e) => moveWp(w.id, e.target.getLatLng()) }} />
+          </div>
+        ))}
+      </>
+    )
+  }, [home, wps, moveWp])
+  const lakePositions = useMemo(
+    () => aiDraft?.polygon?.geometry.coordinates.map((ring) => ring.map(([lng, lat]) => [lat, lng])),
+    [aiDraft],
+  )
   const savedList = saved.data?.missions || saved.data?.items || (Array.isArray(saved.data) ? saved.data : [])
 
   return (
@@ -247,25 +314,10 @@ export default function MissionScreen() {
           <RecenterOnSource center={home} source={live.source} />
           <ReportMapView />
           <FitToDraft draft={aiDraft} />
-          {aiDraft?.polygon && (
-            <Polygon
-              positions={aiDraft.polygon.geometry.coordinates.map((ring) => ring.map(([lng, lat]) => [lat, lng]))}
-              pathOptions={{ color: '#5AC8FA', weight: 1.5, opacity: 0.8, fillColor: '#5AC8FA', fillOpacity: 0.08, dashArray: '6 6' }}
-              interactive={false}
-            />
-          )}
+          {aiDraft?.polygon && <Polygon positions={lakePositions} pathOptions={LAKE_STYLE} interactive={false} />}
           {live.source && <Marker position={home} icon={homeIcon()} interactive={false} />}
           {dronePos && <Drone3DMarker position={dronePos} size={64} />}
-          {line.length > 1 && <Polyline positions={line} pathOptions={{ color: BLUE, weight: 2.5, opacity: 0.9, dashArray: '2 8' }} />}
-          {arrows.map((a, i) => (
-            <Marker key={`a${i}`} position={a.mid} icon={arrowIcon(a.ang)} interactive={false} />
-          ))}
-          {wps.map((w, i) => (
-            <div key={w.id}>
-              <Circle center={[w.lat, w.lng]} radius={90} pathOptions={{ color: BLUE, weight: 1.2, opacity: 0.6, dashArray: '4 6', fillColor: BLUE, fillOpacity: 0.05 }} />
-              <Marker position={[w.lat, w.lng]} icon={wpIcon(i + 1)} draggable eventHandlers={{ dragend: (e) => moveWp(w.id, e.target.getLatLng()) }} />
-            </div>
-          ))}
+          {planLayers}
         </MapContainer>
       </div>
 
@@ -296,7 +348,7 @@ export default function MissionScreen() {
       {/* Floating editor panel */}
       {/* z-30 + capped height: a long plan must never slide under the aircraft
           preview (bottom-right, z-20) and hide the Start button. */}
-      <motion.div layout className="absolute right-3 top-3 z-30 w-[330px] max-w-[calc(100vw-24px)]">
+      <motion.div className="absolute right-3 top-3 z-30 w-[330px] max-w-[calc(100vw-24px)]">
         <div className="glass max-h-[calc(100vh-66px-24px)] overflow-y-auto p-3.5">
           <div className="mb-2 flex items-center justify-between">
             <span className="eyebrow">Flight Plan · {wps.length} WP</span>
@@ -334,23 +386,7 @@ export default function MissionScreen() {
                 <div className="text-[10px] text-faint">Applies to all waypoints · height capped at {MAX_ALT} m</div>
               </div>
 
-              <div className="mb-2 flex max-h-[30vh] flex-col gap-1.5 overflow-y-auto pr-1">
-                {wps.length === 0 && <div className="py-4 text-center text-sm text-muted">No waypoints yet.</div>}
-                {wps.map((w, i) => (
-                  <motion.div key={w.id} layout className="flex items-center gap-2 rounded-lg bg-chip px-2.5 py-2">
-                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-accent/20 text-xs font-bold text-accent">{i + 1}</span>
-                    <span className="flex-1 font-mono text-[10px] tnum text-muted">{fmtCoord(w.lat)}, {fmtCoord(w.lng)}</span>
-                    <select value={w.action} onChange={(e) => patchWp(w.id, { action: e.target.value })} className="inp px-1 py-1 text-xs">
-                      <option value="waypoint">waypoint</option>
-                      <option value="loiter">loiter</option>
-                      <option value="land">land</option>
-                    </select>
-                    <button onClick={() => reorder(w.id, -1)} className="rounded bg-chip2 px-1.5 py-0.5 text-xs text-ink">↑</button>
-                    <button onClick={() => reorder(w.id, 1)} className="rounded bg-chip2 px-1.5 py-0.5 text-xs text-ink">↓</button>
-                    <button onClick={() => removeWp(w.id)} className="rounded bg-bad/15 px-1.5 py-0.5 text-xs text-bad">✕</button>
-                  </motion.div>
-                ))}
-              </div>
+              <WaypointRows wps={wps} onPatch={patchWp} onReorder={reorder} onRemove={removeWp} />
               <div className="grid grid-cols-2 items-center gap-2">
                 <Btn variant={isSaved ? 'secondary' : 'primary'} disabled={!wps.length} onClick={saveMission}>
                   {isSaved ? '✓ Saved' : 'Save'}

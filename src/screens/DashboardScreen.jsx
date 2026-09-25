@@ -90,7 +90,7 @@ function NavCard({ card, onNavigate, i }) {
 }
 
 export default function DashboardScreen({ onNavigate }) {
-  const { telemetry, health, now, backendReachable } = useSystem()
+  const { telemetry, health, backendReachable } = useSystem()
   const det = usePolling(() => api.aiDetections(50), 8000)
 
   const t = telemetry.data || {}
@@ -137,7 +137,7 @@ export default function DashboardScreen({ onNavigate }) {
             >
               {armed === undefined ? 'STATUS UNKNOWN' : armed ? 'ARMED' : 'DISARMED'}
             </span>
-            <StaleBadge lastUpdate={telemetry.lastUpdate} now={now} connected={connected} />
+            <StaleBadge lastUpdate={telemetry.lastUpdate} connected={connected} />
           </div>
         </div>
 

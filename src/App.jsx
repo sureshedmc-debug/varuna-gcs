@@ -8,7 +8,9 @@ import { Rail } from './components/Rail'
 import { TopBar } from './components/TopBar'
 import { registerNavigator } from './lib/planDraftStore'
 
-const Assistant = lazy(() => import('./components/Assistant'))
+import { wakeWordEnabled } from './lib/assistant/wakeWord'
+
+const VoiceAssistant = lazy(() => import('./components/VoiceAssistant'))
 import IntroScreen from './screens/IntroScreen'
 import MissionControlScreen from './screens/MissionControlScreen'
 import SystemScreen from './screens/SystemScreen'
@@ -17,32 +19,49 @@ import SystemScreen from './screens/SystemScreen'
 const LiveScreen = lazy(() => import('./screens/LiveScreen'))
 const MissionScreen = lazy(() => import('./screens/MissionScreen'))
 const DetectionsScreen = lazy(() => import('./screens/DetectionsScreen'))
+const ReplayScreen = lazy(() => import('./screens/ReplayScreen'))
 
 const SCREENS = {
   home: MissionControlScreen,
   live: LiveScreen,
   mission: MissionScreen,
   detections: DetectionsScreen,
+  replay: ReplayScreen,
   system: SystemScreen,
+}
+
+// Only this small component listens to the live system state for the banner,
+// so telemetry updates don't re-render the whole shell (rail, top bar, screen).
+function SystemWarnings() {
+  const { pi, backendReachable } = useSystem()
+  return <WarningBanner warnings={deriveWarnings({ pi: pi.data, backendReachable })} />
 }
 
 function Shell({ onLock }) {
   const [tab, setTab] = useState('home')
-  const [assistantOpen, setAssistantOpen] = useState(false)
-  const { pi, backendReachable } = useSystem()
+  const [wakeSignal, setWakeSignal] = useState(0) // bump to wake / dismiss the voice orb
+  const [wakeWordOn, setWakeWordOn] = useState(wakeWordEnabled)
+  const [wakeState, setWakeState] = useState('off') // listening | off | blocked | unsupported
+  function toggleWakeWord() {
+    const next = !wakeWordOn
+    setWakeWordOn(next)
+    try {
+      localStorage.setItem('varuna.wakeWord', next ? '1' : '0')
+    } catch {
+      /* private mode */
+    }
+  }
   // Lets the AI assistant switch tabs (e.g. open Missions after planning).
   useEffect(() => registerNavigator(setTab), [])
   const Screen = SCREENS[tab]
-  const warnings = deriveWarnings({ pi: pi.data, backendReachable })
-  const isMap = tab === 'home'
   const fullBleed = tab === 'home' || tab === 'live' || tab === 'mission'
 
   return (
     <div className="relative min-h-screen">
       {!fullBleed && <div className="ambient" />}
-      <TopBar onLock={onLock} onAssistant={() => setAssistantOpen((v) => !v)} assistantOpen={assistantOpen} />
+      <TopBar onLock={onLock} onAssistant={() => setWakeSignal((n) => n + 1)} wakeState={wakeWordOn ? wakeState : 'off'} onToggleWake={toggleWakeWord} />
       <Rail active={tab} onChange={setTab} onLock={onLock} />
-      <WarningBanner warnings={warnings} />
+      <SystemWarnings />
       <main className={`relative z-10 pt-[56px] ${fullBleed ? 'px-2 pb-2 md:pl-[80px] md:pr-2' : 'px-2.5 pb-24 md:pb-4 md:pl-[86px] md:pr-4'}`}>
         <AnimatePresence mode="wait">
           <motion.div
@@ -66,7 +85,7 @@ function Shell({ onLock }) {
         </AnimatePresence>
       </main>
       <Suspense fallback={null}>
-        <Assistant open={assistantOpen} onClose={() => setAssistantOpen(false)} tab={tab} />
+        <VoiceAssistant tab={tab} wakeSignal={wakeSignal} wakeWordOn={wakeWordOn} onWakeState={setWakeState} />
       </Suspense>
     </div>
   )

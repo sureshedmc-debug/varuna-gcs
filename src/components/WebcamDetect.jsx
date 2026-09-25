@@ -10,6 +10,13 @@ import { useSystem } from './SystemContext'
 import { useLivePosition, useLaptopGps } from '../hooks/useLaptopGps'
 import { pick } from '../lib/format'
 import { StatusOrb } from './ui'
+import { getFovSettings, pixelBoxToRealSize } from '../lib/sizeEstimate'
+import { getAlertSettings } from '../lib/alertSettings'
+import { sendBigDumpEmail } from '../lib/alerts/email'
+
+// One auto-alert at most every this many seconds, no matter how many frames
+// still contain a big dump. Prevents spamming the email channel.
+const ALERT_COOLDOWN_MS = 60000
 
 const ACCENT = '#3b41ff'
 const HUMAN_COLOR = '#FFD60A'
@@ -25,6 +32,13 @@ const ADAPTIVE_CONF = {
   gridSizeMinConf:  { 2: 0.08, 3: 0.06, 4: 0.04, 5: 0.03 },
   successBoost: 0.10, failurePenalty: 0.05, maxAdaptiveConf: 0.4, minAdaptiveConf: 0.02,
 }
+
+// Hand the main thread back to the browser between model runs, so the UI can
+// paint and take clicks mid-frame instead of freezing while all models run.
+const yieldToUI = () =>
+  globalThis.scheduler?.yield
+    ? globalThis.scheduler.yield()
+    : new Promise((r) => { const ch = new MessageChannel(); ch.port1.onmessage = () => r(); ch.port2.postMessage(0) })
 
 // controlsLift: extra px to raise the Start/Stop/Record row, for hosts that
 // overlay their own bottom panel (e.g. the Live tab's flight commands).
@@ -103,6 +117,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
   const sourceRef = useRef(source)
   sourceRef.current = source
   const lastGeoTagRef = useRef(0)
+  const lastAlertAtRef = useRef(0)
   useEffect(() => { longRangeRef.current        = longRange        }, [longRange])
   useEffect(() => { humanDetectionRef.current   = humanDetection   }, [humanDetection])
   useEffect(() => { plantSuppressionRef.current = plantSuppression }, [plantSuppression])
@@ -157,10 +172,12 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
     for (const b of boxesRef.current) {
       const col=b.color||ACCENT, isHuman=b.label==='Human', isRiverTrash=b.label==='River trash'
       const x=ox+(b.x1/vw)*dw, y=oy+(b.y1/vh)*dh, w=((b.x2-b.x1)/vw)*dw, h=((b.y2-b.y1)/vh)*dh
-      ctx.strokeStyle=isRiverTrash?RIVER_COLOR:col; ctx.lineWidth=isRiverTrash?3:2
+      ctx.strokeStyle=isRiverTrash?RIVER_COLOR:col
       ctx.setLineDash(isHuman?[6,4]:[])
-      ctx.shadowColor=isRiverTrash?RIVER_COLOR:col; ctx.shadowBlur=isRiverTrash?15:10
-      ctx.strokeRect(x,y,w,h); ctx.shadowBlur=0; ctx.setLineDash([])
+      // Glow = a wide faint stroke under the box (canvas shadowBlur is very slow at 60 fps)
+      ctx.globalAlpha=0.28; ctx.lineWidth=isRiverTrash?9:7; ctx.strokeRect(x,y,w,h); ctx.globalAlpha=1
+      ctx.lineWidth=isRiverTrash?3:2
+      ctx.strokeRect(x,y,w,h); ctx.setLineDash([])
       const labelText=isHuman?'Human':`${b.label} ${Math.round(b.score*100)}%`
       const tw=ctx.measureText(labelText).width+14, thh=Math.max(20,cw/32)
       const lx=x, ly=Math.max(0,y-thh)
@@ -168,8 +185,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
       ctx.beginPath(); ctx.roundRect(lx,ly,tw,thh,5); ctx.fill()
       ctx.strokeStyle=isRiverTrash?RIVER_COLOR:col; ctx.lineWidth=isRiverTrash?2:1; ctx.stroke()
       ctx.fillStyle=isRiverTrash?'#000':(isHuman?HUMAN_COLOR:'#fff')
-      ctx.shadowColor=isRiverTrash?RIVER_COLOR:col; ctx.shadowBlur=isRiverTrash?8:4
-      ctx.fillText(labelText,lx+7,ly+3); ctx.shadowBlur=0
+      ctx.fillText(labelText,lx+7,ly+3)
     }
   }
 
@@ -213,20 +229,24 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
     let frames=0, t0=performance.now(), taintWarned=false
     while(runningRef.current&&detRef.current&&srcElRef.current){
       const tickStart=performance.now()
+      const loopFrame={} // person + plant filters share one COCO model pass per loop
       let faceBoxes=[], personBoxes=[], trashBoxes=[]
       if(trashDetectionRef.current){
         try { trashBoxes=await detRef.current.detect(srcElRef.current,{confThr:Math.max(0.08,confRef.current*0.7),iouThr:0.40}) }
         catch(e){ if(!taintWarned&&/tainted|cross.origin|SecurityError/i.test(e?.message??'')){taintWarned=true;setMsg('Drone stream blocked by CORS')} }
       }
+      await yieldToUI()
       if(faceDetRef.current&&humanDetectionRef.current){
         try{faceBoxes=await faceDetRef.current.detectFaces(srcElRef.current,{confThr:0.15,iouThr:0.25})}catch(e){console.warn('[face]',e)}
       }
+      await yieldToUI()
       if(personDetRef.current&&humanDetectionRef.current){
-        try{personBoxes=await personDetRef.current.detectPersons(srcElRef.current,{confThr:0.25,iouThr:0.30})}catch(e){console.warn('[person]',e)}
+        try{personBoxes=await personDetRef.current.detectPersons(srcElRef.current,{confThr:0.25,iouThr:0.30,frame:loopFrame})}catch(e){console.warn('[person]',e)}
       }
       let plantBoxes=[]
+      await yieldToUI()
       if(plantDetRef.current&&plantDetRef.current.available&&plantSuppressionRef.current){
-        try{plantBoxes=await plantDetRef.current.detectPlants(srcElRef.current,{confThr:0.20,iouThr:0.30})}catch(e){console.warn('[plant]',e)}
+        try{plantBoxes=await plantDetRef.current.detectPlants(srcElRef.current,{confThr:0.20,iouThr:0.30,frame:loopFrame})}catch(e){console.warn('[plant]',e)}
       }
       let runTile=false
       if(longRangeRef.current){
@@ -254,12 +274,28 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
       if(finalTrash.length>0&&now-lastGeoTagRef.current>=500){
         lastGeoTagRef.current=now
         const g=geoRef.current
+        // Rough real-world size of the biggest box for this frame.
+        const el=srcElRef.current
+        const [fw,fh]=el?srcSize(el):[0,0]
+        let biggest=finalTrash[0]
+        let bestArea=(biggest.x2-biggest.x1)*(biggest.y2-biggest.y1)
+        for(const b of finalTrash){const a=(b.x2-b.x1)*(b.y2-b.y1);if(a>bestArea){bestArea=a;biggest=b}}
+        const size=g.alt?pixelBoxToRealSize({boxW:biggest.x2-biggest.x1,boxH:biggest.y2-biggest.y1,frameW:fw,frameH:fh,altitudeM:g.alt,fovDeg:{horizontal:getFovSettings().fovHorizontalDeg,vertical:getFovSettings().fovVerticalDeg}}):null
+        const cls=biggest.cls==='human'?'trash':(biggest.cls||'trash')
         recordTrashSighting({
           lat:g.pos?g.pos[0]:null, lng:g.pos?g.pos[1]:null, alt:g.alt,
           count:finalTrash.length, confidence:Math.max(...finalTrash.map(b=>Number(b.score)||0)),
           source:sourceRef.current, posSource:g.posSource, accuracy:g.accuracy,
           photo:capturePhoto(),
+          className:cls, estWidthM:size?.widthM??null, estHeightM:size?.heightM??null,
         })
+        // Big-dump auto alerts. Guarded by cooldown and per-channel toggles.
+        const settings=getAlertSettings()
+        if(finalTrash.length>=Math.max(1,Number(settings.bigDumpThreshold)||8)&&Date.now()-lastAlertAtRef.current>ALERT_COOLDOWN_MS){
+          lastAlertAtRef.current=Date.now()
+          const alert={itemCount:finalTrash.length,cls,lat:g.pos?g.pos[0]:null,lng:g.pos?g.pos[1]:null,source:sourceRef.current}
+          if(settings.enableEmailOnBigDump){sendBigDumpEmail(alert).catch(()=>{})}
+        }
       }
       const lf=humanDetectionRef.current?faceBoxes.map(b=>({...b,label:'Human',color:HUMAN_COLOR,cls:'human'})):[]
       const lp=humanDetectionRef.current?personBoxes.map(b=>({...b,label:'Human',color:HUMAN_COLOR,cls:'human'})):[]
@@ -327,7 +363,8 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
     if(isRecording){if(mediaRecorderRef.current&&mediaRecorderRef.current.state!=='inactive')mediaRecorderRef.current.stop();setIsRecording(false);return}
     const cv=canvasRef.current; if(!cv)return
     const stream=cv.captureStream(30)
-    const mimeType=MediaRecorder.isTypeSupported('video/webm; codecs=vp9')?'video/webm; codecs=vp9':'video/webm'
+    // VP8 first: same .webm output, several times cheaper to encode than VP9 (keeps the UI smooth while recording)
+    const mimeType=['video/webm; codecs=vp8','video/webm; codecs=vp9'].find(t=>MediaRecorder.isTypeSupported(t))||'video/webm'
     const recorder=new MediaRecorder(stream,{mimeType})
     mediaRecorderRef.current=recorder; chunksRef.current=[]
     recorder.ondataavailable=e=>{if(e.data&&e.data.size>0)chunksRef.current.push(e.data)}
@@ -376,7 +413,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
       <canvas ref={canvasRef} className="h-full w-full" />
 
       {/* status pill */}
-      <div className="absolute left-3 top-3 z-20 flex items-center gap-2 rounded-full bg-black/60 px-3 py-1.5 backdrop-blur"
+      <div className="absolute left-3 top-3 z-20 flex items-center gap-2 rounded-full bg-black/75 px-3 py-1.5"
         style={{border:'1px solid rgba(255,255,255,0.08)'}}>
         <StatusOrb level={status==='running'?'ok':status==='error'?'bad':'warn'} size={9} pulse={status!=='running'} />
         <span className="text-[11px] font-semibold text-white/90">
@@ -385,8 +422,8 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
       </div>
 
       {/* source toggle */}
-      <div className="absolute right-3 top-3 z-20 flex gap-1 rounded-xl p-0.5 backdrop-blur"
-        style={{background:'rgba(11,18,32,0.72)',border:'1px solid rgba(255,255,255,0.08)'}}>
+      <div className="absolute right-3 top-3 z-20 flex gap-1 rounded-xl p-0.5"
+        style={{background:'rgba(11,18,32,0.88)',border:'1px solid rgba(255,255,255,0.08)'}}>
         {[['webcam','Webcam'],['stream','Drone']].map(([id,label])=>(
           <button key={id} type="button" onClick={()=>switchSource(id)}
             className="rounded-lg px-3 py-1 text-[11px] font-bold transition-all"
@@ -456,7 +493,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
           style={{transition:'opacity 0.25s ease,transform 0.25s cubic-bezier(.34,1.56,.64,1)',transformOrigin:'bottom right'}}>
 
           {/* Confidence */}
-          <div className="flex items-center gap-3 rounded-2xl px-4 py-2.5 backdrop-blur"
+          <div className="flex items-center gap-3 rounded-2xl px-4 py-2.5"
             style={{background:'rgba(11,18,32,0.85)',border:'1px solid rgba(255,255,255,0.09)',boxShadow:'0 8px 24px rgba(0,0,0,0.4)',minWidth:'220px'}}>
             <span>🎯</span>
             <span className="flex-1 text-[12px] font-semibold text-white/80">Confidence</span>
@@ -467,7 +504,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
           </div>
 
           {/* Long Range */}
-          <div className="flex items-center gap-3 rounded-2xl px-4 py-2.5 backdrop-blur cursor-pointer"
+          <div className="flex items-center gap-3 rounded-2xl px-4 py-2.5 cursor-pointer"
             onClick={()=>setLongRange(v=>!v)}
             style={{background:'rgba(11,18,32,0.85)',border:'1px solid rgba(255,255,255,0.09)',boxShadow:'0 8px 24px rgba(0,0,0,0.4)',minWidth:'220px'}}>
             <span>🗺️</span>
@@ -476,7 +513,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
           </div>
 
           {/* Trash */}
-          <div className="flex items-center gap-3 rounded-2xl px-4 py-2.5 backdrop-blur cursor-pointer"
+          <div className="flex items-center gap-3 rounded-2xl px-4 py-2.5 cursor-pointer"
             onClick={()=>setTrashDetection(v=>!v)}
             style={{background:'rgba(11,18,32,0.85)',border:'1px solid rgba(255,255,255,0.09)',boxShadow:'0 8px 24px rgba(0,0,0,0.4)',minWidth:'220px'}}>
             <span>🗑️</span>
@@ -485,7 +522,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
           </div>
 
           {/* Human */}
-          <div className="flex items-center gap-3 rounded-2xl px-4 py-2.5 backdrop-blur cursor-pointer"
+          <div className="flex items-center gap-3 rounded-2xl px-4 py-2.5 cursor-pointer"
             onClick={()=>setHumanDetection(v=>!v)}
             style={{background:'rgba(11,18,32,0.85)',border:'1px solid rgba(255,255,255,0.09)',boxShadow:'0 8px 24px rgba(0,0,0,0.4)',minWidth:'220px'}}>
             <span>🧑</span>
@@ -494,7 +531,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
           </div>
 
           {/* Plant */}
-          <div className="flex items-center gap-3 rounded-2xl px-4 py-2.5 backdrop-blur cursor-pointer"
+          <div className="flex items-center gap-3 rounded-2xl px-4 py-2.5 cursor-pointer"
             onClick={()=>setPlantSuppression(v=>!v)}
             style={{background:'rgba(11,18,32,0.85)',border:'1px solid rgba(255,255,255,0.09)',boxShadow:'0 8px 24px rgba(0,0,0,0.4)',minWidth:'220px'}}>
             <span>🌿</span>
@@ -504,7 +541,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
         </div>
 
         {/* Gear icon */}
-        <button className="flex h-12 w-12 items-center justify-center rounded-full backdrop-blur
+        <button className="flex h-12 w-12 items-center justify-center rounded-full
           transition-all duration-300 group-hover:rotate-90 group-hover:scale-110"
           style={{background:'linear-gradient(135deg,rgba(59,65,255,0.6),rgba(107,184,255,0.3))',border:'1px solid rgba(107,184,255,0.35)',boxShadow:'0 0 20px rgba(59,158,255,0.3),0 4px 12px rgba(0,0,0,0.5)'}}>
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

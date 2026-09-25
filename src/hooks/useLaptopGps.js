@@ -85,5 +85,10 @@ export function useHomePoint(telemetryData, live, resetKey) {
   if (live.position && (!ref.current || (ref.current.source === 'laptop' && live.source === 'drone'))) {
     ref.current = { pos: live.position, source: live.source }
   }
-  return readHomeFromTelemetry(telemetryData) || ref.current?.pos || null
+  const h = readHomeFromTelemetry(telemetryData) || ref.current?.pos || null
+  // Same array while the coordinates are unchanged (readHomeFromTelemetry builds
+  // a new one per call), so maps/paths drawn from home don't redraw every update.
+  const hLat = h ? h[0] : null
+  const hLng = h ? h[1] : null
+  return useMemo(() => (hLat != null && hLng != null ? [hLat, hLng] : null), [hLat, hLng])
 }

@@ -1,8 +1,9 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { api } from '../api/client'
 import { useSystem } from '../components/SystemContext'
-import { usePolling, useNow } from '../hooks/usePolling'
+import { usePolling } from '../hooks/usePolling'
+import { useIsDesktop } from '../hooks/useMediaQuery'
 import { useToast } from '../components/Toast'
 import { StatusOrb, StaleBadge, SwipeConfirm } from '../components/ui'
 import { ViewToggle, EYE, EYE_OFF, SWAP } from '../components/ViewToggle'
@@ -23,8 +24,9 @@ function useRolling(value, cap = 20) {
   const [arr, setArr] = useState([])
   const last = useRef(null)
   useEffect(() => {
-    const v = Number(value)
-    if (Number.isNaN(v)) return
+    const raw = Number(value)
+    if (Number.isNaN(raw)) return
+    const v = Math.round(raw * 100) / 100 // ignore changes the tiles can't even show
     if (last.current === v) return
     last.current = v
     setArr((a) => [...a, v].slice(-cap))
@@ -51,7 +53,7 @@ function readT(t) {
    accent) — scoped to this file; every other screen keeps the app's default
    glass/blue look untouched via the shared `.glass` class + `--accent`. ---------- */
 const HOME = {
-  panel: 'rgba(15,18,23,0.74)',
+  panel: 'rgba(15,18,23,0.88)',
   border: 'rgba(255,255,255,0.06)',
   chip: 'rgba(255,255,255,0.04)',
   accent: '#2DD4BF',
@@ -60,8 +62,10 @@ const HOME = {
   muted: '#8891A0',
 }
 const LEVEL_COLOR = { ok: '#34D399', warn: '#F59E0B', bad: '#EF4444', idle: HOME.muted }
+// No backdrop blur: these cards float over the live map, and re-blurring the
+// map under ~10 cards on every pan/frame was a big GPU cost. Opaque panel instead.
 function cardStyle(radius = 12) {
-  return { background: HOME.panel, border: `1px solid ${HOME.border}`, borderRadius: radius, backdropFilter: 'blur(10px)' }
+  return { background: HOME.panel, border: `1px solid ${HOME.border}`, borderRadius: radius }
 }
 
 /* ---------- reusable panel sections ---------- */
@@ -214,7 +218,11 @@ function EventLog({ entries }) {
 
 /* ---------- the screen ---------- */
 export default function MissionControlScreen({ onNavigate }) {
-  const { telemetry, health, pi, backendReachable, simulated, now } = useSystem()
+  const { telemetry, health, pi, backendReachable, simulated } = useSystem()
+  const now = Date.now()
+  // Only the layout that is actually on screen is mounted (not desktop + mobile
+  // both, hidden by CSS) — halves the maps, 3D drones and video streams.
+  const isDesktop = useIsDesktop()
   const toast = useToast()
   const ai = usePolling(api.aiStatus, 5000)
   const cam = usePolling(api.cameraStatus, 6000)
@@ -242,9 +250,11 @@ export default function MissionControlScreen({ onNavigate }) {
   // the Mission tab — nothing invented here. No mission uploaded → no
   // overlay, just the aircraft's live position (see MapCanvas/PatrolOverlay).
   const activeMission = missionFor(useActiveMission(), simulated ? 'sim' : 'real')
-  const patrol = activeMission?.waypoints?.length
-    ? activeMission.waypoints.map((w, i) => ({ lat: w.lat, lng: w.lng, label: String(i + 1), radius: 40 }))
-    : null
+  const missionWps = activeMission?.waypoints
+  const patrol = useMemo(
+    () => (missionWps?.length ? missionWps.map((w, i) => ({ lat: w.lat, lng: w.lng, label: String(i + 1), radius: 40 })) : null),
+    [missionWps],
+  )
 
   const battSeries = useRolling(t.volt)
   const sptSeries = useRolling(t.speed)
@@ -265,17 +275,18 @@ export default function MissionControlScreen({ onNavigate }) {
       toast.push({ level: 'bad', title: `Command failed: ${e?.message || e}` })
     }
   }
-  function openRth() {
+  const openRth = useCallback(() => {
     setRthId((n) => n + 1)
     setRthOpen(true)
-  }
+  }, [])
+  const homeHandlers = useMemo(() => ({ click: openRth }), [openRth])
 
   const homeMarker = homePoint && (
     <Marker
       position={homePoint}
       icon={homeIcon()}
       title="Home point — tap for Return to Home"
-      eventHandlers={{ click: openRth }}
+      eventHandlers={homeHandlers}
     />
   )
   const drone3d = center && <Drone3DMarker position={center} />
@@ -292,7 +303,7 @@ export default function MissionControlScreen({ onNavigate }) {
   const panels = (
     <>
       <AircraftCard t={t} armed={t.armed} connected={connected} />
-      <Panel title="System Overview" right={<StaleBadge lastUpdate={telemetry.lastUpdate} now={now} connected={connected} />}>
+      <Panel title="System Overview" right={<StaleBadge lastUpdate={telemetry.lastUpdate} connected={connected} />}>
         <OverviewTiles battSeries={battSeries} sptSeries={sptSeries} satSeries={satSeries} aiOn={aiOn} />
       </Panel>
       <Panel title="Diagnostics">
@@ -348,6 +359,7 @@ export default function MissionControlScreen({ onNavigate }) {
       style={{ transformPerspective: 1400 }}
     >
       {/* ===== Desktop / tablet: map with floating panels ===== */}
+      {isDesktop ? (
       <div className="relative hidden md:block" style={{ height: 'calc(100vh - 56px)' }}>
         {/* Background = the active main view (DJI-style swap between map & video) */}
         <div className="absolute inset-0 z-0 isolate overflow-hidden rounded-2xl border border-line">
@@ -395,7 +407,7 @@ export default function MissionControlScreen({ onNavigate }) {
 
         {/* Right live-feed widget — always kept when in map view (the "live widget") */}
         {mainView === 'map' && (
-          <motion.div layout className="absolute right-3 top-3 z-20 w-[280px]">
+          <motion.div className="absolute right-3 top-3 z-20 w-[280px]">
             <div className="p-2.5" style={cardStyle()}>{videoBlock}</div>
           </motion.div>
         )}
@@ -423,7 +435,8 @@ export default function MissionControlScreen({ onNavigate }) {
         </AnimatePresence>
       </div>
 
-      {/* ===== Mobile: stacked ===== */}
+      ) : (
+      /* ===== Mobile: stacked ===== */
       <div className="flex flex-col gap-3 md:hidden">
         <div className="relative h-56 overflow-hidden rounded-2xl border border-line">
           <MapCanvas center={center} hasFix={hasFix} waypoints={patrol} zoom={15} droneMarker={drone3d}>
@@ -437,6 +450,7 @@ export default function MissionControlScreen({ onNavigate }) {
         <div className="p-2.5" style={cardStyle()}>{videoBlock}</div>
         {panels}
       </div>
+      )}
 
       <SwipeConfirm open={rthOpen} openId={rthId} cmd="rth" onClose={() => setRthOpen(false)} onConfirm={returnHome} />
     </motion.div>

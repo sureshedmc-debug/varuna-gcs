@@ -2,6 +2,7 @@ import { AnimatePresence, animate, motion, useMotionValue, useSpring, useTransfo
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { relTime } from '../lib/format'
+import { useNow } from '../hooks/usePolling'
 import { useToast } from './Toast' // circular with Toast.jsx (StatusOrb) — safe: both only used at render time
 
 // --- Status semantics: green=ok, amber=warn, red=bad. Used NOWHERE else. ---
@@ -18,14 +19,8 @@ export function StatusOrb({ level = 'idle', size = 14, pulse = false }) {
   const c = (STATUS[level] || STATUS.idle).color
   return (
     <span className="relative inline-flex" style={{ width: size, height: size }}>
-      {pulse && (
-        <motion.span
-          className="absolute inset-0 rounded-full"
-          style={{ background: c }}
-          animate={{ opacity: [0.45, 0], scale: [1, 2.2] }}
-          transition={{ duration: 1.6, repeat: Infinity, ease: 'easeOut' }}
-        />
-      )}
+      {/* CSS keyframes (index.css) run on the compositor — no per-frame JS */}
+      {pulse && <span className="orb-pulse absolute inset-0 rounded-full" style={{ background: c }} />}
       <span
         className="relative rounded-full"
         style={{
@@ -109,8 +104,11 @@ export function Btn({ children, variant = 'primary', className = '', disabled, .
   )
 }
 
-/** "last updated / stale / disconnected" badge for every live value block. */
-export function StaleBadge({ lastUpdate, now, staleAfter = 6000, connected = true }) {
+/** "last updated / stale / disconnected" badge for every live value block.
+ *  Ticks its own clock, so the screen around it doesn't re-render every second. */
+export function StaleBadge({ lastUpdate, now: nowProp, staleAfter = 6000, connected = true }) {
+  const tick = useNow(1000)
+  const now = nowProp ?? tick
   const age = now - lastUpdate
   let level = 'ok'
   let text = relTime(lastUpdate, now)

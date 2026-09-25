@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import { motion } from 'framer-motion'
 import { getTheme, applyTheme } from '../lib/theme'
 
@@ -10,8 +10,10 @@ const SUN = (
   </g>
 )
 
-/** Segmented Dark / Light theme switch (blue vs cyan/sky). */
-export function ThemeToggle() {
+/** Segmented Dark / Light theme switch (blue vs cyan/sky).
+ *  memo: it has no props, so the telemetry-driven screens around it never
+ *  need to re-render (and re-measure its layoutId pill). */
+export const ThemeToggle = memo(function ThemeToggle() {
   const [theme, setThemeState] = useState(getTheme())
   function set(t) {
     setThemeState(t)
@@ -43,4 +45,4 @@ export function ThemeToggle() {
       ))}
     </div>
   )
-}
+})

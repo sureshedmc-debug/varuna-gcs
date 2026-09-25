@@ -2,10 +2,15 @@ import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { api, getApiBase, setApiBase, DEFAULT_API_BASE } from '../api/client'
 import { useSystem } from '../components/SystemContext'
-import { usePolling, useNow } from '../hooks/usePolling'
+import { usePolling } from '../hooks/usePolling'
 import { useToast } from '../components/Toast'
 import { Btn, StaleBadge, StatusOrb, TiltCard, Field, Spinner } from '../components/ui'
 import { num, bool, pick } from '../lib/format'
+import { setAlertSettings, useAlertSettings } from '../lib/alertSettings'
+import { getFovSettings, setFovSettings, useFovSettings, DEFAULT_AVG_WEIGHT_G } from '../lib/sizeEstimate'
+import { sendReportReadyEmail } from '../lib/alerts/email'
+import { openWhatsApp } from '../lib/alerts/whatsapp'
+import { buildAlertText } from '../lib/alerts/format'
 
 function ConnectionPanel() {
   const [val, setVal] = useState(getApiBase())
@@ -206,6 +211,105 @@ function LinkPreference() {
   )
 }
 
+function AlertsPanel() {
+  const s = useAlertSettings()
+  const [busy, setBusy] = useState('')
+  const toast = useToast()
+  const upd = (patch) => setAlertSettings(patch)
+  const testText = buildAlertText({ itemCount: s.bigDumpThreshold, cls: 'trash', lat: 17.4239, lng: 78.4738, source: 'stream' })
+
+  function testWhatsApp() {
+    if (!s.whatsappNumber) return toast.push({ level: 'warn', title: 'Enter a WhatsApp number first' })
+    const ok = openWhatsApp(`TEST — ${testText}`)
+    if (!ok) toast.push({ level: 'warn', title: 'Popup blocked — allow pop-ups for VARUNA.' })
+  }
+  async function testEmail() {
+    setBusy('em')
+    const r = await sendReportReadyEmail({ filename: 'TEST-report.doc', summary: testText })
+    toast.push({ level: r.ok ? 'ok' : 'bad', title: r.ok ? 'Email test sent' : `Email: ${r.error}` })
+    setBusy('')
+  }
+
+  return (
+    <div className="grid gap-4 sm:grid-cols-2">
+      <div className="glass-soft flex flex-col gap-2 p-3">
+        <div className="text-xs font-semibold text-ink">WhatsApp</div>
+        <div className="text-[11px] text-muted">Opens a prefilled wa.me link — the operator taps Send in WhatsApp. No token needed.</div>
+        <input value={s.whatsappNumber} onChange={(e) => upd({ whatsappNumber: e.target.value.replace(/[^0-9+]/g, '') })} placeholder="Phone (e.g. 91XXXXXXXXXX)" className="inp px-2 py-1 text-xs font-mono" spellCheck={false} />
+        <Btn variant="secondary" onClick={testWhatsApp}>Open WhatsApp with test message</Btn>
+      </div>
+
+      <div className="glass-soft flex flex-col gap-2 p-3">
+        <div className="text-xs font-semibold text-ink">Email (EmailJS)</div>
+        <div className="text-[11px] text-muted">Sign up at emailjs.com, pick a service (Gmail/…), create a template that expects these fields: to_email, subject, message, filename, summary, itemCount, cls, lat, lng, mapUrl. Paste ids below.</div>
+        <input value={s.emailjsServiceId} onChange={(e) => upd({ emailjsServiceId: e.target.value })} placeholder="Service ID" className="inp px-2 py-1 text-xs font-mono" spellCheck={false} />
+        <input value={s.emailjsTemplateId} onChange={(e) => upd({ emailjsTemplateId: e.target.value })} placeholder="Template ID" className="inp px-2 py-1 text-xs font-mono" spellCheck={false} />
+        <input value={s.emailjsPublicKey} onChange={(e) => upd({ emailjsPublicKey: e.target.value })} placeholder="Public key" className="inp px-2 py-1 text-xs font-mono" spellCheck={false} />
+        <input value={s.emailjsToAddress} onChange={(e) => upd({ emailjsToAddress: e.target.value })} placeholder="Send alerts to…" className="inp px-2 py-1 text-xs font-mono" spellCheck={false} />
+        <label className="flex items-center gap-2 text-[11px] text-muted">
+          <input type="checkbox" checked={s.enableEmailOnReport} onChange={(e) => upd({ enableEmailOnReport: e.target.checked })} />
+          Email me when a report is downloaded
+        </label>
+        <label className="flex items-center gap-2 text-[11px] text-muted">
+          <input type="checkbox" checked={s.enableEmailOnBigDump} onChange={(e) => upd({ enableEmailOnBigDump: e.target.checked })} />
+          Email on a big dump ({s.bigDumpThreshold}+ items)
+        </label>
+        <Btn variant="secondary" onClick={testEmail} disabled={busy === 'em'}>{busy === 'em' ? 'Sending…' : 'Send test email'}</Btn>
+      </div>
+
+      <div className="glass-soft flex flex-col gap-2 p-3">
+        <div className="text-xs font-semibold text-ink">Big-dump threshold</div>
+        <div className="text-[11px] text-muted">Fires an alert when at least this many trash items are seen in one frame (with a 1-minute cooldown).</div>
+        <input
+          type="range"
+          min={2}
+          max={30}
+          step={1}
+          value={s.bigDumpThreshold}
+          onChange={(e) => upd({ bigDumpThreshold: Number(e.target.value) })}
+          className="w-full accent-accent"
+        />
+        <div className="text-xs font-mono tnum text-accent">{s.bigDumpThreshold} items</div>
+      </div>
+    </div>
+  )
+}
+
+function FovPanel() {
+  const s = useFovSettings()
+  return (
+    <div className="grid gap-3 sm:grid-cols-2">
+      <div className="glass-soft flex flex-col gap-2 p-3">
+        <div className="text-xs font-semibold text-ink">Camera field of view</div>
+        <div className="text-[11px] text-muted">Used to convert a detection's pixel size into a rough real-world size (with the drone altitude). Default is a Pi Camera Module.</div>
+        <label className="text-[11px] text-muted">Horizontal ({s.fovHorizontalDeg}°)</label>
+        <input type="range" min={30} max={120} step={1} value={s.fovHorizontalDeg} onChange={(e) => setFovSettings({ fovHorizontalDeg: Number(e.target.value) })} className="w-full accent-accent" />
+        <label className="text-[11px] text-muted">Vertical ({s.fovVerticalDeg}°)</label>
+        <input type="range" min={20} max={100} step={1} value={s.fovVerticalDeg} onChange={(e) => setFovSettings({ fovVerticalDeg: Number(e.target.value) })} className="w-full accent-accent" />
+      </div>
+      <div className="glass-soft flex flex-col gap-2 p-3">
+        <div className="text-xs font-semibold text-ink">Average item weight (grams)</div>
+        <div className="text-[11px] text-muted">Rough per-item weight used to estimate total weight in the report. Adjust to your typical debris.</div>
+        {Object.keys(DEFAULT_AVG_WEIGHT_G).map((k) => (
+          <label key={k} className="flex items-center gap-2 text-xs">
+            <span className="w-32 capitalize text-muted">{k}</span>
+            <input
+              type="number"
+              min={1}
+              max={2000}
+              step={1}
+              value={s.avgWeightG[k] ?? DEFAULT_AVG_WEIGHT_G[k]}
+              onChange={(e) => setFovSettings({ avgWeightG: { ...s.avgWeightG, [k]: Number(e.target.value) } })}
+              className="inp w-24 px-2 py-1 font-mono tnum"
+            />
+            <span className="text-muted">g each</span>
+          </label>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function Section({ title, children, right }) {
   return (
     <TiltCard tilt={false} className="p-5">
@@ -219,7 +323,6 @@ function Section({ title, children, right }) {
 }
 
 export default function SystemScreen() {
-  const now = useNow(1000)
   const { pi, health } = useSystem()
   const cam = usePolling(api.cameraStatus, 6000)
   const ai = usePolling(api.aiStatus, 6000)
@@ -244,7 +347,7 @@ export default function SystemScreen() {
         <ConnectionPanel />
       </Section>
 
-      <Section title="Raspberry Pi" right={<StaleBadge lastUpdate={pi.lastUpdate} now={now} connected={!pi.error} />}>
+      <Section title="Raspberry Pi" right={<StaleBadge lastUpdate={pi.lastUpdate} connected={!pi.error} />}>
         {pi.loading && !pi.data ? (
           <Spinner label="Reading Pi metrics" />
         ) : (
@@ -283,6 +386,20 @@ export default function SystemScreen() {
           </div>
         </Section>
       </div>
+
+      <Section title="Alerts">
+        <p className="mb-3 text-xs text-muted">
+          Send big-dump alerts and report-ready notifications through WhatsApp or email. All keys stay in this browser — nothing leaves except the message itself.
+        </p>
+        <AlertsPanel />
+      </Section>
+
+      <Section title="Camera FOV & size estimate">
+        <p className="mb-3 text-xs text-muted">
+          Rough estimate — the report labels these numbers "rough" and prints the FOV assumption you chose here.
+        </p>
+        <FovPanel />
+      </Section>
 
       <Section title="Live tuning">
         <TuningPanel />

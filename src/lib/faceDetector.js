@@ -65,11 +65,9 @@ export async function createFaceDetector(onProgress) {
     const out = result[outputName]
     const data = out.getData ? await out.getData() : out.data
     const dims = out.dims
-    const d0 = Number(dims[0]), d1 = Number(dims[1]), d2 = Number(dims[2])
-    console.log('[face] outputNames:', session.outputNames, 'usedName:', outputName, 'dims:', [d0, d1, d2], 'dataLen:', data.length)
+    const d1 = Number(dims[1]), d2 = Number(dims[2])
     const isTransposed = d1 < d2
     const n = isTransposed ? d2 : d1
-    console.log('[face] isTransposed:', isTransposed, 'n:', n)
     const boxes = []
 
     for (let i = 0; i < n; i++) {
@@ -99,10 +97,7 @@ export async function createFaceDetector(onProgress) {
       if (x2 <= x1 || y2 <= y1) continue
       boxes.push({ x1, y1, x2, y2, score })
     }
-    const maxScore = boxes.length === 0 ? data.reduce((m, v) => Math.max(m, v), 0).toFixed(3) : 'N/A (boxes found)'
-    const nmsResult = nms(boxes, iouThr)
-    console.log('[face] boxes before NMS:', boxes.length, 'after NMS:', nmsResult.length, 'maxRawScore:', maxScore, 'confThr:', confThr)
-    return nmsResult
+    return nms(boxes, iouThr)
   }
 
   function dispose() {

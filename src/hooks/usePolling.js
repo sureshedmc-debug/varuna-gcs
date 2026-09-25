@@ -1,4 +1,15 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
+
+// Same content as last time? Then keep the old object, so screens (and
+// memoised values built from it) don't redo their work on every poll.
+function sameJson(a, b) {
+  if (a === b) return true
+  try {
+    return JSON.stringify(a) === JSON.stringify(b)
+  } catch {
+    return false
+  }
+}
 
 /**
  * Poll an async fn on an interval, tracking data + error + a "last updated"
@@ -17,12 +28,13 @@ export function usePolling(fn, interval = 4000, deps = []) {
     try {
       const d = await fnRef.current()
       if (!mounted.current) return
-      setData(d)
+      setData((prev) => (sameJson(prev, d) ? prev : d))
       setError(null)
       setLastUpdate(Date.now())
     } catch (e) {
       if (!mounted.current) return
-      setError(e)
+      // A repeat of the same failure (e.g. backend offline) doesn't re-render.
+      setError((prev) => (prev && String(prev?.message ?? prev) === String(e?.message ?? e) ? prev : e))
     } finally {
       if (mounted.current) setLoading(false)
     }
@@ -40,7 +52,7 @@ export function usePolling(fn, interval = 4000, deps = []) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [interval, ...deps])
 
-  return { data, error, lastUpdate, loading, refresh }
+  return useMemo(() => ({ data, error, lastUpdate, loading, refresh }), [data, error, lastUpdate, loading, refresh])
 }
 
 /** Ticking "now" so staleness labels update without new fetches. */

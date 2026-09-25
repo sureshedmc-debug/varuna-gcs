@@ -13,8 +13,8 @@
   --line: rgba(255, 255, 255, 0.08);
   --chip: rgba(255, 255, 255, 0.05);
   --chip2: rgba(255, 255, 255, 0.08);
-  --glass-bg: rgba(24, 28, 34, 0.72);
-  --glass-soft: rgba(24, 28, 34, 0.55);
+  --glass-bg: rgba(24, 28, 34, 0.8);
+  --glass-soft: rgba(24, 28, 34, 0.62);
   --glass-border: rgba(255, 255, 255, 0.08);
   --inp-bg: rgba(255, 255, 255, 0.05);
   --inp-border: rgba(255, 255, 255, 0.12);
@@ -38,8 +38,8 @@
   --line: rgba(15, 27, 41, 0.1);
   --chip: rgba(15, 27, 41, 0.05);
   --chip2: rgba(15, 27, 41, 0.08);
-  --glass-bg: rgba(255, 255, 255, 0.72);
-  --glass-soft: rgba(255, 255, 255, 0.6);
+  --glass-bg: rgba(255, 255, 255, 0.8);
+  --glass-soft: rgba(255, 255, 255, 0.68);
   --glass-border: rgba(15, 27, 41, 0.09);
   --inp-bg: rgba(255, 255, 255, 0.9);
   --inp-border: rgba(15, 27, 41, 0.14);
@@ -84,15 +84,18 @@ body {
 @layer components {
   .glass {
     background: var(--glass-bg);
-    backdrop-filter: blur(22px) saturate(125%);
-    -webkit-backdrop-filter: blur(22px) saturate(125%);
+    /* Lighter blur (was 22px + saturate): most glass panels float over the
+       live map / video, which repaints constantly — a wide blur there costs
+       the GPU a lot every frame. Slightly more opaque background to match. */
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
     border: 1px solid var(--glass-border);
     border-radius: 1.1rem;
   }
   .glass-soft {
     background: var(--glass-soft);
-    backdrop-filter: blur(14px);
-    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
     border: 1px solid var(--glass-border);
     border-radius: 0.9rem;
   }
@@ -150,6 +153,29 @@ body {
 }
 .leaflet-control-attribution a {
   color: var(--muted) !important;
+}
+
+/* Status-orb "ping" (StatusOrb pulse) — compositor-only, no JS per frame. */
+@keyframes orb-pulse {
+  from {
+    opacity: 0.45;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(2.2);
+  }
+}
+.orb-pulse {
+  animation: orb-pulse 1.6s cubic-bezier(0, 0, 0.58, 1) infinite;
+  will-change: transform, opacity;
+}
+/* The reduced-motion rule below shrinks every animation to ~0 ms, which would
+   make this infinite pulse strobe. Keep its normal speed (as before). */
+@media (prefers-reduced-motion: reduce) {
+  .orb-pulse {
+    animation-duration: 1.6s !important;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

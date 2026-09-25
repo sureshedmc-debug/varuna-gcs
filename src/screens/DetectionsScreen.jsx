@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet'
 import L from 'leaflet'
@@ -15,6 +15,20 @@ import { useMissionRecording, captureMissionPoster, clearMissionRecording } from
 import { getReportKey, setReportKey, generateReportNarrative } from '../lib/reportAi'
 import { renderReportCharts } from '../lib/reportChart'
 import { buildTrashDataset, downloadWordReport, fallbackNarrative } from '../lib/reportDoc'
+import { estimateWeightG, fmtWeight, getFovSettings } from '../lib/sizeEstimate'
+import { heatPoints } from '../lib/hotspots'
+import { buildHotspotPlan } from '../lib/hotspots'
+import { googleMapsMultiStopUrl } from '../lib/collectionRoute'
+import { setPlanDraft, navigateTo } from '../lib/planDraftStore'
+import { getAlertSettings } from '../lib/alertSettings'
+import { buildAlertText } from '../lib/alerts/format'
+import { sendReportReadyEmail } from '../lib/alerts/email'
+import { openWhatsApp } from '../lib/alerts/whatsapp'
+import HeatLayer from '../components/HeatLayer'
+import TypeBreakdownChart from '../components/TypeBreakdownChart'
+import ImpactStatStrip from '../components/ImpactStatStrip'
+import { useHomePoint, useLivePosition } from '../hooks/useLaptopGps'
+import { useSystem } from '../components/SystemContext'
 
 const SAT_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
 
@@ -67,6 +81,9 @@ function fromSighting(s) {
     posSource: s.posSource,
     accuracy: s.accuracy,
     photo: s.photo || null,
+    estWidthM: s.estWidthM ?? null,
+    estHeightM: s.estHeightM ?? null,
+    estWeightG: estimateWeightG(s.class || 'trash', s.count, getFovSettings().avgWeightG),
     time: s.firstSeen,
     lastSeen: s.lastSeen,
   }
@@ -92,13 +109,20 @@ function confPctOf(v) {
   return c <= 1 ? c * 100 : c
 }
 
+// Cached: react-leaflet rebuilds a marker's DOM whenever it gets a new icon object.
+const trashIconCache = new Map()
 function trashIcon(n, color) {
-  return L.divIcon({
+  const key = `${n}|${color}`
+  const hit = trashIconCache.get(key)
+  if (hit) return hit
+  const icon = L.divIcon({
     className: '',
     html: `<div style="min-width:22px;height:22px;padding:0 5px;border-radius:11px;background:${color};color:#04121F;display:flex;align-items:center;justify-content:center;font:700 11px Inter;box-shadow:0 0 10px ${color}aa;border:2px solid #0E1116">${n}</div>`,
     iconSize: [22, 22],
     iconAnchor: [11, 11],
   })
+  trashIconCache.set(key, icon)
+  return icon
 }
 
 // Fit the map to the points whenever the number of located points changes
@@ -115,16 +139,21 @@ function FitToPoints({ points }) {
   return null
 }
 
-function TrashMap({ rows }) {
-  const located = rows.filter((r) => r.located)
-  const points = located.map((r) => [r.lat, r.lng])
+const TrashMap = memo(function TrashMap({ rows, sightings, showHeat }) {
+  const { located, points, numberOf } = useMemo(() => {
+    const numberOf = new Map(rows.map((r, i) => [r.key, i + 1]))
+    const located = rows.filter((r) => r.located)
+    return { located, points: located.map((r) => [r.lat, r.lng]), numberOf }
+  }, [rows])
+  const heat = useMemo(() => (showHeat ? heatPoints(sightings || []) : []), [sightings, showHeat])
   return (
     <div className="relative mb-3 h-56 overflow-hidden rounded-xl border border-line isolate">
       <MapContainer center={points[0] || [17.385, 78.4867]} zoom={16} zoomControl={false} attributionControl={false} style={{ height: '100%', width: '100%', background: '#0E1116' }}>
         <TileLayer url={SAT_URL} maxZoom={19} />
         <FitToPoints points={points} />
+        {showHeat && heat.length > 0 && <HeatLayer points={heat} />}
         {located.map((r) => (
-          <Marker key={r.key} position={[r.lat, r.lng]} icon={trashIcon(r.count > 1 ? `×${r.count}` : rows.indexOf(r) + 1, ORIGIN[r.origin].color)}>
+          <Marker key={r.key} position={[r.lat, r.lng]} icon={trashIcon(r.count > 1 ? `×${r.count}` : numberOf.get(r.key), ORIGIN[r.origin].color)}>
             <Popup>
               <div style={{ font: '12px Inter', minWidth: 170 }}>
                 <b>{r.class}</b> · {ORIGIN[r.origin].label}
@@ -147,15 +176,16 @@ function TrashMap({ rows }) {
       )}
     </div>
   )
-}
+})
 
-function DetectionRow({ d, n, expanded, onToggle }) {
+// Memoised: rows whose record didn't change skip re-rendering (the list can hold thousands).
+const DetectionRow = memo(function DetectionRow({ d, n, expanded, onToggle, onWhatsApp }) {
   const confPct = confPctOf(d.confidence)
   const o = ORIGIN[d.origin]
   return (
     <motion.div layout initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} className="glass-soft overflow-hidden">
       <div className="flex w-full items-center gap-3 px-4 py-3">
-        <button onClick={onToggle} className="flex min-w-0 flex-1 items-center gap-3 text-left">
+        <button onClick={() => onToggle(d.key)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
           <StatusOrb level={d.located ? 'ok' : 'warn'} size={10} />
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
@@ -194,13 +224,37 @@ function DetectionRow({ d, n, expanded, onToggle }) {
                 <Detail k="Detected by" v={o.label} />
                 <Detail k="First seen" v={fmtClock(d.time)} />
                 <Detail k="Last seen" v={d.lastSeen ? fmtClock(d.lastSeen) : '—'} />
+                {d.estWidthM != null && <Detail k="Est. size (rough)" v={`${d.estWidthM.toFixed(2)} × ${d.estHeightM.toFixed(2)} m`} />}
+                {d.estWeightG != null && <Detail k="Est. weight (rough)" v={d.estWeightG >= 1000 ? `~${(d.estWeightG / 1000).toFixed(1)} kg` : `~${d.estWeightG} g`} />}
               </div>
             </div>
+            {d.located && (
+              <div className="flex flex-wrap gap-2 border-t border-line px-4 py-2">
+                <button
+                  onClick={() => onWhatsApp?.(d)}
+                  className="rounded-md bg-chip px-2.5 py-1 text-[11px] font-semibold text-ink hover:bg-chip2"
+                  title="Open WhatsApp with a prefilled alert"
+                >
+                  Alert on WhatsApp
+                </button>
+              </div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
     </motion.div>
   )
+}, sameRow)
+function sameRow(a, b) {
+  if (a.n !== b.n || a.expanded !== b.expanded || a.onToggle !== b.onToggle || a.onWhatsApp !== b.onWhatsApp) return false
+  if (a.d === b.d) return true
+  const ka = Object.keys(a.d)
+  return ka.length === Object.keys(b.d).length && ka.every((k) => a.d[k] === b.d[k])
+}
+// Ticks on its own so the whole screen doesn't re-render every second.
+function RecordingElapsed({ startedAt }) {
+  const now = useNow(1000)
+  return fmtDuration(now - startedAt)
 }
 function Detail({ k, v, level }) {
   const c = level ? { ok: '#32D74B', warn: '#FF9F0A' }[level] : '#F2F4F7'
@@ -223,7 +277,6 @@ function Stat({ label, value, level }) {
 }
 
 export default function DetectionsScreen() {
-  const now = useNow(1000)
   const det = usePolling(() => api.aiDetections(50), 5000)
   const toast = useToast()
   const trashStats = useTrashStats()
@@ -233,6 +286,49 @@ export default function DetectionsScreen() {
   const [reporting, setReporting] = useState(false)
   const [expanded, setExpanded] = useState(null)
   const [showReport, setShowReport] = useState(true)
+  const [showHeat, setShowHeat] = useState(false)
+  const toggleRow = useCallback((key) => setExpanded((cur) => (cur === key ? null : key)), [])
+
+  const { telemetry, simulated } = useSystem()
+  const live = useLivePosition(telemetry.data)
+  const homePoint = useHomePoint(telemetry.data, live, simulated)
+
+  const onWhatsApp = useCallback((d) => {
+    const text = buildAlertText({ itemCount: d.count, cls: d.class, lat: d.lat, lng: d.lng, source: d.origin })
+    const ok = openWhatsApp(text)
+    if (!ok) toast.push({ level: 'warn', title: 'Popup blocked — allow pop-ups for VARUNA to open WhatsApp.' })
+  }, [toast])
+
+  function planFromHotspots() {
+    const plan = buildHotspotPlan(sightings, { home: homePoint })
+    if (!plan.ok) return toast.push({ level: 'warn', title: 'Cannot plan from hotspots', msg: plan.reason })
+    setPlanDraft({
+      name: `Hotspots (${plan.waypoints.length})`,
+      waypoints: plan.waypoints,
+      altitude: plan.altitude,
+      speedKmh: plan.speedKmh,
+      pattern: 'hotspot',
+      lakeName: `${plan.waypoints.length} hotspots`,
+      polygon: null,
+      summary: `Hotspot route · ${plan.waypoints.length} stops · ${(plan.lengthM / 1000).toFixed(1)} km · ~${plan.minutes} min`,
+      warnings: plan.warnings,
+    })
+    navigateTo('mission')
+    toast.push({ level: 'ok', title: 'Hotspot draft loaded on Missions', msg: 'Review, then Save → Upload → Start.' })
+  }
+
+  function openCollectionRoute() {
+    const points = rows.filter((r) => r.located).map((r) => [r.lat, r.lng])
+    if (!points.length) return toast.push({ level: 'warn', title: 'No located trash yet.' })
+    if (homePoint) points.unshift(homePoint)
+    const { url, dropped, stops } = googleMapsMultiStopUrl(points)
+    if (!url) return toast.push({ level: 'warn', title: 'Could not build a route.' })
+    window.open(url, '_blank', 'noopener,noreferrer')
+    toast.push({
+      level: dropped ? 'warn' : 'ok',
+      title: dropped ? `Route opened with ${stops} stops (${dropped} dropped)` : `Route opened (${stops} stops)`,
+    })
+  }
 
   // Backend (Pi) records + local geotagged sightings, newest first.
   const backend = det.data?.detections
@@ -241,6 +337,14 @@ export default function DetectionsScreen() {
     return all.sort((a, b) => (b.time || 0) - (a.time || 0))
   }, [sightings, backend])
   const locatedCount = rows.filter((d) => d.located).length
+  const byClassCounts = useMemo(() => {
+    const out = {}
+    for (const r of rows) {
+      const c = r.class || 'trash'
+      out[c] = (out[c] || 0) + Math.max(1, Number(r.count) || 1)
+    }
+    return out
+  }, [rows])
 
   function clearLog() {
     if (!sightings.length) return
@@ -318,6 +422,13 @@ export default function DetectionsScreen() {
       // Video files go out right after the report, named exactly as the report lists them.
       if (videoFiles.length) downloadMissionVideo(videoFiles, true)
       resetTrashStats() // clear the live-cam trash count after each report download
+      // Email a "report ready" heads-up if it's turned on in Alerts settings.
+      if (getAlertSettings().enableEmailOnReport) {
+        sendReportReadyEmail({
+          filename,
+          summary: `${data.summary.total} detection(s), ${data.summary.located} located, est. ${fmtWeight(data.summary.totalEstWeightG || 0)} total.`,
+        }).catch(() => {})
+      }
       toast.push({
         level: 'ok',
         title: 'Report downloaded',
@@ -338,7 +449,7 @@ export default function DetectionsScreen() {
         <div className="mb-3 flex items-center justify-between gap-2">
           <h2 className="text-base font-semibold text-ink">Detection log</h2>
           <div className="flex items-center gap-2">
-            <StaleBadge lastUpdate={det.lastUpdate} now={now} connected={!det.error} />
+            <StaleBadge lastUpdate={det.lastUpdate} connected={!det.error} />
             <ViewToggle compact active={!showReport} onClick={() => setShowReport((v) => !v)} label={showReport ? 'Focus' : 'Report'} icon={showReport ? EYE_OFF : EYE} />
           </div>
         </div>
@@ -351,7 +462,46 @@ export default function DetectionsScreen() {
           <Stat label="Live-cam trash" value={trashStats.peak} />
         </div>
 
-        <TrashMap rows={rows} />
+        {/* Cumulative impact across every mission this browser has flown. */}
+        <div className="mb-3 rounded-lg bg-chip px-3 py-2">
+          <div className="mb-1.5 text-[10px] uppercase tracking-wider text-muted">Impact so far</div>
+          <ImpactStatStrip />
+        </div>
+
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => setShowHeat((v) => !v)}
+            className="rounded-md bg-chip px-2.5 py-1 text-[11px] font-semibold text-ink hover:bg-chip2"
+            title="Overlay a trash-density heatmap on the map"
+          >
+            {showHeat ? 'Hide heatmap' : 'Show heatmap'}
+          </button>
+          <button
+            onClick={planFromHotspots}
+            disabled={locatedCount === 0}
+            className="rounded-md bg-chip px-2.5 py-1 text-[11px] font-semibold text-ink hover:bg-chip2 disabled:opacity-40"
+            title="Plan a mission visiting the worst trash hotspots"
+          >
+            Plan mission on hotspots
+          </button>
+          <button
+            onClick={openCollectionRoute}
+            disabled={locatedCount === 0}
+            className="rounded-md bg-chip px-2.5 py-1 text-[11px] font-semibold text-ink hover:bg-chip2 disabled:opacity-40"
+            title="Open a Google Maps route through every trash location"
+          >
+            Collection route ↗
+          </button>
+        </div>
+
+        <TrashMap rows={rows} sightings={sightings} showHeat={showHeat} />
+
+        {rows.length > 0 && (
+          <div className="mb-3 rounded-lg bg-chip px-3 py-2">
+            <div className="mb-1 text-[10px] uppercase tracking-wider text-muted">Type breakdown</div>
+            <TypeBreakdownChart byClass={byClassCounts} />
+          </div>
+        )}
 
         <div className="flex max-h-[46vh] flex-col gap-2 overflow-y-auto pr-1">
           {det.loading && rows.length === 0 ? (
@@ -363,7 +513,7 @@ export default function DetectionsScreen() {
             </div>
           ) : (
             rows.map((d, i) => (
-              <DetectionRow key={d.key} d={d} n={i + 1} expanded={expanded === d.key} onToggle={() => setExpanded(expanded === d.key ? null : d.key)} />
+              <DetectionRow key={d.key} d={d} n={i + 1} expanded={expanded === d.key} onToggle={toggleRow} onWhatsApp={onWhatsApp} />
             ))
           )}
         </div>
@@ -408,7 +558,7 @@ export default function DetectionsScreen() {
                   <StatusOrb level={video.recording ? 'ok' : clips.length ? 'idle' : 'warn'} size={8} pulse={video.recording} />
                   <span className="text-muted">
                     {video.recording
-                      ? `Recording mission video… ${fmtDuration(now - video.startedAt)}${clips.length ? ` (+${clips.length} earlier clip${clips.length === 1 ? '' : 's'})` : ''}`
+                      ? <>Recording mission video… <RecordingElapsed startedAt={video.startedAt} />{clips.length ? ` (+${clips.length} earlier clip${clips.length === 1 ? '' : 's'})` : ''}</>
                       : clips.length
                         ? `Mission video ready · ${clips.length} clip${clips.length === 1 ? '' : 's'} · ${fmtDuration(clipsMs)} · ${fmtBytes(clipsBytes)}`
                         : 'No mission video yet — start detection on the Live tab.'}

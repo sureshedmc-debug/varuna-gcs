@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react'
+import { lazy, memo, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { MapContainer, TileLayer, Marker, Circle, Polyline, useMap } from 'react-leaflet'
 import L from 'leaflet'
@@ -14,7 +14,26 @@ const SAT_URL =
 
 const ORANGE = '#3B9EFF'
 
+// Icons and style objects are cached / constant: react-leaflet rebuilds a
+// marker's DOM (setIcon) or restyles a path whenever it gets a NEW object, and
+// the map re-renders with every telemetry update.
+const iconCache = new Map()
+function cachedIcon(key, make) {
+  let ic = iconCache.get(key)
+  if (!ic) {
+    ic = make()
+    iconCache.set(key, ic)
+  }
+  return ic
+}
+const PATH_STYLE = { color: ORANGE, weight: 2, opacity: 0.85, dashArray: '2 8' }
+const RING_STYLE = { color: ORANGE, weight: 1.5, opacity: 0.7, dashArray: '4 6', fillColor: ORANGE, fillOpacity: 0.05 }
+const RANGE_STYLE = { color: ORANGE, weight: 1, opacity: 0.5, fillColor: ORANGE, fillOpacity: 0.04 }
+
 function droneIcon(active = true) {
+  return cachedIcon(`drone:${active}`, () => makeDroneIcon(active))
+}
+function makeDroneIcon(active) {
   const c = active ? ORANGE : '#8A9099'
   return L.divIcon({
     className: '',
@@ -28,24 +47,25 @@ function droneIcon(active = true) {
 }
 
 function wpIcon(label) {
-  return L.divIcon({
+  return cachedIcon(`wp:${label}`, () => L.divIcon({
     className: '',
     html: `<div style="display:flex;align-items:center;gap:5px">
       <div style="width:22px;height:22px;border-radius:50%;background:${ORANGE}cc;color:#FFFFFF;display:flex;align-items:center;justify-content:center;font:700 10px Inter;box-shadow:0 0 10px ${ORANGE}aa">${label}</div>
     </div>`,
     iconSize: [22, 22],
     iconAnchor: [11, 11],
-  })
+  }))
 }
 
 // Small triangular arrowhead rotated toward the next point (deg from north).
-function arrowIcon(angleDeg) {
-  return L.divIcon({
+function arrowIcon(angleDeg0) {
+  const angleDeg = Math.round(angleDeg0) // 1° steps: invisible difference, lets icons be reused
+  return cachedIcon(`arrow:${angleDeg}`, () => L.divIcon({
     className: '',
     html: `<div style="transform:rotate(${angleDeg}deg);width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-bottom:11px solid ${ORANGE};filter:drop-shadow(0 0 4px ${ORANGE}aa)"></div>`,
     iconSize: [12, 12],
     iconAnchor: [6, 6],
-  })
+  }))
 }
 
 function bearing(a, b) {
@@ -55,33 +75,38 @@ function bearing(a, b) {
 }
 
 /** Orange flight path with arrowheads + patrol rings at each waypoint. */
-function PatrolOverlay({ home, waypoints }) {
-  if (!waypoints || waypoints.length === 0) return null
-  const pts = [home, ...waypoints.map((w) => [w.lat, w.lng]), waypoints[0] && [waypoints[0].lat, waypoints[0].lng]].filter(Boolean)
-  const segments = []
-  for (let i = 0; i < pts.length - 1; i++) {
-    const mid = [(pts[i][0] + pts[i + 1][0]) / 2, (pts[i][1] + pts[i + 1][1]) / 2]
-    segments.push({ mid, ang: bearing(pts[i], pts[i + 1]) })
-  }
+const PatrolOverlay = memo(function PatrolOverlay({ home, waypoints }) {
+  const homeLat = home?.[0]
+  const homeLng = home?.[1]
+  const geo = useMemo(() => {
+    if (!waypoints || waypoints.length === 0) return null
+    const h = homeLat != null && homeLng != null ? [homeLat, homeLng] : null
+    const pts = [h, ...waypoints.map((w) => [w.lat, w.lng]), waypoints[0] && [waypoints[0].lat, waypoints[0].lng]].filter(Boolean)
+    const segments = []
+    for (let i = 0; i < pts.length - 1; i++) {
+      const mid = [(pts[i][0] + pts[i + 1][0]) / 2, (pts[i][1] + pts[i + 1][1]) / 2]
+      segments.push({ mid, ang: bearing(pts[i], pts[i + 1]) })
+    }
+    const rings = waypoints.map((w) => [w.lat, w.lng])
+    return { pts, segments, rings }
+  }, [homeLat, homeLng, waypoints])
+  if (!geo) return null
+  const { pts, segments, rings } = geo
   return (
     <>
-      <Polyline positions={pts} pathOptions={{ color: ORANGE, weight: 2, opacity: 0.85, dashArray: '2 8' }} />
+      <Polyline positions={pts} pathOptions={PATH_STYLE} />
       {segments.map((s, i) => (
         <Marker key={`arr${i}`} position={s.mid} icon={arrowIcon(s.ang)} interactive={false} />
       ))}
       {waypoints.map((w, i) => (
         <div key={`wp${i}`}>
-          <Circle
-            center={[w.lat, w.lng]}
-            radius={w.radius || 110}
-            pathOptions={{ color: ORANGE, weight: 1.5, opacity: 0.7, dashArray: '4 6', fillColor: ORANGE, fillOpacity: 0.05 }}
-          />
-          <Marker position={[w.lat, w.lng]} icon={wpIcon(w.label || `W${i + 1}`)} interactive={false} />
+          <Circle center={rings[i]} radius={w.radius || 110} pathOptions={RING_STYLE} />
+          <Marker position={rings[i]} icon={wpIcon(w.label || `W${i + 1}`)} interactive={false} />
         </div>
       ))}
     </>
   )
-}
+})
 
 /** DJI-style yellow "H" home-point (Return-to-Home) icon. Cached — Leaflet re-sets icons on every new object. */
 let _homeIcon = null
@@ -178,7 +203,7 @@ export default function MapCanvas({ center, hasFix, waypoints, children, zoom = 
       <TileLayer url={SAT_URL} maxZoom={19} />
       {hasFix && (
         <>
-          <Circle center={c} radius={150} pathOptions={{ color: ORANGE, weight: 1, opacity: 0.5, fillColor: ORANGE, fillOpacity: 0.04 }} />
+          <Circle center={c} radius={150} pathOptions={RANGE_STYLE} />
           <PatrolOverlay home={c} waypoints={waypoints} />
           {droneMarker ?? <Marker position={c} icon={droneIcon(true)} />}
         </>

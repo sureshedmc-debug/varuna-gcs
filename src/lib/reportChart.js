@@ -50,6 +50,9 @@ function drawIsoBar(ctx, x, baseY, w, barH, depth, color) {
 }
 
 const PALETTE = ['#3B9EFF', '#32D74B', '#FF9F0A', '#FF453A', '#22D3EE', '#A78BFA', '#F472B6', '#00B8A9']
+// Colors used by the in-app detector overlay + Detections tab per class
+// (see labels.js CANON). Report and app charts stay visually in sync.
+const CLASS_COLOR = { 'plastic bottle': '#22D3EE', trash: '#3B9EFF', 'river trash': '#00B8A9' }
 
 /**
  * Render one isometric bar chart. items: [{label, value, color?}].
@@ -133,6 +136,92 @@ export function renderBarChart3D({ title = '', items = [], width = 900, height =
   }
 }
 
+/**
+ * Render one donut chart from items:[{label,value,color?}] to a PNG data URL.
+ * Returns '' if the canvas isn't available.
+ */
+export function renderPieChart({ title = '', items = [], width = 620, height = 460 } = {}) {
+  let canvas
+  try {
+    canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+  } catch {
+    return ''
+  }
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return ''
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, width, height)
+  ctx.fillStyle = '#14171c'
+  ctx.font = '700 22px Inter, Arial, sans-serif'
+  ctx.textBaseline = 'top'
+  ctx.fillText(title, 30, 22)
+
+  const total = items.reduce((a, it) => a + (Number(it.value) || 0), 0)
+  if (total <= 0) {
+    ctx.fillStyle = '#9199a6'
+    ctx.font = '500 14px Inter, Arial, sans-serif'
+    ctx.fillText('No data yet', 30, 60)
+    try { return canvas.toDataURL('image/png') } catch { return '' }
+  }
+
+  const cx = 200
+  const cy = height / 2 + 20
+  const r = Math.min(cx, cy) - 30
+  const rInner = r * 0.55
+  let a0 = -Math.PI / 2
+  items.forEach((it, i) => {
+    const v = Number(it.value) || 0
+    if (v <= 0) return
+    const a1 = a0 + (v / total) * Math.PI * 2
+    const color = it.color || PALETTE[i % PALETTE.length]
+    ctx.fillStyle = color
+    ctx.beginPath()
+    ctx.moveTo(cx, cy)
+    ctx.arc(cx, cy, r, a0, a1)
+    ctx.closePath()
+    ctx.fill()
+    a0 = a1
+  })
+  // Donut hole
+  ctx.fillStyle = '#ffffff'
+  ctx.beginPath()
+  ctx.arc(cx, cy, rInner, 0, Math.PI * 2)
+  ctx.fill()
+  // Center total
+  ctx.fillStyle = '#14171c'
+  ctx.font = '800 32px Inter, Arial, sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(String(total), cx, cy - 6)
+  ctx.font = '500 12px Inter, Arial, sans-serif'
+  ctx.fillStyle = '#9199a6'
+  ctx.fillText('items', cx, cy + 18)
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'top'
+  // Legend
+  const lx = cx + r + 40
+  let ly = cy - (items.length * 26) / 2
+  ctx.font = '600 14px Inter, Arial, sans-serif'
+  items.forEach((it, i) => {
+    const v = Number(it.value) || 0
+    const color = it.color || PALETTE[i % PALETTE.length]
+    ctx.fillStyle = color
+    ctx.fillRect(lx, ly, 16, 16)
+    ctx.fillStyle = '#14171c'
+    const pct = Math.round((v / total) * 100)
+    ctx.fillText(`${it.label}  —  ${v} (${pct}%)`, lx + 24, ly + 1)
+    ly += 26
+  })
+
+  try {
+    return canvas.toDataURL('image/png')
+  } catch {
+    return ''
+  }
+}
+
 function wrapLabel(ctx, text, cx, y, maxW) {
   const words = text.split(' ')
   let line = ''
@@ -166,11 +255,13 @@ export function renderReportCharts(data) {
   const classItems = Object.entries(byClass).map(([label, value], i) => ({
     label,
     value,
-    color: PALETTE[i % PALETTE.length],
+    color: CLASS_COLOR[label] || PALETTE[i % PALETTE.length],
   }))
   if (classItems.length) {
     const url = renderBarChart3D({ title: 'Detections by Type', items: classItems })
     if (url) out.push({ title: 'Detections by Type', dataUrl: url })
+    const pieUrl = renderPieChart({ title: 'Trash Type Breakdown', items: classItems })
+    if (pieUrl) out.push({ title: 'Trash Type Breakdown', dataUrl: pieUrl })
   }
 
   const coverage = [

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { wsUrl, api } from '../api/client'
 
 /**
@@ -20,13 +20,30 @@ export function useVarunaWS({ pollInterval = 2000 } = {}) {
   const pollRef = useRef(null)
   const mounted = useRef(true)
 
+  // A fast telemetry socket can push dozens of messages a second; the screens
+  // repaint at most ~10×/s (the newest message always wins, none is dropped
+  // for good — the latest one is applied on the trailing edge).
+  const pendingRef = useRef(null)
+  const flushTimerRef = useRef(null)
+  const lastApplyRef = useRef(0)
+  const flush = useCallback(() => {
+    flushTimerRef.current = null
+    const t = pendingRef.current
+    pendingRef.current = null
+    if (!t || !mounted.current) return
+    lastApplyRef.current = Date.now()
+    setData(t)
+    setLastUpdate(lastApplyRef.current)
+  }, [])
   const apply = useCallback((payload) => {
     if (!payload || typeof payload !== 'object') return
     // Unwrap common envelopes without assuming a fixed schema.
-    const t = payload.telemetry || payload.data || payload
-    setData(t)
-    setLastUpdate(Date.now())
-  }, [])
+    pendingRef.current = payload.telemetry || payload.data || payload
+    if (flushTimerRef.current) return
+    const wait = 100 - (Date.now() - lastApplyRef.current)
+    if (wait <= 0) flush()
+    else flushTimerRef.current = setTimeout(flush, wait)
+  }, [flush])
 
   const startPolling = useCallback(() => {
     if (pollRef.current) return
@@ -98,6 +115,7 @@ export function useVarunaWS({ pollInterval = 2000 } = {}) {
     return () => {
       mounted.current = false
       if (retryRef.current) clearTimeout(retryRef.current)
+      if (flushTimerRef.current) clearTimeout(flushTimerRef.current)
       stopPolling()
       if (wsRef.current) {
         try {
@@ -109,5 +127,5 @@ export function useVarunaWS({ pollInterval = 2000 } = {}) {
     }
   }, [connect, stopPolling])
 
-  return { data, status, lastUpdate }
+  return useMemo(() => ({ data, status, lastUpdate }), [data, status, lastUpdate])
 }

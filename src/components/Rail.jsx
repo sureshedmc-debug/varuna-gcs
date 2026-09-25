@@ -5,6 +5,7 @@ const ICONS = {
   live: <path d="M4 6h16v12H4zM9.5 9.5l5 2.5-5 2.5v-5z" fill="currentColor" />,
   mission: <path d="M12 2l7 4v12l-7 4-7-4V6l7-4zm0 4l-3 2 3 2 3-2-3-2z" fill="currentColor" />,
   detections: <path d="M4 5h16v3H4zM4 10h16v3H4zM4 15h10v3H4z" fill="currentColor" />,
+  replay: <g fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12a8 8 0 108-8 8 8 0 00-5.66 2.34" /><path d="M4 4v4.5H8.5" /><path d="M10 9l6 3-6 3V9z" fill="currentColor" stroke="none" /></g>,
   system: <path d="M12 8a4 4 0 100 8 4 4 0 000-8zm9 4l1.6-1.2-1-2.4-1.9.5a7 7 0 00-1.1-1.1l.5-1.9-2.4-1-1.2 1.6a7 7 0 00-1.5 0L12 3l-2.4 1 .5 1.9a7 7 0 00-1.1 1.1L7 6.4l-2.4 1L5 9.8a7 7 0 000 1.5L3.4 12.5l1 2.4 1.9-.5a7 7 0 001.1 1.1L7 17.6l2.4 1 1.2-1.6a7 7 0 001.5 0l1.2 1.6 2.4-1-.5-1.9a7 7 0 001.1-1.1l1.9.5 1-2.4L21 12z" fill="currentColor" />,
 }
 
@@ -13,6 +14,7 @@ const TABS = [
   { id: 'live', label: 'Live' },
   { id: 'mission', label: 'Missions' },
   { id: 'detections', label: 'Detections' },
+  { id: 'replay', label: 'Replay' },
   { id: 'system', label: 'System' },
 ]
 
@@ -22,7 +24,7 @@ export function Rail({ active, onChange, onLock }) {
   return (
     <>
       {/* Desktop / tablet: vertical icon rail */}
-      <nav className="fixed left-0 top-0 z-40 hidden h-full w-[76px] flex-col items-center gap-1 border-r border-line bg-[#0B0E12]/80 py-3 backdrop-blur-xl md:flex">
+      <nav className="fixed left-0 top-0 z-40 hidden h-full w-[76px] flex-col items-center gap-1 border-r border-line bg-[#0B0E12]/80 py-3 md:flex">
         <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-accent/15 text-accent">
           <svg viewBox="0 0 24 24" width="22" height="22">
             <path d="M12 2l3 6 6 .8-4.5 4.2L18 20l-6-3.4L6 20l1.5-7L3 8.8 9 8l3-6z" fill="currentColor" />

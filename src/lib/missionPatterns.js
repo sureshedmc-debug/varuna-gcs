@@ -276,6 +276,42 @@ export function sweepPattern(poly, { insetM = 10, spacingM = 20, home } = {}) {
   return { waypoints: [], spacingM: Math.round(spacing) }
 }
 
+/**
+ * Shared safety-envelope check for a set of waypoints (any pattern — shoreline,
+ * sweep, or a hotspot visit list). Returns { ok, altitude, speedKmh, lengthM,
+ * minutes, warnings, reason? } — never throws.
+ * `poly` is optional: if given, checks every waypoint stays inside it and every
+ * leg stays over water (warnings only, non-fatal). Pass null for free-form
+ * hotspot missions where there's no water polygon to constrain to.
+ */
+export function validatePlan(home, waypoints, { poly, altitude = 10, speedKmh = 5 } = {}) {
+  if (!waypoints || !waypoints.length) return { ok: false, reason: 'No waypoints to fly.' }
+  if (waypoints.length > MAX_WAYPOINTS) {
+    return { ok: false, reason: `Too many waypoints (${waypoints.length}, cap ${MAX_WAYPOINTS}).` }
+  }
+  const warnings = []
+  const alt = Math.max(2, Math.min(MAX_ALT, Number(altitude) || 10))
+  const spd = Math.max(1, Math.min(MAX_SPEED, Number(speedKmh) || 5))
+  if (Number(altitude) > MAX_ALT) warnings.push(`Altitude capped at ${MAX_ALT} m.`)
+  if (Number(speedKmh) > MAX_SPEED) warnings.push(`Speed capped at ${MAX_SPEED} km/h.`)
+  if (poly) {
+    const outside = waypoints.filter(([lat, lng]) => !booleanPointInPolygon(point([lng, lat]), poly)).length
+    if (outside) warnings.push(`${outside} waypoint(s) sit right on the shoreline — check them on the map.`)
+    let overLand = 0
+    for (let i = 1; i < waypoints.length; i++) if (!legInside(waypoints[i - 1], waypoints[i], poly)) overLand++
+    if (overLand) warnings.push(`${overLand} leg(s) cut over the shore — check them on the map.`)
+  }
+  if (home) {
+    const far = Math.max(...waypoints.map((w) => distanceM(home, w)))
+    if (far > MAX_RANGE_M) {
+      return { ok: false, reason: `That is ${(far / 1000).toFixed(1)} km from home — over the ${MAX_RANGE_M / 1000} km safety limit. Move closer or pick a nearer spot.` }
+    }
+  }
+  const est = estimateFlight(home, waypoints, { altitude: alt, speedKmh: spd })
+  if (est.minutes > LONG_FLIGHT_MIN) warnings.push(`Estimated ${est.minutes} min of flight — longer than ${LONG_FLIGHT_MIN} min; check the battery or raise the speed.`)
+  return { ok: true, altitude: alt, speedKmh: spd, lengthM: est.lengthM, minutes: est.minutes, warnings }
+}
+
 /** Path length (m) home → waypoints → home, and estimated flight time (min) incl. climb + landing. */
 export function estimateFlight(home, waypoints, { altitude = 10, speedKmh = 5 } = {}) {
   let d = 0
@@ -311,38 +347,22 @@ export function choosePattern(requested, intentText, poly) {
  */
 export function buildPlan(poly, { pattern = 'auto', intentText = '', home, altitude = 10, speedKmh = 5, spacingM, insetM = 10 } = {}) {
   if (!poly) return { ok: false, reason: 'No water-body outline to plan on.' }
-  const warnings = []
-  const alt = Math.max(2, Math.min(MAX_ALT, Number(altitude) || 10))
-  const spd = Math.max(1, Math.min(MAX_SPEED, Number(speedKmh) || 5))
-  if (Number(altitude) > MAX_ALT) warnings.push(`Altitude capped at ${MAX_ALT} m.`)
-  if (Number(speedKmh) > MAX_SPEED) warnings.push(`Speed capped at ${MAX_SPEED} km/h.`)
-
   const chosen = choosePattern(pattern, intentText, poly)
   let waypoints
   let usedSpacing = spacingM
+  const patternWarnings = []
   if (chosen === 'shoreline') {
     waypoints = shorelinePattern(poly, { insetM, spacingM, home })
   } else {
     const r = sweepPattern(poly, { insetM, spacingM: spacingM || 20, home })
     waypoints = r.waypoints
     usedSpacing = r.spacingM
-    if (r.partial) warnings.push('The water is split by land (arms / islands), so the sweep covers one connected part.')
-    if (spacingM && r.spacingM > spacingM) warnings.push(`Lane spacing widened to ${r.spacingM} m to stay within ${MAX_WAYPOINTS} waypoints.`)
+    if (r.partial) patternWarnings.push('The water is split by land (arms / islands), so the sweep covers one connected part.')
+    if (spacingM && r.spacingM > spacingM) patternWarnings.push(`Lane spacing widened to ${r.spacingM} m to stay within ${MAX_WAYPOINTS} waypoints.`)
   }
   if (!waypoints.length) return { ok: false, reason: 'The water area is too small or oddly shaped to fit a flight path.' }
 
-  // Sanity: every waypoint must be over water (the outline) and within range of home.
-  const outside = waypoints.filter(([lat, lng]) => !booleanPointInPolygon(point([lng, lat]), poly)).length
-  if (outside) warnings.push(`${outside} waypoint(s) sit right on the shoreline — check them on the map.`)
-  let overLand = 0
-  for (let i = 1; i < waypoints.length; i++) if (!legInside(waypoints[i - 1], waypoints[i], poly)) overLand++
-  if (overLand) warnings.push(`${overLand} leg(s) cut over the shore — check them on the map.`)
-  if (home) {
-    const far = Math.max(...waypoints.map((w) => distanceM(home, w)))
-    if (far > MAX_RANGE_M) return { ok: false, reason: `That water is ${(far / 1000).toFixed(1)} km from home — over the ${MAX_RANGE_M / 1000} km safety limit. Move closer or pick a nearer spot.` }
-  }
-  const est = estimateFlight(home, waypoints, { altitude: alt, speedKmh: spd })
-  if (est.minutes > LONG_FLIGHT_MIN) warnings.push(`Estimated ${est.minutes} min of flight — longer than ${LONG_FLIGHT_MIN} min; check the battery or raise the speed.`)
-
-  return { ok: true, waypoints, pattern: chosen, altitude: alt, speedKmh: spd, spacingM: usedSpacing, lengthM: est.lengthM, minutes: est.minutes, warnings }
+  const v = validatePlan(home, waypoints, { poly, altitude, speedKmh })
+  if (!v.ok) return v
+  return { ok: true, waypoints, pattern: chosen, altitude: v.altitude, speedKmh: v.speedKmh, spacingM: usedSpacing, lengthM: v.lengthM, minutes: v.minutes, warnings: [...patternWarnings, ...v.warnings] }
 }

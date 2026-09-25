@@ -18,9 +18,10 @@ export function WarningBanner({ warnings = [] }) {
             transition={{ type: 'spring', stiffness: 300, damping: 26 }}
             className="pointer-events-auto flex w-full max-w-3xl items-center gap-3 rounded-xl px-4 py-2.5 shadow-elev"
             style={{
-              background: w.level === 'bad' ? 'rgba(239,68,68,0.18)' : 'rgba(245,158,11,0.16)',
+              // Near-opaque tint instead of a backdrop blur: the banner sits over the
+              // live map/video, and re-blurring that every frame costs a lot of GPU.
+              background: w.level === 'bad' ? 'rgba(52,22,26,0.92)' : 'rgba(50,38,20,0.92)',
               border: `1px solid ${w.level === 'bad' ? '#EF4444' : '#F59E0B'}66`,
-              backdropFilter: 'blur(16px)',
             }}
           >
             <StatusOrb level={w.level} size={12} pulse />
@@ -28,7 +29,7 @@ export function WarningBanner({ warnings = [] }) {
               <div className="text-sm font-bold" style={{ color: w.level === 'bad' ? '#FCA5A5' : '#FCD34D' }}>
                 {w.title}
               </div>
-              {w.msg && <div className="text-xs text-ink/80">{w.msg}</div>}
+              {w.msg && <div className="text-xs text-white/80">{w.msg}</div>}
             </div>
           </motion.div>
         ))}

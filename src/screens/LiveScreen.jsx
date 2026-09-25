@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from 'react'
+import { lazy, Suspense, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { api } from '../api/client'
 import { useSystem } from '../components/SystemContext'
@@ -46,7 +46,7 @@ function Metric({ label, value, unit, level }) {
 }
 
 export default function LiveScreen() {
-  const { telemetry, now, simulated } = useSystem()
+  const { telemetry, simulated } = useSystem()
   const toast = useToast()
   const ai = usePolling(api.aiStatus, 5000)
   const [busy, setBusy] = useState(null)
@@ -62,7 +62,10 @@ export default function LiveScreen() {
   const voltN = Number(t.volt)
   const battLevel = Number.isNaN(voltN) ? 'idle' : voltN >= 11.1 ? 'ok' : voltN >= 10.5 ? 'warn' : 'bad'
   const hasFix = t.lat != null && t.lng != null && Number(t.lat) !== 0
-  const center = hasFix ? [Number(t.lat), Number(t.lng)] : null
+  // Same array while the position is unchanged, so the map doesn't re-pan on every update.
+  const cLat = hasFix ? Number(t.lat) : null
+  const cLng = hasFix ? Number(t.lng) : null
+  const center = useMemo(() => (cLat != null && cLng != null ? [cLat, cLng] : null), [cLat, cLng])
 
   async function run(key, fn, okMsg) {
     setBusy(key)
@@ -118,7 +121,7 @@ export default function LiveScreen() {
           <div className="glass flex items-center gap-2 px-3 py-2">
             <StatusOrb level={connected ? 'ok' : 'bad'} size={10} pulse={!connected} />
             <span className="text-sm font-bold text-ink">LIVE · VARUNA-01</span>
-            <StaleBadge lastUpdate={telemetry.lastUpdate} now={now} connected={connected} />
+            <StaleBadge lastUpdate={telemetry.lastUpdate} connected={connected} />
             {simulated && (
               <span className="rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ background: 'rgba(245,158,11,0.16)', color: '#F59E0B' }}>
                 SIMULATED

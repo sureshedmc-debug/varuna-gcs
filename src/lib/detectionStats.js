@@ -30,11 +30,18 @@ export function getTrashStats() {
 
 // Throttle timestamp for non-peak updates (the detect loop calls ~30x/sec).
 let _lastWrite = 0
+// In-memory copy so the detect loop doesn't read + parse localStorage every frame.
+let _cache = null
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (e) => {
+    if (e.key === KEY || e.key === null) _cache = null // another tab changed it
+  })
+}
 
 export function recordTrashCount(n) {
   const v = Number(n)
   if (!Number.isFinite(v) || v < 0) return
-  const s = getTrashStats()
+  const s = _cache || (_cache = getTrashStats())
   const peak = Math.max(s.peak, v)
   const now = Date.now()
   const newPeak = peak > s.peak
@@ -42,6 +49,7 @@ export function recordTrashCount(n) {
   if (!newPeak && now - _lastWrite < 900) return
   _lastWrite = now
   const next = { peak, last: v, updatedAt: now }
+  _cache = next
   try {
     localStorage.setItem(KEY, JSON.stringify(next))
   } catch {
@@ -55,6 +63,7 @@ export function recordTrashCount(n) {
 }
 
 export function resetTrashStats() {
+  _cache = { ...EMPTY }
   try {
     localStorage.removeItem(KEY)
   } catch {
