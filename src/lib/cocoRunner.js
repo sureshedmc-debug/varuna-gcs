@@ -1,7 +1,6 @@
-// One shared coco-yolo.onnx session for the person and plant detectors.
-// Both used to load their own copy of the same model and run it on the same
-// frame; now the model loads once and, when both ask about the same frame
-// (same `frame` token), it runs once and both read the same output.
+// One shared, reference-counted coco-yolo.onnx session. Callers that pass the
+// same `frame` token share a single model pass instead of each running their
+// own, and the session is loaded once however many detectors acquire it.
 
 import { loadOrt, createSession } from './detector'
 

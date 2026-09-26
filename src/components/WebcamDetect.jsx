@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { createDetector, mergeBoxes, makeTileGrid, overlapRatio, suppressByPerson, suppressByPlants } from '../lib/detector'
+import { createDetector, mergeBoxes, makeTileGrid, overlapRatio, suppressByPerson } from '../lib/detector'
 import { filterDetections } from '../lib/labels'
 import { BoxTracker } from '../lib/track'
 import { api } from '../api/client'
@@ -50,7 +50,6 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
   const detRef       = useRef(null)
   const faceDetRef   = useRef(null)
   const personDetRef = useRef(null)
-  const plantDetRef  = useRef(null)
   const boxesRef     = useRef([])
   const runningRef   = useRef(false)
   const confRef      = useRef(confThr)
@@ -71,7 +70,6 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
   const longRangeRef        = useRef(false)
   const gridSizeRef         = useRef(2)
   const humanDetectionRef   = useRef(true)
-  const plantSuppressionRef = useRef(true)
   const trashDetectionRef   = useRef(true)
 
   const [status, setStatus]               = useState('init')
@@ -84,7 +82,6 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
   const [longRange,        setLongRange]        = useState(false)
   const [gridSize,         setGridSize]         = useState(2)
   const [humanDetection,   setHumanDetection]   = useState(true)
-  const [plantSuppression, setPlantSuppression] = useState(true)
   const [trashDetection,   setTrashDetection]   = useState(true)
   const [isRecording,      setIsRecording]      = useState(false)
 
@@ -120,7 +117,6 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
   const lastAlertAtRef = useRef(0)
   useEffect(() => { longRangeRef.current        = longRange        }, [longRange])
   useEffect(() => { humanDetectionRef.current   = humanDetection   }, [humanDetection])
-  useEffect(() => { plantSuppressionRef.current = plantSuppression }, [plantSuppression])
   useEffect(() => { trashDetectionRef.current   = trashDetection   }, [trashDetection])
 
   function suppressByFace(trashBoxes, faceBoxes) {
@@ -147,12 +143,6 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
           if (!alive) { pd.dispose(); return }
           personDetRef.current = pd; setEp(d.ep + '+face+person')
         } catch (pe) { console.warn('[person] load failed:', pe) }
-        try {
-          const { createPlantDetector } = await import('../lib/plantDetector')
-          const pld = await createPlantDetector((m) => alive && setMsg(m))
-          if (!alive) { pld.dispose(); return }
-          if (pld.available) { plantDetRef.current = pld; setEp(prev => prev + '+plant') }
-        } catch (ple) { console.warn('[plant] load failed:', ple) }
         setStatus('ready')
         if (autoStart) start(defaultSource)
       } catch (e) {
@@ -160,7 +150,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
         setStatus('error'); setMsg('Failed to load model: ' + (e?.message ?? e))
       }
     })()
-    return () => { alive=false; stop(); detRef.current?.dispose(); faceDetRef.current?.dispose(); personDetRef.current?.dispose(); plantDetRef.current?.dispose() }
+    return () => { alive=false; stop(); detRef.current?.dispose(); faceDetRef.current?.dispose(); personDetRef.current?.dispose() }
   }, [defaultSource, autoStart])
 
   function fitCanvas() { const cv=canvasRef.current; if(!cv) return; const r=cv.getBoundingClientRect(); cv.width=Math.max(2,Math.round(r.width)); cv.height=Math.max(2,Math.round(r.height)) }
@@ -229,7 +219,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
     let frames=0, t0=performance.now(), taintWarned=false
     while(runningRef.current&&detRef.current&&srcElRef.current){
       const tickStart=performance.now()
-      const loopFrame={} // person + plant filters share one COCO model pass per loop
+      const loopFrame={} // the person filter shares one COCO model pass per loop
       let faceBoxes=[], personBoxes=[], trashBoxes=[]
       if(trashDetectionRef.current){
         try { trashBoxes=await detRef.current.detect(srcElRef.current,{confThr:Math.max(0.08,confRef.current*0.7),iouThr:0.40}) }
@@ -242,11 +232,6 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
       await yieldToUI()
       if(personDetRef.current&&humanDetectionRef.current){
         try{personBoxes=await personDetRef.current.detectPersons(srcElRef.current,{confThr:0.25,iouThr:0.30,frame:loopFrame})}catch(e){console.warn('[person]',e)}
-      }
-      let plantBoxes=[]
-      await yieldToUI()
-      if(plantDetRef.current&&plantDetRef.current.available&&plantSuppressionRef.current){
-        try{plantBoxes=await plantDetRef.current.detectPlants(srcElRef.current,{confThr:0.20,iouThr:0.30,frame:loopFrame})}catch(e){console.warn('[plant]',e)}
       }
       let runTile=false
       if(longRangeRef.current){
@@ -267,7 +252,6 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
       let finalTrash=merged
       if(humanDetectionRef.current){finalTrash=filterDetections(suppressByPerson(suppressByFace(merged,faceBoxes),personBoxes),[])}
       else{finalTrash=filterDetections(merged,[])}
-      if(plantSuppressionRef.current&&plantBoxes.length>0)finalTrash=suppressByPlants(finalTrash,plantBoxes,0.15)
       recordTrashCount(finalTrash.length) // share trash-only count with the Detections tab
       // Stamp trash with the aircraft's live position (≤ 2x/sec) for the Detections tab + report,
       // and grab a photo of this frame (the boxed view, exactly what the operator saw).
@@ -403,8 +387,8 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
 
   useEffect(()=>{const f=()=>fitCanvas();window.addEventListener('resize',f);return()=>window.removeEventListener('resize',f)},[defaultSource,autoStart])
 
-  const allModelsOn = trashDetection && humanDetection && plantSuppression
-  function toggleAllModels(){const next=!allModelsOn;setTrashDetection(next);setHumanDetection(next);setPlantSuppression(next)}
+  const allModelsOn = trashDetection && humanDetection
+  function toggleAllModels(){const next=!allModelsOn;setTrashDetection(next);setHumanDetection(next)}
 
   return (
     <div className="relative h-full w-full overflow-hidden rounded-2xl bg-[#0B1220]">
@@ -530,14 +514,6 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
             <SToggle on={humanDetection} color="#FF6B6B" />
           </div>
 
-          {/* Plant */}
-          <div className="flex items-center gap-3 rounded-2xl px-4 py-2.5 cursor-pointer"
-            onClick={()=>setPlantSuppression(v=>!v)}
-            style={{background:'rgba(11,18,32,0.85)',border:'1px solid rgba(255,255,255,0.09)',boxShadow:'0 8px 24px rgba(0,0,0,0.4)',minWidth:'220px'}}>
-            <span>🌿</span>
-            <span className="flex-1 text-[12px] font-semibold text-white/80">Plant Filter</span>
-            <SToggle on={plantSuppression} color="#4CAF50" />
-          </div>
         </div>
 
         {/* Gear icon */}

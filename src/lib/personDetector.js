@@ -10,7 +10,6 @@ export const PERSON_CLASS = 0 // COCO class id for 'person'
 
 export async function createPersonDetector(onProgress) {
   onProgress && onProgress('Loading human detection model…')
-  // Shared with the plant detector (same model): loaded once, run once per frame.
   const coco = acquireCoco(onProgress)
   let runner
   try {
@@ -23,8 +22,8 @@ export async function createPersonDetector(onProgress) {
 
   /** Detect only 'person' class from COCO model, suppressing other classes.
    * Uses low confidence threshold to catch all possible humans.
-   * `frame`: optional per-frame token — the plant detector asking about the
-   * same frame reuses this model pass instead of running it again. */
+   * `frame`: optional per-frame token — any other detector on the shared COCO
+   * session asking about the same frame reuses this pass instead of rerunning. */
   let disposed = false
   async function detectPersons(source, { confThr = 0.25, iouThr = 0.3, frame } = {}) {
     if (disposed) return [] // the shared session may now belong to another detector

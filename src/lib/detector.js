@@ -203,24 +203,6 @@ export function suppressByPerson(trashBoxes, personBoxes) {
   })
 }
 
-/** Plant suppression: removes trash boxes that significantly overlap with detected plants.
- * Used to prevent false positives when trash model detects river plants as trash.
- * @param {Array} trashBoxes - Boxes from trash detection
- * @param {Array} plantBoxes - Boxes from plant detection
- * @param {number} iouThr - IoU threshold for suppression (default: 0.15)
- */
-export function suppressByPlants(trashBoxes, plantBoxes, iouThr = 0.15) {
-  if (!trashBoxes) return []
-  if (!plantBoxes || !plantBoxes.length) return trashBoxes
-  return trashBoxes.filter(t => {
-    for (const p of plantBoxes) {
-      // If trash box overlaps significantly with a plant, remove it
-      if (overlapRatio(t, p) > iouThr) return false
-    }
-    return true
-  })
-}
-
 function nms(boxes, iouThr) {
   boxes.sort((p, q) => q.score - p.score)
   const keep = []
