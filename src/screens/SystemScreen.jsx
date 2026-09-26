@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
-import { api, getApiBase, setApiBase, DEFAULT_API_BASE } from '../api/client'
+import { api, getApiBase, setApiBase, testConnection, DEFAULT_API_BASE } from '../api/client'
 import { useSystem } from '../components/SystemContext'
 import { usePolling } from '../hooks/usePolling'
 import { useToast } from '../components/Toast'
@@ -12,39 +12,155 @@ import { sendReportReadyEmail } from '../lib/alerts/email'
 import { openWhatsApp } from '../lib/alerts/whatsapp'
 import { buildAlertText } from '../lib/alerts/format'
 
-function ConnectionPanel() {
-  const [val, setVal] = useState(getApiBase())
-  const [saved] = useState(getApiBase())
-  const changed = val.replace(/\/+$/, '') !== saved.replace(/\/+$/, '')
-  function apply() {
-    setApiBase(val)
+/**
+ * Which shell the app is running in, since each reaches the Pi differently:
+ *  - 'desktop': the packaged Electron app. Its built-in proxy forwards to a Pi
+ *    address the desktop shell stores; the page always uses same-origin paths.
+ *  - 'browser': a normal browser / `npm run dev`, as before.
+ * `window.varuna` comes from electron/preload.cjs.
+ */
+function useShell() {
+  const bridge = typeof window !== 'undefined' ? window.varuna : undefined
+  // undefined = still asking the desktop shell; null = not the packaged desktop app.
+  const [desktop, setDesktop] = useState(bridge?.isDesktop ? undefined : null)
+  useEffect(() => {
+    if (!bridge?.isDesktop) return undefined
+    let alive = true
+    bridge
+      .getConfig()
+      // In `npm run electron:dev` Vite's proxy is in charge, so behave like the browser.
+      .then((c) => alive && setDesktop(c?.usesBuiltInProxy ? c : null))
+      .catch(() => alive && setDesktop(null))
+    return () => {
+      alive = false
+    }
+  }, [bridge])
+  if (desktop === undefined) return { kind: 'loading' }
+  return desktop ? { kind: 'desktop', config: desktop } : { kind: 'browser' }
+}
+
+function ConnectionResult({ result }) {
+  if (!result) return null
+  return (
+    <div
+      className={`mt-3 border-l-2 px-3 py-2 text-xs ${
+        result.ok ? 'border-l-[#34D399] bg-[#34D399]/5' : 'border-l-[#EF4444] bg-[#EF4444]/5'
+      }`}
+    >
+      <div className={`font-semibold ${result.ok ? 'text-[#34D399]' : 'text-[#EF4444]'}`}>{result.title}</div>
+      <div className="mt-0.5 text-muted">{result.detail}</div>
+    </div>
+  )
+}
+
+function ConnectionPanel({ shell }) {
+  const desktop = shell.kind === 'desktop'
+  const initial = desktop ? shell.config.piAddress || '' : getApiBase()
+  const [val, setVal] = useState(initial)
+  const [saved] = useState(initial)
+  const [testing, setTesting] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [result, setResult] = useState(null)
+  const changed = val.trim().replace(/\/+$/, '') !== saved.replace(/\/+$/, '')
+
+  async function apply() {
+    if (desktop) {
+      setSaving(true)
+      const r = await window.varuna.setPiAddress(val)
+      setSaving(false)
+      if (!r?.ok) return setResult({ ok: false, title: 'Invalid address', detail: r?.error || '' })
+      setApiBase('') // the page always talks to the built-in proxy
+    } else {
+      setApiBase(val)
+    }
     window.location.reload() // re-init polling + websocket against the new host
   }
+  async function test() {
+    setTesting(true)
+    setResult(null)
+    try {
+      // The desktop shell tests from its own process: no CORS or browser
+      // opacity, so it can report the real network error.
+      setResult(desktop ? await window.varuna.testPiAddress(val) : await testConnection(val))
+    } finally {
+      setTesting(false)
+    }
+  }
+
   return (
     <div>
       <div className="mb-2 text-xs text-muted">
-        The app reads live video, telemetry and detections from this backend URL. It's stored in your
-        browser, so you can repoint it any time (e.g. when the ngrok URL changes) without a rebuild.
+        {desktop ? (
+          <>
+            The app reads live video, telemetry and detections from the Pi over Netbird. Enter the
+            Pi's Netbird address — the desktop app forwards to it for you, so no CORS is needed on
+            the Pi. Saved on this PC.
+          </>
+        ) : (
+          <>
+            The app reads live video, telemetry and detections from the Pi over Netbird. Leave this{' '}
+            <strong className="text-ink">blank</strong> to go through the Vite proxy (recommended — no
+            CORS to configure), or enter the Pi's Netbird address to call it directly. It's stored in
+            your browser, so you can repoint it any time without a rebuild.
+          </>
+        )}
       </div>
-      <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted">Backend base URL</label>
+      <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted">
+        {desktop ? 'Pi address (Netbird)' : 'Backend base URL'}
+      </label>
       <input
         value={val}
         onChange={(e) => setVal(e.target.value)}
-        placeholder="https://<your-ngrok>.ngrok-free.dev  (blank = same origin)"
+        placeholder={
+          desktop
+            ? 'http://varuna-pi.netbird.cloud:8000'
+            : 'blank = via Vite proxy   ·   or http://varuna-pi.netbird.cloud:8000'
+        }
         className="inp mb-2 w-full px-3 py-2 font-mono text-sm"
         spellCheck={false}
+        autoCapitalize="off"
+        autoCorrect="off"
       />
 
       <div className="flex flex-wrap items-center gap-2">
-        <Btn disabled={!changed} onClick={apply}>Apply &amp; reconnect</Btn>
-        <Btn variant="secondary" onClick={() => setVal(DEFAULT_API_BASE)}>Use default</Btn>
-        <Btn variant="ghost" onClick={() => setVal('')}>Same origin</Btn>
+        <Btn disabled={!changed || saving} onClick={apply}>
+          {saving ? <Spinner /> : desktop ? 'Save & reconnect' : <>Apply &amp; reconnect</>}
+        </Btn>
+        <Btn variant="secondary" onClick={test} disabled={testing}>
+          {testing ? <Spinner /> : 'Test connection'}
+        </Btn>
+        {/* Only the browser has a proxy to fall back to. */}
+        {!desktop && <Btn variant="ghost" onClick={() => setVal(DEFAULT_API_BASE)}>Via proxy</Btn>}
       </div>
+
+      <ConnectionResult result={result} />
+
       <div className="mt-2 text-[11px] text-faint">
-        Cross-origin access needs CORS on the backend. AI trash detection runs fully in-browser
-        (local ONNX models) — no external API or key involved.
+        Plain <span className="font-mono">http://</span> is correct for a Netbird address — WireGuard
+        already encrypts the link.{desktop ? '' : ' Calling the Pi directly needs CORS on FastAPI.'} AI trash
+        detection runs fully on this device (local ONNX models) — no external API or key involved.
       </div>
     </div>
+  )
+}
+
+function ConnectionSection() {
+  const shell = useShell()
+  if (shell.kind === 'loading') {
+    return (
+      <Section title="Connection">
+        <Spinner label="Reading connection settings" />
+      </Section>
+    )
+  }
+  const label =
+    shell.kind === 'desktop'
+      ? shell.config.piAddress || 'Pi address not set'
+      : getApiBase() || 'via Vite proxy'
+  return (
+    <Section title="Connection" right={<span className="max-w-[220px] truncate font-mono text-[11px] text-accent">{label}</span>}>
+      <ConnectionPanel shell={shell} />
+    </Section>
   )
 }
 
@@ -343,9 +459,7 @@ export default function SystemScreen() {
         <HealthLight label="Camera" ok={camOk} />
       </div>
 
-      <Section title="Connection" right={<span className="max-w-[220px] truncate font-mono text-[11px] text-accent">{getApiBase() || 'same origin'}</span>}>
-        <ConnectionPanel />
-      </Section>
+      <ConnectionSection />
 
       <Section title="Raspberry Pi" right={<StaleBadge lastUpdate={pi.lastUpdate} connected={!pi.error} />}>
         {pi.loading && !pi.data ? (

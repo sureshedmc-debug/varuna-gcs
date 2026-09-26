@@ -1,7 +1,7 @@
-// Verifies the production build contains no ACCIDENTAL dev host. The backend now
-// lives behind a configurable ngrok URL (that is intentional and allowed); this
-// check only catches localhost / loopback / raw LAN-IP leaks and the dev-proxy
-// env var. Fails loudly (exit 1) if any of those slip in.
+// Verifies the production build contains no ACCIDENTAL dev host. The backend is
+// reached over Netbird, whose addresses are private to the mesh and therefore
+// harmless to ship (allowed below); this check catches localhost / loopback /
+// raw LAN-IP leaks and the dev-proxy env var. Fails loudly (exit 1) on any.
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -14,9 +14,17 @@ const FORBIDDEN = [
   // any explicit http(s):// host:port pointing at a LAN/dev backend
   /https?:\/\/(\d{1,3}\.){3}\d{1,3}(:\d+)?/,
 ]
-// Expected hosts: OSM/Esri map tiles (client-side) and the configured ngrok
-// backend URL are intentional, not leaks.
-const ALLOW = [/tile\.openstreetmap\.org/i, /arcgisonline\.com/i, /ngrok/i]
+// Expected hosts: OSM/Esri map tiles (client-side), plus a Netbird address if
+// one was configured at build time — those are intentional, not leaks. Netbird
+// lives in the 100.64.0.0/10 CGNAT range (100.64.x.x – 100.127.x.x) and is
+// meaningless to anyone outside the mesh; a real LAN IP (192.168/10/172.16)
+// still fails the FORBIDDEN check above.
+const ALLOW = [
+  /tile\.openstreetmap\.org/i,
+  /arcgisonline\.com/i,
+  /\.netbird\.(cloud|selfhosted)/i,
+  /\b100\.(6[4-9]|[7-9]\d|1[0-1]\d|12[0-7])\.\d{1,3}\.\d{1,3}/,
+]
 
 function walk(dir) {
   const out = []

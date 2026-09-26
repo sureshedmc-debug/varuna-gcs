@@ -1,0 +1,47 @@
+# Windows desktop build: `npm run electron:build` → release/
+appId: com.varuna.gcs
+productName: VARUNA GCS
+copyright: Copyright © 2026 VARUNA AI
+
+directories:
+  output: release
+  buildResources: build
+
+# Only what the packaged app actually runs. All the React/Three/ONNX packages
+# are already bundled into dist/ by Vite, so node_modules is excluded except the
+# proxy the main process needs (http-proxy and its three dependencies).
+files:
+  - package.json
+  - electron/**
+  - "!electron/launch.cjs"
+  - dist/**
+  - "!node_modules/**/*"
+  - node_modules/http-proxy/**/*
+  - node_modules/eventemitter3/**/*
+  - node_modules/requires-port/**/*
+  - node_modules/follow-redirects/**/*
+
+# Serve the frontend (incl. 64MB of ONNX models + wasm) from real files, not
+# from inside the asar archive.
+asarUnpack:
+  - dist/**
+
+npmRebuild: false
+
+win:
+  icon: build/icon.ico
+  target:
+    - nsis
+    - portable
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: VARUNA GCS
+  artifactName: ${productName}-Setup-${version}.${ext}
+
+portable:
+  artifactName: ${productName}-Portable-${version}.${ext}

@@ -4,6 +4,10 @@ dist
 .env.*.local
 *.log
 .DS_Store
+desktop.ini
 
 /training-data/
 /varuna photos and video/
+
+# Desktop app (electron-builder output)
+release/

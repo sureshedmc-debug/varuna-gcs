@@ -6,7 +6,7 @@
 
 let reachable // undefined = unknown/connecting, true = real backend, false = offline → simulate
 // Once a real drone has answered this session we NEVER fall back to the
-// simulator again: a single slow ping over ngrok must not silently re-route
+// simulator again: a single slow ping over the Netbird link must not re-route
 // STOP / RTL / LAND to a virtual aircraft while the real one is airborne.
 // Commands keep going to the real API (and fail loudly if it's truly down).
 let everReal = false

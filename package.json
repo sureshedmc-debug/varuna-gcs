@@ -4,14 +4,21 @@
   "version": "2.0.0",
   "type": "module",
   "description": "VARUNA AI — ground-control UI for the river-cleanup drone (Raspberry Pi + FastAPI backend).",
+  "author": "VARUNA AI",
+  "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "check:clean": "node scripts/check-clean-build.mjs"
+    "check:clean": "node scripts/check-clean-build.mjs",
+    "electron:dev": "node electron/launch.cjs --dev",
+    "electron:start": "vite build && node electron/launch.cjs",
+    "electron:build": "vite build && electron-builder --win"
   },
   "dependencies": {
     "@emailjs/browser": "^4.4.1",
+    "@fontsource/inter": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
     "@turf/along": "^7.4.0",
     "@turf/area": "^7.4.0",
     "@turf/boolean-point-in-polygon": "^7.4.0",
@@ -21,6 +28,7 @@
     "@turf/intersect": "^7.4.0",
     "@turf/length": "^7.4.0",
     "framer-motion": "^11.3.0",
+    "http-proxy": "^1.18.1",
     "leaflet": "^1.9.4",
     "leaflet.heat": "^0.2.0",
     "onnxruntime-web": "^1.20.1",
@@ -32,6 +40,8 @@
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.4.19",
+    "electron": "^44.4.5",
+    "electron-builder": "^26.15.3",
     "kill-port": "^2.0.1",
     "postcss": "^8.4.39",
     "tailwindcss": "^3.4.7",

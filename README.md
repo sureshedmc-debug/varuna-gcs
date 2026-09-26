@@ -7,6 +7,18 @@ Pi over the **exact** endpoints it already exposes — no backend changes.
 > **The build never runs on the Pi.** The Pi has 1 GB RAM and cannot build a
 > modern JS app. Build on a laptop/CI, copy only `dist/` to the Pi.
 
+## Two ways to run the same app
+
+One codebase, one `dist/`, two shells:
+
+| | Command | How it reaches the Pi |
+| --- | --- | --- |
+| **Browser (dev)** | `npm run dev` | Vite's dev proxy (§1) |
+| **Windows app** | `npm run electron:build` → installer (§4) | The app's own built-in proxy |
+
+AI trash detection runs **on the machine** in both (local ONNX models, no
+backend and no API key), so it works even with the Pi offline.
+
 ---
 
 ## 1. Develop on the laptop (against the real Pi)
@@ -18,16 +30,31 @@ npm run dev
 ```
 
 Edit `.env.local` so the dev server proxies to your real backend — you'll see
-**live** video/telemetry/detections while iterating:
+**live** video/telemetry/detections while iterating. The Pi is reached over
+**Netbird** (a private WireGuard mesh), so use its mesh address — run
+`netbird status` on the Pi to find it:
 
 ```
-VITE_DEV_API_TARGET=http://<pi-ip>:8000
-# or an ngrok/tunnel URL:
-# VITE_DEV_API_TARGET=https://your-tunnel.ngrok-free.app
+VITE_DEV_API_TARGET=http://varuna-pi.netbird.cloud:8000
+# or by IP, if you'd rather not rely on Netbird DNS:
+# VITE_DEV_API_TARGET=http://100.92.14.7:8000
 ```
 
-This value is **dev-only**. It is read by `vite.config.js` for the dev proxy and
-is *never* compiled into the production bundle.
+Plain `http://` is correct here — WireGuard already encrypts the link, so there
+is no TLS certificate to manage.
+
+This value is **dev-only**. It is read by `vite.config.js` for the dev *and*
+preview proxies and is *never* compiled into the production bundle.
+
+Because the proxy forwards server-side, the browser only ever talks to
+`http://localhost` — which means **no CORS to configure and no mixed-content
+blocking**. Leave `VITE_API_BASE` unset to keep it that way. Set it (or fill in
+System → Connection) only if you want the browser to call the Pi directly, which
+does require CORS headers from FastAPI.
+
+**The Pi must bind `0.0.0.0:8000`, not `127.0.0.1`** — otherwise the Netbird peer
+cannot reach it. Endpoints the app expects: `/api/ws` (telemetry WebSocket),
+`/video_feed` (MJPEG), and the `/api/*` routes in the table below.
 
 ## 2. Build for production
 
@@ -37,10 +64,12 @@ npm run check:clean  # verifies dist/ has no dev host baked in
 ```
 
 `check:clean` is the zero-edit guarantee: it fails loudly if `localhost`,
-`127.0.0.1`, an ngrok host, or any hardcoded `http://IP:port` leaked into the
-bundle. The app calls the API via **relative paths** resolved against
-`window.location.origin`, so the same `dist/` works unmodified via the Pi's LAN
-IP, a Tailscale address, or the ngrok tunnel.
+`127.0.0.1`, or any hardcoded LAN `http://IP:port` leaked into the bundle.
+Netbird addresses (`100.64.x.x`–`100.127.x.x`, `*.netbird.cloud`) are allowed —
+they're private to the mesh and meaningless to anyone outside it. The app calls
+the API via **relative paths** resolved against `window.location.origin`, so the
+same `dist/` works unmodified whether it's served from the Pi, from the Vite
+preview proxy, or reached over any mesh address.
 
 > Map tiles are fetched by the browser from `tile.openstreetmap.org` — that is a
 > client-side asset host, not the backend, and is the one allowed external host.
@@ -64,6 +93,41 @@ ssh pi@<pi-ip> "cd /home/pi/varuna-ai-enterprise && \
 Adjust the service name (`varuna`) and path to match your deployment. If the
 backend serves the frontend some other way (e.g. a static mount pointing at
 `dist/`), just replace the folder it serves and restart that process.
+
+## 4. Run it as a Windows app
+
+```bash
+npm run electron:dev     # dev: app window on the Vite server, hot reload intact
+npm run electron:start   # run the built app locally
+npm run electron:build   # -> release/  (installer + portable .exe)
+```
+
+`electron:build` produces `VARUNA GCS-Setup-<version>.exe` (Start-menu and
+desktop shortcuts, user-level install — no admin needed) and a portable
+`.exe` that runs without installing.
+
+**How it works, and why.** The desktop app doesn't load `dist/` off disk with
+`file://`. It runs a tiny HTTP server on `127.0.0.1` and points the window at
+that, because three things have to be true at once and loopback is the only
+place they all are:
+
+- `/models/*.onnx` and ONNX Runtime's `/ort/` wasm are **absolute paths** — they
+  need a real HTTP origin, which `file://` isn't.
+- The webcam and microphone need a **secure context** — `file://` isn't one, but
+  Chromium treats loopback as trustworthy.
+- The Pi is plain `http://` over Netbird. An `http` page calling `http` is fine;
+  an `https` (or custom-scheme) page would get those calls **blocked as mixed
+  content**.
+
+That server also proxies `/api`, `/video_feed`, `/stream` and `/tune` to the Pi —
+the same job Vite's dev proxy does — so there's **no CORS to configure**. Set the
+Pi's address in **System → Connection**; it's stored per-user and applies without
+restarting. **Test connection** runs from the app's own process, so it reports the
+real fault (DNS, refused, timeout) instead of a generic browser error.
+
+> The loopback port is deliberately **fixed**. The app's settings, API keys and
+> detection log live in `localStorage`, which is scoped to the origin — a port
+> that changed per launch would look like all your data had been wiped.
 
 ---
 

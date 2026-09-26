@@ -44,7 +44,7 @@ export function buildCertificateHtml({ stats, operatorName, date } = {}) {
     .noprint button { font: bold 12pt Inter, Arial; background: #16A34A; color: #fff; border: none; padding: 10pt 24pt; border-radius: 8pt; cursor: pointer; }
   </style></head><body>
     <div class="noprint">
-      <button onclick="window.print()">Print / save as PDF</button>
+      <button id="varuna-print">Print / save as PDF</button>
       <span style="margin-left:14pt;color:#4b5563;font-family:Inter,sans-serif;font-size:11pt">This is your certificate — close the tab when you're done.</span>
     </div>
     <div class="frame">
@@ -78,6 +78,10 @@ export function openCertificatePrintView(html) {
   w.document.open()
   w.document.write(html)
   w.document.close()
+  // Wired from here rather than an inline onclick: this window inherits the
+  // opener's Content-Security-Policy, and the desktop app's policy has no
+  // 'unsafe-inline' for scripts, so an inline handler would never fire.
+  w.document.getElementById('varuna-print')?.addEventListener('click', () => w.print())
   // Give the browser a moment to parse before print(); some engines otherwise
   // print a blank page.
   setTimeout(() => {
