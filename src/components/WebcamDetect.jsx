@@ -27,6 +27,18 @@ const TILE_CONF_FACTOR = 0.6
 const BUDGET_MS = 80
 const MERGE_IOU = 0.4
 const FACE_SUPPRESS_IOU = 0.20
+
+// Confidence thresholds, kept here so they're easy to retune.
+//
+// Humans are held to a HIGH bar: a human box doesn't just get drawn, it also
+// deletes every trash box overlapping it (suppressByPerson / suppressByFace).
+// So a false "Human" costs a real trash detection as well as looking wrong.
+const FACE_CONF = 0.40
+const PERSON_CONF = 0.50
+// Trash is held to a LOW bar — it runs below the operator's slider value so
+// small or faint debris still registers; the slider stays the main control.
+const TRASH_CONF_FACTOR = 0.5
+const TRASH_CONF_FLOOR = 0.05
 const ADAPTIVE_CONF = {
   gridSizeFactors: { 2: 0.85, 3: 0.75, 4: 0.65, 5: 0.55 },
   gridSizeMinConf:  { 2: 0.08, 3: 0.06, 4: 0.04, 5: 0.03 },
@@ -222,16 +234,16 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
       const loopFrame={} // the person filter shares one COCO model pass per loop
       let faceBoxes=[], personBoxes=[], trashBoxes=[]
       if(trashDetectionRef.current){
-        try { trashBoxes=await detRef.current.detect(srcElRef.current,{confThr:Math.max(0.08,confRef.current*0.7),iouThr:0.40}) }
+        try { trashBoxes=await detRef.current.detect(srcElRef.current,{confThr:Math.max(TRASH_CONF_FLOOR,confRef.current*TRASH_CONF_FACTOR),iouThr:0.40}) }
         catch(e){ if(!taintWarned&&/tainted|cross.origin|SecurityError/i.test(e?.message??'')){taintWarned=true;setMsg('Drone stream blocked by CORS')} }
       }
       await yieldToUI()
       if(faceDetRef.current&&humanDetectionRef.current){
-        try{faceBoxes=await faceDetRef.current.detectFaces(srcElRef.current,{confThr:0.15,iouThr:0.25})}catch(e){console.warn('[face]',e)}
+        try{faceBoxes=await faceDetRef.current.detectFaces(srcElRef.current,{confThr:FACE_CONF,iouThr:0.25})}catch(e){console.warn('[face]',e)}
       }
       await yieldToUI()
       if(personDetRef.current&&humanDetectionRef.current){
-        try{personBoxes=await personDetRef.current.detectPersons(srcElRef.current,{confThr:0.25,iouThr:0.30,frame:loopFrame})}catch(e){console.warn('[person]',e)}
+        try{personBoxes=await personDetRef.current.detectPersons(srcElRef.current,{confThr:PERSON_CONF,iouThr:0.30,frame:loopFrame})}catch(e){console.warn('[person]',e)}
       }
       let runTile=false
       if(longRangeRef.current){
