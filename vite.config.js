@@ -1,4 +1,4 @@
-import { defineConfig, loadEnv, createLogger } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 
 // The production bundle NEVER contains a backend host: the app calls the API via
@@ -64,18 +64,27 @@ export default defineConfig(({ mode }) => {
         changeOrigin: true,
         ws: true,
         secure: false,
-        // Runs BEFORE Vite attaches its own 'error' listener, so this one
-        // fires first and ends the response; Vite's then sees the response
-        // already finished and adds nothing. Its log line is filtered out by
-        // the custom logger below.
-        configure: (px) => px.on('error', onProxyError),
+        configure: (px) => {
+          px.on('error', onProxyError)
+          // Vite registers its OWN 'error' listener immediately after this
+          // hook returns - one full stack trace per failed request. It cannot
+          // be removed from in here because it does not exist yet, so drop it
+          // on the next tick, by which time it is registered. Doing it this
+          // way rather than through a customLogger matters: a customLogger
+          // built with createLogger() hardcodes level 'info', which silently
+          // overrode --logLevel and clearScreen for builds too.
+          setTimeout(() => {
+            for (const l of px.listeners('error')) {
+              if (l !== onProxyError) px.removeListener('error', l)
+            }
+          }, 0)
+        },
       },
     ])
   )
 
   return {
     plugins: [react(), watcherResilience()],
-    customLogger: quietProxyLogger(),
     // `preview` gets the same proxy as `server`: without it, npm run preview
     // serves the built bundle with no route to the Pi, so a production-shaped
     // smoke test would look broken for the wrong reason.
@@ -95,6 +104,7 @@ export default defineConfig(({ mode }) => {
         // Being gitignored does not exclude a directory from the watcher.
         ignored: [
           '**/release/**',
+          '**/.kilo/**', // a stray worktree here holds a second full copy of src/
           '**/dist/**',
           '**/android/**',
           '**/training-data/**',
@@ -146,22 +156,4 @@ function watcherResilience() {
       })
     },
   }
-}
-
-// Vite registers its proxy 'error' listener AFTER calling each proxy's
-// `configure` hook, so that listener cannot be removed from there — it will
-// always print a full stack trace for every failed request. With the app
-// polling eight endpoints plus a WebSocket, an unreachable Pi produces
-// hundreds of them a minute and buries everything else. Filtering at the
-// logger is the supported way to quieten it; onProxyError prints one
-// actionable summary line every 15s in their place. Only these two message
-// kinds are dropped — every other error still comes through.
-function quietProxyLogger() {
-  const logger = createLogger()
-  const passthrough = logger.error
-  logger.error = (msg, opts) => {
-    if (typeof msg === 'string' && /(?:http|ws) proxy error/.test(msg)) return
-    passthrough(msg, opts)
-  }
-  return logger
 }

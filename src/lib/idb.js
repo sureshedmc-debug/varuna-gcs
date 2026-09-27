@@ -90,6 +90,62 @@ export async function idbPutMany(dbp, store, values) {
   }
 }
 
+/**
+ * Write to SEVERAL stores in ONE transaction. Needed where two records
+ * describe the same thing and a half-written pair is worse than no write:
+ * photoStore keeps the image in one store and its size in another, and the
+ * size record is the only thing the garbage collector can see, so the two
+ * must land together or not at all.
+ * @param {Array<{store: string, value: any}>} writes
+ */
+export async function idbPutAcross(dbp, writes) {
+  const db = await dbp
+  if (!db || !writes.length) return false
+  try {
+    const stores = [...new Set(writes.map((w) => w.store))]
+    const t = db.transaction(stores, 'readwrite')
+    for (const w of writes) t.objectStore(w.store).put(w.value)
+    return await new Promise((resolve) => {
+      t.oncomplete = () => resolve(true)
+      t.onerror = () => resolve(false)
+      t.onabort = () => resolve(false)
+    })
+  } catch {
+    return false
+  }
+}
+
+/** Delete the same keys from several stores in one transaction. */
+export async function idbDeleteAcross(dbp, stores, keys) {
+  const db = await dbp
+  if (!db || !keys.length) return
+  try {
+    const t = db.transaction(stores, 'readwrite')
+    for (const name of stores) {
+      const os = t.objectStore(name)
+      for (const k of keys) os.delete(k)
+    }
+    await new Promise((resolve) => {
+      t.oncomplete = resolve
+      t.onerror = resolve
+      t.onabort = resolve
+    })
+  } catch {
+    /* noop */
+  }
+}
+
+/** Just the keys — does not deserialise the (possibly large) values. */
+export async function idbGetAllKeys(dbp, store) {
+  const db = await dbp
+  if (!db) return []
+  try {
+    return (await wrap(tx(db, store, 'readonly').getAllKeys())) || []
+  } catch {
+    return []
+  }
+}
+
 export async function idbDelete(dbp, store, key) {
   const db = await dbp
   if (!db) return

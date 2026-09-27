@@ -18,7 +18,7 @@
 // image is fetched back from IndexedDB on startup.
 
 import { useEffect, useState } from 'react'
-import { savePhotos, getPhotos, clearPhotos } from './photoStore'
+import { savePhotos, getPhotos, clearPhotos, deletePhotosFor } from './photoStore'
 
 const KEY = 'varuna.trashLog'
 const EVT = 'varuna:trashLog'
@@ -67,12 +67,21 @@ export async function hydratePhotos(limit = HYDRATE_ON_LOAD) {
   const want = log.filter((e) => e.hasPhoto && !e.photo).slice(0, limit)
   if (!want.length) return
   const photos = await getPhotos(want.map((e) => e.id))
-  if (!photos.size) return
-  for (const e of log) {
+  // A miss means the bytes are gone (pruned, or evicted by the browser) while
+  // the flag survived in localStorage. Clear the flag, or the row shows
+  // "Loading photo..." forever and re-reads IndexedDB on every expand.
+  let changed = false
+  for (const e of want) {
     const p = photos.get(e.id)
-    if (p) e.photo = p
+    if (p) {
+      e.photo = p
+      changed = true
+    } else if (e.hasPhoto) {
+      e.hasPhoto = false
+      changed = true
+    }
   }
-  emit()
+  if (changed) emit()
 }
 if (typeof window !== 'undefined') {
   // After first paint, so hydration never delays the UI coming up.
@@ -148,6 +157,10 @@ export function recordTrashSighting({ lat, lng, count, confidence, source, posSo
 
   if (match) {
     match.count = Math.max(match.count, n)
+    // Captured BEFORE confidence is raised: the photo-replacement test below
+    // compares against it, and comparing with the already-raised value made
+    // that test permanently false.
+    const prevConf = match.confidence ?? 0
     match.confidence = conf == null ? match.confidence : Math.max(match.confidence ?? 0, conf)
     match.lastSeen = now
     match.frames += 1
@@ -159,7 +172,10 @@ export function recordTrashSighting({ lat, lng, count, confidence, source, posSo
     }
     // Prefer the sharpest evidence: the first photo taken of this spot is
     // usually enough; only replace it if a clearly more confident frame comes in.
-    if (photo && (!match.photo || (conf ?? 0) > (match.confidence ?? 0))) {
+    // Only swap the stored evidence for a genuinely better frame. `hasPhoto`
+    // matters as much as `photo` here: an entry whose image simply hasn't been
+    // hydrated yet still HAS one, and must not be overwritten by a weaker frame.
+    if (photo && ((!match.photo && !match.hasPhoto) || (conf ?? 0) > prevConf)) {
       match.photo = photo
       match.hasPhoto = true
       savePhotos(match.id, { boxed: photo }).catch(() => {})
@@ -193,7 +209,14 @@ export function recordTrashSighting({ lat, lng, count, confidence, source, posSo
         frames: 1,
       },
       ...log,
-    ].slice(0, MAX_ENTRIES)
+    ]
+    if (log.length > MAX_ENTRIES) {
+      // Entries falling off the end take their stored images with them,
+      // otherwise the photos outlive the log that referenced them.
+      const dropped = log.slice(MAX_ENTRIES).map((e) => e.id)
+      log = log.slice(0, MAX_ENTRIES)
+      deletePhotosFor(dropped).catch(() => {})
+    }
   }
   emit()
 }
@@ -211,10 +234,9 @@ export async function ensurePhoto(id) {
   if (!entry || entry.photo || !entry.hasPhoto) return entry?.photo || null
   const photos = await getPhotos([id])
   const p = photos.get(id)
-  if (p) {
-    entry.photo = p
-    emit()
-  }
+  if (p) entry.photo = p
+  else entry.hasPhoto = false // the bytes are gone; stop promising a photo
+  emit()
   return p || null
 }
 

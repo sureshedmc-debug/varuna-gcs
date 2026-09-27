@@ -9,7 +9,7 @@
 //
 // Storage is capped and pruned oldest-first.
 
-import { openDb, idbGet, idbPut, idbDeleteMany, idbClear, idbEach, idbCount, sizeOf } from './idb'
+import { openDb, idbGet, idbPut, idbPutAcross, idbDeleteAcross, idbClear, idbEach, idbCount, idbGetAllKeys, sizeOf } from './idb'
 
 // Two stores, and the split matters for performance. An IndexedDB cursor
 // deserialises the whole record, so totalling the size of 400MB of data-URL
@@ -49,8 +49,14 @@ export async function savePhotos(id, { boxed } = {}) {
   if (!id) return
   if (boxed) {
     remember(id, boxed)
-    await idbPut(DB, STORE, { id, data: boxed })
-    await idbPut(DB, META, { id, bytes: sizeOf(boxed), ts: Date.now() })
+    // ONE transaction across both stores. The meta row is the only thing
+    // prune() can see, so a half-written pair is actively harmful: meta
+    // without a photo makes prune delete real photos to get under a cap it
+    // was never over, and a photo without meta can never be reclaimed.
+    await idbPutAcross(DB, [
+      { store: STORE, value: { id, data: boxed } },
+      { store: META, value: { id, bytes: sizeOf(boxed), ts: Date.now() } },
+    ])
   }
   if (++writesSincePrune >= PRUNE_EVERY) {
     writesSincePrune = 0
@@ -86,8 +92,7 @@ export async function deletePhotosFor(ids) {
     keys.push(id)
     mem.delete(id)
   }
-  await idbDeleteMany(DB, STORE, keys)
-  await idbDeleteMany(DB, META, keys)
+  await idbDeleteAcross(DB, [STORE, META], keys)
 }
 
 export async function clearPhotos() {
@@ -128,8 +133,26 @@ async function prune() {
     mem.delete(rec.id)
     bytes -= rec.n
   }
-  if (doomed.length) {
-    await idbDeleteMany(DB, STORE, doomed)
-    await idbDeleteMany(DB, META, doomed)
-  }
+  if (doomed.length) await idbDeleteAcross(DB, [STORE, META], doomed)
 }
+
+// One-time sweep for rows nothing can reclaim.
+//
+// Two sources. An earlier build stored a second "clean frame" per sighting
+// under `<id>#raw`; that feature was removed, and those rows have no meta
+// record, so prune() cannot see them and they would sit there forever. And
+// any photo row whose meta row is missing (an interrupted write from before
+// the write became atomic) is equally invisible. Keys only - this never
+// deserialises the image data.
+async function sweepOrphans() {
+  const photoKeys = await idbGetAllKeys(DB, STORE)
+  if (!photoKeys.length) return
+  const metaKeys = new Set(await idbGetAllKeys(DB, META))
+  const orphans = photoKeys.filter((k) => String(k).endsWith('#raw') || !metaKeys.has(k))
+  if (orphans.length) await idbDeleteAcross(DB, [STORE, META], orphans)
+}
+if (typeof window !== 'undefined') {
+  // Well after first paint; this is housekeeping, never urgent.
+  setTimeout(() => sweepOrphans().catch(() => {}), 8000)
+}
+
