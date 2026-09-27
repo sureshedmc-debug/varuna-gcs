@@ -1,4 +1,4 @@
-import { defineConfig, loadEnv } from 'vite'
+import { defineConfig, loadEnv, createLogger } from 'vite'
 import react from '@vitejs/plugin-react'
 
 // The production bundle NEVER contains a backend host: the app calls the API via
@@ -19,15 +19,63 @@ export default defineConfig(({ mode }) => {
 
   // Everything the frontend calls at runtime lives under these prefixes.
   const proxyPaths = ['/api', '/video_feed', '/stream', '/tune']
+
+  // The app polls eight endpoints every few seconds and opens a WebSocket, so
+  // when the Pi is off (or Netbird is down) the default proxy logging prints
+  // hundreds of identical stack traces a minute and the terminal becomes
+  // unusable. The Pi being unreachable is a normal state during UI work, not a
+  // crash — so it gets ONE actionable line every 15s per error kind instead.
+  const lastLogged = new Map()
+  function onProxyError(err, req, res) {
+    const code = err?.code || 'PROXY_ERROR'
+    const now = Date.now()
+    if (now - (lastLogged.get(code) || 0) > 15000) {
+      lastLogged.set(code, now)
+      const hint =
+        code === 'ENOTFOUND'
+          ? `cannot resolve it — is Netbird connected? (\`netbird status\`)`
+          : code === 'ECONNREFUSED'
+            ? 'nothing is listening there — is the Pi backend running?'
+            : err?.message || code
+      console.warn(`
+  [pi] ${target} unreachable: ${hint}
+  The UI still works; set VITE_DEV_API_TARGET in .env.local to change the target.
+`)
+    }
+    // Fail the request fast. A WebSocket upgrade hands us a raw socket, which
+    // has no writeHead — ending it is all that's needed there.
+    try {
+      if (res && typeof res.writeHead === 'function') {
+        if (!res.headersSent) res.writeHead(502, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ success: false, message: `Backend unreachable (${code})` }))
+      } else if (res && typeof res.end === 'function') {
+        res.end()
+      }
+    } catch {
+      /* socket already gone */
+    }
+  }
+
   const proxy = Object.fromEntries(
     proxyPaths.map((p) => [
       p,
-      { target, changeOrigin: true, ws: true, secure: false },
+      {
+        target,
+        changeOrigin: true,
+        ws: true,
+        secure: false,
+        // Runs BEFORE Vite attaches its own 'error' listener, so this one
+        // fires first and ends the response; Vite's then sees the response
+        // already finished and adds nothing. Its log line is filtered out by
+        // the custom logger below.
+        configure: (px) => px.on('error', onProxyError),
+      },
     ])
   )
 
   return {
-    plugins: [react()],
+    plugins: [react(), watcherResilience()],
+    customLogger: quietProxyLogger(),
     // `preview` gets the same proxy as `server`: without it, npm run preview
     // serves the built bundle with no route to the Pi, so a production-shaped
     // smoke test would look broken for the wrong reason.
@@ -39,7 +87,20 @@ export default defineConfig(({ mode }) => {
       hmr: { overlay: true },
       watch: {
         usePolling: false,
-      }
+        // Vite only ignores node_modules and .git by default — NOT the rest of
+        // the project. Without this it walks the electron-builder output, which
+        // holds a whole Electron runtime and is actively written to during a
+        // build: watching a file that electron-builder has open throws EBUSY,
+        // chokidar emits 'error', and Node kills the dev server outright.
+        // Being gitignored does not exclude a directory from the watcher.
+        ignored: [
+          '**/release/**',
+          '**/dist/**',
+          '**/android/**',
+          '**/training-data/**',
+          '**/varuna photos and video/**',
+        ],
+      },
     },
     build: { 
       outDir: 'dist', 
@@ -67,3 +128,40 @@ export default defineConfig(({ mode }) => {
     },
   }
 })
+
+// Belt and braces for the watcher. The ignore list above covers the directories
+// we know about, but antivirus, OneDrive or a stray build can lock any file at
+// any moment. chokidar surfaces that as an 'error' event, and an unhandled
+// 'error' event terminates Node — so one momentarily-locked file would kill
+// `npm run dev`. Logging it keeps the server alive instead.
+function watcherResilience() {
+  return {
+    name: 'varuna:watcher-resilience',
+    apply: 'serve',
+    configureServer(server) {
+      server.watcher.on('error', (err) => {
+        server.config.logger.warn(
+          `  [watch] skipped ${err?.code || 'error'} on ${err?.path || err?.message || err}`,
+        )
+      })
+    },
+  }
+}
+
+// Vite registers its proxy 'error' listener AFTER calling each proxy's
+// `configure` hook, so that listener cannot be removed from there — it will
+// always print a full stack trace for every failed request. With the app
+// polling eight endpoints plus a WebSocket, an unreachable Pi produces
+// hundreds of them a minute and buries everything else. Filtering at the
+// logger is the supported way to quieten it; onProxyError prints one
+// actionable summary line every 15s in their place. Only these two message
+// kinds are dropped — every other error still comes through.
+function quietProxyLogger() {
+  const logger = createLogger()
+  const passthrough = logger.error
+  logger.error = (msg, opts) => {
+    if (typeof msg === 'string' && /(?:http|ws) proxy error/.test(msg)) return
+    passthrough(msg, opts)
+  }
+  return logger
+}
