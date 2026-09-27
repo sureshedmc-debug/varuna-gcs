@@ -33,8 +33,14 @@ const FACE_SUPPRESS_IOU = 0.20
 // Humans are held to a HIGH bar: a human box doesn't just get drawn, it also
 // deletes every trash box overlapping it (suppressByPerson / suppressByFace).
 // So a false "Human" costs a real trash detection as well as looking wrong.
-const FACE_CONF = 0.40
-const PERSON_CONF = 0.50
+//
+// At 0.70 far fewer objects get mislabelled "Human". Note the second-order
+// effect this has, because it runs the other way: fewer human boxes means
+// fewer trash boxes get deleted by them, so trash near a person is now MORE
+// likely to survive, not less. Whether a bag is called trash is decided by
+// TRASH_CONF_* below, not by these.
+const FACE_CONF = 0.70
+const PERSON_CONF = 0.70
 // Trash is held to a LOW bar — it runs below the operator's slider value so
 // small or faint debris still registers; the slider stays the main control.
 const TRASH_CONF_FACTOR = 0.5
