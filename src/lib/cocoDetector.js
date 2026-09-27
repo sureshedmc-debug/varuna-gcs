@@ -31,7 +31,7 @@ export const BOTTLE_CLASS = 39 // COCO class id for 'bottle'
 export async function createCocoDetector(onProgress) {
   const ort = await loadOrt()
   onProgress && onProgress('Loading verification model…')
-  const { session, ep } = await createSession(ort, '/models/coco-yolo.onnx', onProgress)
+  const { session, ep, release } = await createSession(ort, '/models/coco-yolo.onnx', onProgress)
   const inputName = session.inputNames[0]
   const outputName = session.outputNames[0]
 
@@ -104,11 +104,9 @@ export async function createCocoDetector(onProgress) {
   }
 
   function dispose() {
-    try {
-      session.release && session.release()
-    } catch {
-      /* noop */
-    }
+    // Shared session: drop this holder's reference. It is only freed once the
+    // last holder releases it (see createSession in detector.js).
+    release()
   }
 
   return { detect, dispose, ep }

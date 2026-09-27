@@ -26,7 +26,7 @@ const PAD_RGB = [114, 114, 114]
 export async function createFaceDetector(onProgress) {
   const ort = await loadOrt() // shares the already-loaded ORT runtime
   onProgress && onProgress('Loading face-safety model…')
-  const { session, ep } = await createSession(ort, '/models/face-yolo.onnx', onProgress)
+  const { session, ep, release } = await createSession(ort, '/models/face-yolo.onnx', onProgress)
   const inputName = session.inputNames[0]
   const outputName = session.outputNames[0]
 
@@ -101,11 +101,9 @@ export async function createFaceDetector(onProgress) {
   }
 
   function dispose() {
-    try {
-      session.release && session.release()
-    } catch {
-      /* noop */
-    }
+    // Shared session: drop this holder's reference. It is only freed once the
+    // last holder releases it (see createSession in detector.js).
+    release()
   }
 
   return { detectFaces, dispose, ep }

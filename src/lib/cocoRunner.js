@@ -11,7 +11,7 @@ let shared = null // { promise, refs }
 
 async function build(onProgress) {
   const ort = await loadOrt()
-  const { session, ep } = await createSession(ort, '/models/coco-yolo.onnx', onProgress)
+  const { session, ep, release } = await createSession(ort, '/models/coco-yolo.onnx', onProgress)
   const inputName = session.inputNames[0]
   const outputName = session.outputNames[0]
 
@@ -66,7 +66,7 @@ async function build(onProgress) {
     return p
   }
 
-  return { run, ep, session }
+  return { run, ep, session, release }
 }
 
 /** Take a reference to the shared model. Call release() when done; the
@@ -94,7 +94,7 @@ export function acquireCoco(onProgress) {
       s.promise
         .then((r) => {
           try {
-            r.session.release && r.session.release()
+            r.release()
           } catch {
             /* noop */
           }

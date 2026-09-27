@@ -75,9 +75,21 @@ function serialized(fn) {
   return run
 }
 
-/** Create an inference session for `modelUrl`, preferring WebGPU and falling
- * back to WASM/SIMD on CPU. Shared by every local model in this app. */
-export async function createSession(ort, modelUrl, onProgress) {
+// Sessions are SHARED and reference counted, one per model file.
+//
+// Building a session is expensive and blocks the main thread: three models is
+// ~32MB, and measured at ~12s of blocked main thread when they are built
+// twice. They were being built twice, every time, because React StrictMode
+// mounts, unmounts and remounts in development — so opening the Live tab
+// froze the UI. Switching away from Live and back did the same thing.
+//
+// Releasing is deferred, because refs hit zero between StrictMode's unmount
+// and its immediate remount. Freeing there would throw the work away a
+// millisecond before it is needed again.
+const sessions = new Map() // modelUrl -> { promise, refs, timer }
+const RELEASE_GRACE_MS = 15000
+
+function buildSession(ort, modelUrl, onProgress) {
   return serialized(async () => {
   let session
   let ep = 'wasm'
@@ -102,10 +114,48 @@ export async function createSession(ort, modelUrl, onProgress) {
   })
 }
 
+/** Acquire the shared session for `modelUrl`. Call release() when done. */
+export async function createSession(ort, modelUrl, onProgress) {
+  let entry = sessions.get(modelUrl)
+  if (entry?.timer) {
+    clearTimeout(entry.timer) // someone wants it again before the grace expired
+    entry.timer = null
+  }
+  if (!entry) {
+    entry = { refs: 0, timer: null }
+    entry.promise = buildSession(ort, modelUrl, onProgress)
+    // A failed build must not be cached, or every later attempt inherits it.
+    entry.promise.catch(() => {
+      if (sessions.get(modelUrl) === entry) sessions.delete(modelUrl)
+    })
+    sessions.set(modelUrl, entry)
+  }
+  entry.refs++
+  const { session, ep } = await entry.promise
+
+  let released = false
+  function release() {
+    if (released) return
+    released = true
+    entry.refs--
+    if (entry.refs > 0) return
+    entry.timer = setTimeout(() => {
+      if (entry.refs > 0) return
+      if (sessions.get(modelUrl) === entry) sessions.delete(modelUrl)
+      try {
+        session.release && session.release()
+      } catch {
+        /* already gone */
+      }
+    }, RELEASE_GRACE_MS)
+  }
+  return { session, ep, release }
+}
+
 export async function createDetector(onProgress, modelUrl = '/models/trash.onnx', classNames = ['Trash'], inputSize = DEFAULT_IN) {
   const ort = await loadOrt()
   onProgress && onProgress(`Loading ${classNames[0]} modelâ€¦`)
-  const { session, ep } = await createSession(ort, modelUrl, onProgress)
+  const { session, ep, release } = await createSession(ort, modelUrl, onProgress)
   const inputName = session.inputNames[0]
   const outputName = session.outputNames[0]
 
@@ -213,11 +263,9 @@ export async function createDetector(onProgress, modelUrl = '/models/trash.onnx'
   }
 
   function dispose() {
-    try {
-      session.release && session.release()
-    } catch {
-      /* noop */
-    }
+    // Drops this holder's reference; the session itself only goes when the
+    // last holder lets go (and the grace period passes).
+    release()
   }
 
   return { detect, dispose, ep, classNames: CLASS_NAMES }
