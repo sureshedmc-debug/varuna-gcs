@@ -9,12 +9,16 @@
 // and maps these, and the Word report includes every one with a map link
 // and, when captured, a photo of the trash.
 //
-// The list itself (coordinates, counts, etc.) is persisted in localStorage
-// so tab switches and reloads keep the log. Photos are NOT persisted there —
-// a JPEG per location would quickly blow past localStorage's ~5MB quota —
-// they live only on the in-memory entry for the current browser session.
+// The list itself (coordinates, counts, etc.) is persisted in localStorage.
+// The PHOTOS are persisted too, but in IndexedDB (see photoStore.js) — a JPEG
+// per location would blow past localStorage's ~5MB quota, which is why they
+// used to be dropped on reload. They survive a reload, a relaunch and a
+// reboot now, so the Detections tab and the Word report still have their
+// evidence days later. Each entry records `hasPhoto` in localStorage and its
+// image is fetched back from IndexedDB on startup.
 
 import { useEffect, useState } from 'react'
+import { savePhotos, getPhotos, clearPhotos } from './photoStore'
 
 const KEY = 'varuna.trashLog'
 const EVT = 'varuna:trashLog'
@@ -45,12 +49,38 @@ function load() {
 }
 function persist() {
   try {
-    // Strip photos before persisting — see the file header note.
-    const slim = log.map(({ photo, ...rest }) => rest)
+    // The image bytes go to IndexedDB, not here — only a flag stays in
+    // localStorage so the entry knows to fetch its photo back on startup.
+    const slim = log.map(({ photo, ...rest }) => ({ ...rest, hasPhoto: !!(photo || rest.hasPhoto) }))
     localStorage.setItem(KEY, JSON.stringify(slim))
   } catch {
     /* private mode / quota */
   }
+}
+
+// Pull saved photos back onto the log on startup. Only the newest entries are
+// hydrated up front — that's what the Detections list shows — and the rest are
+// fetched on demand when a row is opened.
+const HYDRATE_ON_LOAD = 120
+let hydrated = false
+export async function hydratePhotos(limit = HYDRATE_ON_LOAD) {
+  const want = log.filter((e) => e.hasPhoto && !e.photo).slice(0, limit)
+  if (!want.length) return
+  const photos = await getPhotos(want.map((e) => e.id))
+  if (!photos.size) return
+  for (const e of log) {
+    const p = photos.get(e.id)
+    if (p) e.photo = p
+  }
+  emit()
+}
+if (typeof window !== 'undefined') {
+  // After first paint, so hydration never delays the UI coming up.
+  setTimeout(() => {
+    if (hydrated) return
+    hydrated = true
+    hydratePhotos()
+  }, 400)
 }
 // Serialising up to 2000 entries is slow, and the detector records up to
 // twice a second — so writes are batched (at most one per second) and flushed
@@ -100,8 +130,13 @@ export function getTrashLog() {
  * @param {number} [s.alt]            aircraft altitude (m), if known
  * @param {number} [s.accuracy]       position accuracy (± m), if known
  * @param {string} [s.photo]          JPEG data URL of this frame, if captured
+ * @param {string} [s.cleanPhoto]     the same frame WITHOUT the AI's boxes drawn
+ *   on it. Kept separately because the self-training loop trains on it, and a
+ *   training image with rectangles painted on teaches the model to find
+ *   rectangles. Never shown in the UI.
+ * @param {Array}  [s.boxes]          detected boxes, normalised 0..1, for labels
  */
-export function recordTrashSighting({ lat, lng, count, confidence, source, posSource, alt, accuracy, photo, className, estWidthM, estHeightM }) {
+export function recordTrashSighting({ lat, lng, count, confidence, source, posSource, alt, accuracy, photo, cleanPhoto, boxes, className, estWidthM, estHeightM }) {
   const n = Number(count)
   if (!Number.isFinite(n) || n <= 0) return
   const now = Date.now()
@@ -129,15 +164,22 @@ export function recordTrashSighting({ lat, lng, count, confidence, source, posSo
     }
     // Prefer the sharpest evidence: the first photo taken of this spot is
     // usually enough; only replace it if a clearly more confident frame comes in.
-    if (photo && (!match.photo || (conf ?? 0) > (match.confidence ?? 0))) match.photo = photo
+    if (photo && (!match.photo || (conf ?? 0) > (match.confidence ?? 0))) {
+      match.photo = photo
+      match.hasPhoto = true
+      if (boxes?.length) match.boxes = boxes
+      savePhotos(match.id, { boxed: photo, clean: cleanPhoto }).catch(() => {})
+    }
     // Best size seen so far for this spot (biggest box on the sharpest frame).
     if (Number.isFinite(Number(estWidthM)) && (match.estWidthM == null || Number(estWidthM) > match.estWidthM)) match.estWidthM = Number(estWidthM)
     if (Number.isFinite(Number(estHeightM)) && (match.estHeightM == null || Number(estHeightM) > match.estHeightM)) match.estHeightM = Number(estHeightM)
     if (className && match.class === 'trash') match.class = className
   } else {
+    const id = `t-${++seq}`
+    if (photo) savePhotos(id, { boxed: photo, clean: cleanPhoto }).catch(() => {})
     log = [
       {
-        id: `t-${++seq}`,
+        id,
         class: className || 'trash',
         lat: located ? lat : null,
         lng: located ? lng : null,
@@ -149,6 +191,8 @@ export function recordTrashSighting({ lat, lng, count, confidence, source, posSo
         source,
         posSource: located ? posSource : null,
         photo: photo || null,
+        hasPhoto: !!photo,
+        boxes: boxes?.length ? boxes : null,
         estWidthM: Number.isFinite(Number(estWidthM)) ? Number(estWidthM) : null,
         estHeightM: Number.isFinite(Number(estHeightM)) ? Number(estHeightM) : null,
         firstSeen: now,
@@ -165,6 +209,33 @@ export function clearTrashLog() {
   log = []
   emit()
   flushPersist() // a clear is saved right away
+  clearPhotos().catch(() => {}) // the stored imagery goes with it
+}
+
+/**
+ * Record the operator's ✓/✗ on one sighting. Purely optional — the detector
+ * teaches itself without it (see selfLearn.js) — but a human verdict is the
+ * strongest label available, so it's kept on the entry and shown in the list.
+ */
+export function markSightingVerdict(id, verdict) {
+  const entry = log.find((e) => e.id === id)
+  if (!entry) return null
+  entry.verdict = entry.verdict === verdict ? null : verdict
+  emit()
+  return entry
+}
+
+/** Fetch one entry's photo on demand (for rows outside the startup hydration). */
+export async function ensurePhoto(id) {
+  const entry = log.find((e) => e.id === id)
+  if (!entry || entry.photo || !entry.hasPhoto) return entry?.photo || null
+  const photos = await getPhotos([id])
+  const p = photos.get(id)
+  if (p) {
+    entry.photo = p
+    emit()
+  }
+  return p || null
 }
 
 /** React hook: the live sighting list (newest first). */

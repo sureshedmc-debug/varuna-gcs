@@ -138,11 +138,51 @@ real fault (DNS, refused, timeout) instead of a generic browser error.
 | **Map (home)** | Mission-control command view: satellite map centerpiece with the live aircraft, floating glass panels (Selected Aircraft, System Overview w/ live sparklines, Platform Health, Event Log), a radial ARM/launch control, and a Live-Feed panel with speed/altitude HUD tapes | telemetry, `/api/ws`, `/api/health`, `/api/ping`, `/api/system/pi`, `/api/camera/status`, `/api/ai/status`, `/api/ai/detections`, `/api/mavlink/arm`, `/video_feed` |
 | **Live** | Video centerpiece + core telemetry + arm/takeoff/RTL/land + AI toggle + snapshot | `/video_feed`, `/api/telemetry`, `/api/ws`, `/api/ai/status`, `/api/ai/toggle`, `/api/camera/snapshot`, `/api/mavlink/{arm,takeoff,rtl,land}` |
 | **Mission** | Map waypoint editor (click to add, drag to move, per-point alt/speed/action), upload + start, saved list | `/api/mission/upload`, `/api/mission/start`, `/api/mission/list`, telemetry for home center |
-| **Detections** | Detection log (GPS or "unlocated"), environmental report + export | `/api/ai/detections`, `/api/ai/report` |
-| **System** | Health lights, Pi metrics, camera/AI status, live tuning, link preference | `/api/health`, `/api/system/pi`, `/api/camera/status`, `/api/ai/status`, `/api/config`, `/api/config/save`, `/api/mavlink/prefer` |
+| **Detections** | Detection log (GPS or "unlocated") with persisted photos and an optional ✓/✗ on each row, environmental report + export | `/api/ai/detections`, `/api/ai/report` |
+| **System** | Health lights, Pi metrics, camera/AI status, self-learning stats + dataset export, offline map download, live tuning, link preference | `/api/health`, `/api/system/pi`, `/api/camera/status`, `/api/ai/status`, `/api/config`, `/api/config/save`, `/api/mavlink/prefer` |
+
+## The detector teaches itself
+
+The trash model gets better the more the app is flown, with nobody labelling
+anything. Three signals the app already produces are used as labels:
+
+| Signal | Meaning | Verdict |
+| --- | --- | --- |
+| **Temporal consistency** | A box that survives many frames while the aircraft moves is a real object | positive |
+| **Flicker** | A box that appears and dies within a few frames is noise | negative |
+| **Cross-model disagreement** | The trash model fires on something the person/face model calls a human | negative |
+| **Operator ✓/✗** | Optional, on any row in the Detections tab | either, weighted highest |
+
+Those verdicts do two things. **Live**, every sample keeps a cheap visual
+fingerprint (`src/lib/embed.js`), and incoming boxes matching a known false
+positive are suppressed immediately — reject a pile of clothes once and clothes
+stop scoring as trash, with no retraining and no restart. **Offline**, the same
+verdicts accumulate as a real YOLO dataset: clean, un-annotated frames plus box
+coordinates, with negatives exported as background images, which is by far the
+most effective way to stop a model hallucinating. System → Self-learning shows
+the counts and exports the archive; unzip it and run `python train.py`.
+
+Two limits stop a self-training loop from amplifying its own mistakes: the live
+filter never overrules a high-confidence detection, so a bad negative can dim a
+weak class but can never blind the detector; and near-duplicate samples are
+dropped so the dataset stays diverse. Both are in `src/lib/selfLearn.js`.
+
+Each detection therefore stores **two** images — the boxed frame the operator
+saw, used in the Detections tab and the Word report, and a clean frame with no
+overlay, used only for training. A training image with rectangles painted on it
+teaches the model to find rectangles.
 
 Cross-cutting:
 
+- **Detection photos persist** — in IndexedDB, not localStorage, so a JPEG per
+  location doesn't blow the ~5MB quota. Evidence survives a reload, a relaunch
+  and a reboot, and the Word report still has its photos days later. Capped at
+  ~400MB and pruned oldest-first; training frames are pinned and never pruned.
+- **Offline maps** — every satellite tile any map draws is cached locally and
+  re-served from there, including with no connection at all. An area can be
+  downloaded ahead of a flight from System → Offline maps. Caching is
+  opportunistic: if storage or the tile host's CORS headers are unavailable,
+  the map falls back to loading tiles normally.
 - **PIN gate** (`/api/auth/verify_pin`) — simple lock screen, session kept per-tab.
 - **Ping** (`/api/ping`) every 4 s — backend-reachability, distinct from drone health.
 - **Undervoltage / throttle banner** from `/api/system/pi` `throttledState` — a

@@ -11,7 +11,8 @@
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { MapContainer, TileLayer, Marker, Polyline, Popup, useMap } from 'react-leaflet'
+import { MapContainer, Marker, Polyline, Popup, useMap } from 'react-leaflet'
+import CachedTileLayer from '../components/CachedTileLayer'
 import { StatusOrb, TiltCard } from '../components/ui'
 import { fmtCoord, num } from '../lib/format'
 import { usePositionHistory, replayableRuns } from '../lib/positionHistory'
@@ -164,7 +165,7 @@ export default function ReplayScreen() {
 
         <div className="mb-3 h-[46vh] overflow-hidden rounded-xl border border-line">
           <MapContainer center={points[0] || [17.385, 78.4867]} zoom={17} zoomControl={false} attributionControl={false} style={{ height: '100%', width: '100%', background: '#0E1116' }}>
-            <TileLayer url={SAT_URL} maxZoom={19} />
+            <CachedTileLayer url={SAT_URL} maxZoom={19} />
             <FitToRun points={points} />
             {points.length > 1 && <Polyline positions={points} pathOptions={{ color: '#3B9EFF', weight: 2, opacity: 0.6 }} />}
             {sample && <Marker position={[sample.lat, sample.lng]} icon={_dIcon} />}

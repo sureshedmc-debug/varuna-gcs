@@ -1,5 +1,6 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { MapContainer, TileLayer, Marker, Polyline, Polygon, Circle, useMap, useMapEvents } from 'react-leaflet'
+import { MapContainer, Marker, Polyline, Polygon, Circle, useMap, useMapEvents } from 'react-leaflet'
+import CachedTileLayer from '../components/CachedTileLayer'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { AnimatePresence, motion } from 'framer-motion'
@@ -309,7 +310,7 @@ export default function MissionScreen() {
       {/* Fullscreen satellite map */}
       <div className="absolute inset-0 z-0 isolate overflow-hidden rounded-2xl border border-line">
         <MapContainer center={home} zoom={16} zoomControl={false} attributionControl={false} style={{ height: '100%', width: '100%', background: '#0E1116' }}>
-          <TileLayer url={SAT_URL} maxZoom={19} />
+          <CachedTileLayer url={SAT_URL} maxZoom={19} />
           <ClickToAdd onAdd={addWp} />
           <RecenterOnSource center={home} source={live.source} />
           <ReportMapView />

@@ -1,8 +1,9 @@
 import { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet'
+import { MapContainer, Marker, Popup, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
+import CachedTileLayer from '../components/CachedTileLayer'
 import { api } from '../api/client'
 import { usePolling, useNow } from '../hooks/usePolling'
 import { useToast } from '../components/Toast'
@@ -10,7 +11,8 @@ import { Btn, StaleBadge, StatusOrb, TiltCard, Spinner } from '../components/ui'
 import { ViewToggle, EYE, EYE_OFF } from '../components/ViewToggle'
 import { fmtClock, fmtCoord, num } from '../lib/format'
 import { useTrashStats, resetTrashStats } from '../lib/detectionStats'
-import { useTrashLog, clearTrashLog, mapsLink } from '../lib/trashLog'
+import { useTrashLog, clearTrashLog, mapsLink, ensurePhoto, markSightingVerdict, hydratePhotos, getTrashLog } from '../lib/trashLog'
+import { recordOperatorVerdict } from '../lib/selfLearn'
 import { useMissionRecording, captureMissionPoster, clearMissionRecording } from '../lib/missionRecording'
 import { getReportKey, setReportKey, generateReportNarrative } from '../lib/reportAi'
 import { renderReportCharts } from '../lib/reportChart'
@@ -81,6 +83,9 @@ function fromSighting(s) {
     posSource: s.posSource,
     accuracy: s.accuracy,
     photo: s.photo || null,
+    hasPhoto: !!(s.photo || s.hasPhoto),
+    boxes: s.boxes || null,
+    verdict: s.verdict || null, // operator's ✓/✗, once given
     estWidthM: s.estWidthM ?? null,
     estHeightM: s.estHeightM ?? null,
     estWeightG: estimateWeightG(s.class || 'trash', s.count, getFovSettings().avgWeightG),
@@ -149,7 +154,7 @@ const TrashMap = memo(function TrashMap({ rows, sightings, showHeat }) {
   return (
     <div className="relative mb-3 h-56 overflow-hidden rounded-xl border border-line isolate">
       <MapContainer center={points[0] || [17.385, 78.4867]} zoom={16} zoomControl={false} attributionControl={false} style={{ height: '100%', width: '100%', background: '#0E1116' }}>
-        <TileLayer url={SAT_URL} maxZoom={19} />
+        <CachedTileLayer url={SAT_URL} maxZoom={19} />
         <FitToPoints points={points} />
         {showHeat && heat.length > 0 && <HeatLayer points={heat} />}
         {located.map((r) => (
@@ -179,7 +184,7 @@ const TrashMap = memo(function TrashMap({ rows, sightings, showHeat }) {
 })
 
 // Memoised: rows whose record didn't change skip re-rendering (the list can hold thousands).
-const DetectionRow = memo(function DetectionRow({ d, n, expanded, onToggle, onWhatsApp }) {
+const DetectionRow = memo(function DetectionRow({ d, n, expanded, onToggle, onWhatsApp, onVerdict }) {
   const confPct = confPctOf(d.confidence)
   const o = ORIGIN[d.origin]
   return (
@@ -211,9 +216,11 @@ const DetectionRow = memo(function DetectionRow({ d, n, expanded, onToggle, onWh
         {expanded && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}>
             <div className="flex gap-3 border-t border-line px-4 py-3">
-              {d.photo && (
+              {d.photo ? (
                 <img src={d.photo} alt="Trash detection" className="h-20 w-28 shrink-0 rounded-md object-cover" />
-              )}
+              ) : d.hasPhoto ? (
+                <div className="flex h-20 w-28 shrink-0 items-center justify-center rounded-md bg-chip text-[10px] text-muted">Loading photo…</div>
+              ) : null}
               <div className="grid flex-1 grid-cols-2 gap-2 text-xs sm:grid-cols-3">
                 <Detail k="Latitude" v={d.located ? fmtCoord(d.lat) : '—'} />
                 <Detail k="Longitude" v={d.located ? fmtCoord(d.lng) : '—'} />
@@ -228,8 +235,8 @@ const DetectionRow = memo(function DetectionRow({ d, n, expanded, onToggle, onWh
                 {d.estWeightG != null && <Detail k="Est. weight (rough)" v={d.estWeightG >= 1000 ? `~${(d.estWeightG / 1000).toFixed(1)} kg` : `~${d.estWeightG} g`} />}
               </div>
             </div>
-            {d.located && (
-              <div className="flex flex-wrap gap-2 border-t border-line px-4 py-2">
+            <div className="flex flex-wrap items-center gap-2 border-t border-line px-4 py-2">
+              {d.located && (
                 <button
                   onClick={() => onWhatsApp?.(d)}
                   className="rounded-md bg-chip px-2.5 py-1 text-[11px] font-semibold text-ink hover:bg-chip2"
@@ -237,8 +244,37 @@ const DetectionRow = memo(function DetectionRow({ d, n, expanded, onToggle, onWh
                 >
                   Alert on WhatsApp
                 </button>
-              </div>
-            )}
+              )}
+              {/* Optional. The detector already teaches itself from how long
+                  each box survived and from what the person model disagreed
+                  with; this just adds a much stronger label when you happen
+                  to notice one. */}
+              {d.origin !== 'pi' && (
+                <div className="ml-auto flex items-center gap-1.5">
+                  <span className="text-[10px] uppercase tracking-wider text-muted">Was this right?</span>
+                  <button
+                    onClick={() => onVerdict?.(d, 'positive')}
+                    className="rounded-md px-2 py-1 text-[11px] font-semibold transition-colors"
+                    style={d.verdict === 'positive'
+                      ? { background: 'rgba(50,215,75,0.22)', color: '#32D74B' }
+                      : { background: 'var(--chip,#1A1F27)', color: '#8A9099' }}
+                    title="Confirm this is trash — teaches the model to keep finding it"
+                  >
+                    ✓ Yes
+                  </button>
+                  <button
+                    onClick={() => onVerdict?.(d, 'negative')}
+                    className="rounded-md px-2 py-1 text-[11px] font-semibold transition-colors"
+                    style={d.verdict === 'negative'
+                      ? { background: 'rgba(255,69,58,0.22)', color: '#FF453A' }
+                      : { background: 'var(--chip,#1A1F27)', color: '#8A9099' }}
+                    title="Not trash — the model stops matching things that look like this"
+                  >
+                    ✗ No
+                  </button>
+                </div>
+              )}
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -246,7 +282,7 @@ const DetectionRow = memo(function DetectionRow({ d, n, expanded, onToggle, onWh
   )
 }, sameRow)
 function sameRow(a, b) {
-  if (a.n !== b.n || a.expanded !== b.expanded || a.onToggle !== b.onToggle || a.onWhatsApp !== b.onWhatsApp) return false
+  if (a.n !== b.n || a.expanded !== b.expanded || a.onToggle !== b.onToggle || a.onWhatsApp !== b.onWhatsApp || a.onVerdict !== b.onVerdict) return false
   if (a.d === b.d) return true
   const ka = Object.keys(a.d)
   return ka.length === Object.keys(b.d).length && ka.every((k) => a.d[k] === b.d[k])
@@ -287,11 +323,40 @@ export default function DetectionsScreen() {
   const [expanded, setExpanded] = useState(null)
   const [showReport, setShowReport] = useState(true)
   const [showHeat, setShowHeat] = useState(false)
-  const toggleRow = useCallback((key) => setExpanded((cur) => (cur === key ? null : key)), [])
+  const toggleRow = useCallback((key) => {
+    setExpanded((cur) => (cur === key ? null : key))
+    // Photos older than the startup hydration window are fetched from
+    // IndexedDB the moment their row is opened.
+    ensurePhoto(key)
+  }, [])
 
   const { telemetry, simulated } = useSystem()
   const live = useLivePosition(telemetry.data)
   const homePoint = useHomePoint(telemetry.data, live, simulated)
+
+  // Optional operator label. Feeds the same pipeline the automatic signals
+  // feed, with reason 'operator' — the strongest weight the trainer gives.
+  const onVerdict = useCallback(async (d, verdict) => {
+    const entry = markSightingVerdict(d.key, verdict)
+    if (!entry) return
+    if (entry.verdict == null) return // toggled back off
+    await recordOperatorVerdict({
+      verdict,
+      sightingId: d.key,
+      photo: entry.photo || (await ensurePhoto(d.key)),
+      boxes: entry.boxes || [],
+      frameW: null,
+      frameH: null,
+      geo: { lat: d.lat, lng: d.lng },
+    })
+    toast.push({
+      level: 'ok',
+      title: verdict === 'positive' ? 'Marked as real trash' : 'Marked as a false positive',
+      msg: verdict === 'positive'
+        ? 'Added to the training set as a confirmed example.'
+        : 'Similar-looking boxes are suppressed from now on, and this frame becomes a negative for the next retrain.',
+    })
+  }, [toast])
 
   const onWhatsApp = useCallback((d) => {
     const text = buildAlertText({ itemCount: d.count, cls: d.class, lat: d.lat, lng: d.lng, source: d.origin })
@@ -381,7 +446,14 @@ export default function DetectionsScreen() {
     // Persist the key for next time (empty is allowed → falls back to a local report).
     setReportKey(apiKey)
     try {
-      const data = buildTrashDataset(rows, trashStats)
+      // Only the newest sightings have their photos in memory; the rest sit in
+      // IndexedDB. Pull them back first, or the report silently drops the
+      // evidence photos for everything older than the startup hydration.
+      // Re-read the log afterwards — `rows` was captured before hydration.
+      await hydratePhotos(500)
+      const withPhotos = [...getTrashLog().map(fromSighting), ...(backend || []).map(fromBackend)]
+        .sort((a, b) => (b.time || 0) - (a.time || 0))
+      const data = buildTrashDataset(withPhotos, trashStats)
       if (data.summary.total === 0 && !trashStats.peak && !clips.length) {
         toast.push({ level: 'warn', title: 'No detection data yet', msg: 'Run the AI camera or wait for detections first.' })
         return
@@ -513,7 +585,7 @@ export default function DetectionsScreen() {
             </div>
           ) : (
             rows.map((d, i) => (
-              <DetectionRow key={d.key} d={d} n={i + 1} expanded={expanded === d.key} onToggle={toggleRow} onWhatsApp={onWhatsApp} />
+              <DetectionRow key={d.key} d={d} n={i + 1} expanded={expanded === d.key} onToggle={toggleRow} onWhatsApp={onWhatsApp} onVerdict={onVerdict} />
             ))
           )}
         </div>

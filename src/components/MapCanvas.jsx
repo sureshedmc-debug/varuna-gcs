@@ -1,15 +1,18 @@
 import { lazy, memo, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { MapContainer, TileLayer, Marker, Circle, Polyline, useMap } from 'react-leaflet'
+import { MapContainer, Marker, Circle, Polyline, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
+import CachedTileLayer from './CachedTileLayer'
 
 // Lazy so three.js only loads when a 3D drone marker is actually shown.
 const HoloDrone = lazy(() => import('./HoloDrone'))
 
 // Esri World Imagery — client-side satellite tiles (no key), matching the
 // reference's satellite look. This is a map-tile host, not the backend.
-const SAT_URL =
+// Exported because the offline-tile downloader on the System tab prefetches
+// from the same template the maps draw from.
+export const SAT_URL =
   'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
 
 const ORANGE = '#3B9EFF'
@@ -200,7 +203,7 @@ export default function MapCanvas({ center, hasFix, waypoints, children, zoom = 
       attributionControl={false}
       style={{ height: '100%', width: '100%', background: '#0A0C0F' }}
     >
-      <TileLayer url={SAT_URL} maxZoom={19} />
+      <CachedTileLayer url={SAT_URL} maxZoom={19} />
       {hasFix && (
         <>
           <Circle center={c} radius={150} pathOptions={RANGE_STYLE} />

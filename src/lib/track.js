@@ -25,7 +25,13 @@ export class BoxTracker {
     this.matchIou = matchIou
     this.smoothing = smoothing // weight given to the NEW observation each update
     this.maxAgeMs = maxAgeMs
-    this.tracks = [] // { x1,y1,x2,y2,score,label,color,lastSeen }
+    this.tracks = [] // { id,x1,y1,x2,y2,score,label,color,firstSeen,lastSeen,hits,peak }
+    this.seq = 0
+    // Tracks dropped by the most recent update(). How long a box survived is
+    // the self-learning loop's main evidence that it was real (see selfLearn.js),
+    // and a track that has already been dropped can't be inspected — so the
+    // last batch is kept here for one tick.
+    this.retired = []
   }
 
   /** Feed a fresh detection list; returns the smoothed boxes to render. */
@@ -52,18 +58,30 @@ export class BoxTracker {
         t.score = b.score
         t.label = b.label
         t.color = b.color
+        t.cls = b.cls
         t.lastSeen = now
+        t.hits++
+        t.peak = Math.max(t.peak, b.score || 0)
         used[best] = true
       } else {
-        this.tracks.push({ ...b, lastSeen: now })
+        this.tracks.push({ ...b, id: ++this.seq, firstSeen: now, lastSeen: now, hits: 1, peak: b.score || 0 })
       }
     }
     // Drop tracks that haven't been re-observed within the grace period.
-    this.tracks = this.tracks.filter((t) => now - t.lastSeen <= this.maxAgeMs)
-    return this.tracks.map(({ x1, y1, x2, y2, score, label, color }) => ({ x1, y1, x2, y2, score, label, color }))
+    const keep = []
+    this.retired = []
+    for (const t of this.tracks) {
+      if (now - t.lastSeen <= this.maxAgeMs) keep.push(t)
+      else this.retired.push({ id: t.id, hits: t.hits, peak: t.peak, ageMs: t.lastSeen - t.firstSeen, cls: t.cls })
+    }
+    this.tracks = keep
+    return this.tracks.map(({ id, x1, y1, x2, y2, score, label, color, cls, hits, peak, firstSeen }) => ({
+      id, x1, y1, x2, y2, score, label, color, cls, hits, peak, ageMs: now - firstSeen,
+    }))
   }
 
   reset() {
     this.tracks = []
+    this.retired = []
   }
 }
