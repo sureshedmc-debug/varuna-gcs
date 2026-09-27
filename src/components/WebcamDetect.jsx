@@ -13,8 +13,6 @@ import { StatusOrb } from './ui'
 import { getFovSettings, pixelBoxToRealSize } from '../lib/sizeEstimate'
 import { getAlertSettings } from '../lib/alertSettings'
 import { sendBigDumpEmail } from '../lib/alerts/email'
-import { embedCrop } from '../lib/embed'
-import { isSelfLearnEnabled, setSelfLearnEnabled, judgeBox, observeFrame, resetObservation } from '../lib/selfLearn'
 
 // One auto-alert at most every this many seconds, no matter how many frames
 // still contain a big dump. Prevents spamming the email channel.
@@ -98,7 +96,6 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
   const [humanDetection,   setHumanDetection]   = useState(true)
   const [trashDetection,   setTrashDetection]   = useState(true)
   const [isRecording,      setIsRecording]      = useState(false)
-  const [selfLearn,        setSelfLearn]        = useState(isSelfLearnEnabled())
 
   confRef.current = confThr
 
@@ -264,27 +261,9 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
       emaRef.current=emaRef.current*0.8+(now-tickStart)*0.2
       const ft=[];for(const{boxes,ts}of tileBoxesRef.current.values()){if(now-ts<=TILE_TTL)ft.push(boxes)}
       const merged=ft.length?mergeBoxes([trashBoxes,...ft],MERGE_IOU):trashBoxes
-      // Boxes the human filter kills are the self-learning loop's hard
-      // negatives: the person/face model is, in effect, labelling them wrong
-      // for us. Identity is preserved through .filter(), so the difference
-      // between the two lists IS the set of killed boxes.
-      let humanKilled=[]
-      let finalTrash
-      if(humanDetectionRef.current){
-        const survived=suppressByPerson(suppressByFace(merged,faceBoxes),personBoxes)
-        const kept=new Set(survived)
-        humanKilled=merged.filter(b=>!kept.has(b))
-        finalTrash=filterDetections(survived,[])
-      } else {
-        finalTrash=filterDetections(merged,[])
-      }
-      const srcEl=srcElRef.current
-      const [frameW,frameH]=srcEl?srcSize(srcEl):[0,0]
-      // Learned suppression — drop boxes that look like something already
-      // known to be a false positive. Costs one 16x16 descriptor per box.
-      if(isSelfLearnEnabled()&&finalTrash.length&&frameW&&frameH){
-        finalTrash=finalTrash.filter(b=>!judgeBox(embedCrop(srcEl,b,frameW,frameH),b.score))
-      }
+      let finalTrash=merged
+      if(humanDetectionRef.current){finalTrash=filterDetections(suppressByPerson(suppressByFace(merged,faceBoxes),personBoxes),[])}
+      else{finalTrash=filterDetections(merged,[])}
       recordTrashCount(finalTrash.length) // share trash-only count with the Detections tab
       // Stamp trash with the aircraft's live position (≤ 2x/sec) for the Detections tab + report,
       // and grab a photo of this frame (the boxed view, exactly what the operator saw).
@@ -304,10 +283,6 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
           count:finalTrash.length, confidence:Math.max(...finalTrash.map(b=>Number(b.score)||0)),
           source:sourceRef.current, posSource:g.posSource, accuracy:g.accuracy,
           photo:capturePhoto(),
-          // The un-annotated twin of that photo. Kept only while self-learning
-          // is on, since training is the only thing that reads it.
-          cleanPhoto:isSelfLearnEnabled()?captureCleanFrame():null,
-          boxes:fw&&fh?finalTrash.map(b=>({x1:b.x1/fw,y1:b.y1/fh,x2:b.x2/fw,y2:b.y2/fh})):null,
           className:cls, estWidthM:size?.widthM??null, estHeightM:size?.heightM??null,
         })
         // Big-dump auto alerts. Guarded by cooldown and per-channel toggles.
@@ -321,20 +296,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
       const lf=humanDetectionRef.current?faceBoxes.map(b=>({...b,label:'Human',color:HUMAN_COLOR,cls:'human'})):[]
       const lp=humanDetectionRef.current?personBoxes.map(b=>({...b,label:'Human',color:HUMAN_COLOR,cls:'human'})):[]
       const topT=finalTrash.sort((a,b)=>b.score-a.score).slice(0,10)
-      const tracked=trackerRef.current.update([...lf,...lp,...topT],now)
-      boxesRef.current=tracked
-      // Feed the self-supervised labeller: how long each box survived is the
-      // evidence it uses to decide what was real. See selfLearn.js.
-      if(isSelfLearnEnabled()&&srcEl&&frameW&&frameH){
-        observeFrame({
-          source:srcEl, frameW, frameH,
-          live:tracked.filter(b=>b.cls!=='human'),
-          retired:trackerRef.current.retired.filter(t=>t.cls!=='human'),
-          suppressed:humanKilled,
-          captureClean:captureCleanFrame,
-          geo:{lat:geoRef.current.pos?.[0]??null,lng:geoRef.current.pos?.[1]??null},
-        })
-      }
+      boxesRef.current=trackerRef.current.update([...lf,...lp,...topT],now)
       setCount(boxesRef.current.length); onCount?.(boxesRef.current.length)
       frames++
       if(now-t0>600){setFps(Math.round(frames*1000/(now-t0)));frames=0;t0=now}
@@ -375,7 +337,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
     const v=videoRef.current; if(v?.srcObject){v.srcObject.getTracks().forEach(t=>t.stop());v.srcObject=null}
     if(streamImgRef.current)streamImgRef.current.src=''
     srcElRef.current=null; boxesRef.current=[]; tileBoxesRef.current.clear()
-    tileGridRef.current=null; activeTileRef.current=null; trackerRef.current.reset(); resetObservation()
+    tileGridRef.current=null; activeTileRef.current=null; trackerRef.current.reset()
     emaRef.current=60; gridSizeRef.current=2; setStatus(s=>s==='running'?'ready':s)
   }
   async function switchSource(next){if(next===source)return;const was=runningRef.current;stop();setSource(next);if(was)await start(next)}
@@ -422,25 +384,6 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
     const ctx=pc.getContext('2d'); if(!ctx) return null
     ctx.drawImage(cv,0,0,pc.width,pc.height)
     try{return pc.toDataURL('image/jpeg',0.6)}catch{return null}
-  }
-
-  // The same instant straight from the camera, with NO boxes drawn on it and
-  // at a larger size. This is the only image the self-training loop is allowed
-  // to learn from — a training frame with rectangles painted on it teaches the
-  // model to find rectangles. Never shown in the UI.
-  const cleanCanvasRef = useRef(null)
-  function captureCleanFrame(){
-    const el=srcElRef.current; if(!el) return null
-    const [vw,vh]=srcSize(el); if(!vw||!vh) return null
-    if(!cleanCanvasRef.current) cleanCanvasRef.current=document.createElement('canvas')
-    const cc=cleanCanvasRef.current
-    const scale=Math.min(1,640/vw)
-    cc.width=Math.round(vw*scale); cc.height=Math.round(vh*scale)
-    const ctx=cc.getContext('2d'); if(!ctx) return null
-    ctx.drawImage(el,0,0,cc.width,cc.height)
-    // Throws on a cross-origin drone stream; no training frame is better than
-    // a crash, and the sighting itself is unaffected.
-    try{return cc.toDataURL('image/jpeg',0.75)}catch{return null}
   }
 
   async function takeSnapshot(){
@@ -581,17 +524,6 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
             <span>🧑</span>
             <span className="flex-1 text-[12px] font-semibold text-white/80">Human Detect</span>
             <SToggle on={humanDetection} color="#FF6B6B" />
-          </div>
-
-          {/* Self-learning — labels its own footage and suppresses repeats of
-              known false positives. Details on the System tab. */}
-          <div className="flex items-center gap-3 rounded-2xl px-4 py-2.5 cursor-pointer"
-            onClick={()=>{const next=!selfLearn;setSelfLearn(next);setSelfLearnEnabled(next)}}
-            title="Learn from this flight: remember false positives and collect training frames"
-            style={{background:'rgba(11,18,32,0.85)',border:'1px solid rgba(255,255,255,0.09)',boxShadow:'0 8px 24px rgba(0,0,0,0.4)',minWidth:'220px'}}>
-            <span>🧠</span>
-            <span className="flex-1 text-[12px] font-semibold text-white/80">Self-learning</span>
-            <SToggle on={selfLearn} color="#BF5AF2" />
           </div>
 
         </div>

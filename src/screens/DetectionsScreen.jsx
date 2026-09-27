@@ -11,8 +11,7 @@ import { Btn, StaleBadge, StatusOrb, TiltCard, Spinner } from '../components/ui'
 import { ViewToggle, EYE, EYE_OFF } from '../components/ViewToggle'
 import { fmtClock, fmtCoord, num } from '../lib/format'
 import { useTrashStats, resetTrashStats } from '../lib/detectionStats'
-import { useTrashLog, clearTrashLog, mapsLink, ensurePhoto, markSightingVerdict, hydratePhotos, getTrashLog } from '../lib/trashLog'
-import { recordOperatorVerdict } from '../lib/selfLearn'
+import { useTrashLog, clearTrashLog, mapsLink, ensurePhoto, hydratePhotos, getTrashLog } from '../lib/trashLog'
 import { useMissionRecording, captureMissionPoster, clearMissionRecording } from '../lib/missionRecording'
 import { getReportKey, setReportKey, generateReportNarrative } from '../lib/reportAi'
 import { renderReportCharts } from '../lib/reportChart'
@@ -84,8 +83,6 @@ function fromSighting(s) {
     accuracy: s.accuracy,
     photo: s.photo || null,
     hasPhoto: !!(s.photo || s.hasPhoto),
-    boxes: s.boxes || null,
-    verdict: s.verdict || null, // operator's ✓/✗, once given
     estWidthM: s.estWidthM ?? null,
     estHeightM: s.estHeightM ?? null,
     estWeightG: estimateWeightG(s.class || 'trash', s.count, getFovSettings().avgWeightG),
@@ -184,7 +181,7 @@ const TrashMap = memo(function TrashMap({ rows, sightings, showHeat }) {
 })
 
 // Memoised: rows whose record didn't change skip re-rendering (the list can hold thousands).
-const DetectionRow = memo(function DetectionRow({ d, n, expanded, onToggle, onWhatsApp, onVerdict }) {
+const DetectionRow = memo(function DetectionRow({ d, n, expanded, onToggle, onWhatsApp }) {
   const confPct = confPctOf(d.confidence)
   const o = ORIGIN[d.origin]
   return (
@@ -235,8 +232,8 @@ const DetectionRow = memo(function DetectionRow({ d, n, expanded, onToggle, onWh
                 {d.estWeightG != null && <Detail k="Est. weight (rough)" v={d.estWeightG >= 1000 ? `~${(d.estWeightG / 1000).toFixed(1)} kg` : `~${d.estWeightG} g`} />}
               </div>
             </div>
-            <div className="flex flex-wrap items-center gap-2 border-t border-line px-4 py-2">
-              {d.located && (
+            {d.located && (
+              <div className="flex flex-wrap gap-2 border-t border-line px-4 py-2">
                 <button
                   onClick={() => onWhatsApp?.(d)}
                   className="rounded-md bg-chip px-2.5 py-1 text-[11px] font-semibold text-ink hover:bg-chip2"
@@ -244,37 +241,8 @@ const DetectionRow = memo(function DetectionRow({ d, n, expanded, onToggle, onWh
                 >
                   Alert on WhatsApp
                 </button>
-              )}
-              {/* Optional. The detector already teaches itself from how long
-                  each box survived and from what the person model disagreed
-                  with; this just adds a much stronger label when you happen
-                  to notice one. */}
-              {d.origin !== 'pi' && (
-                <div className="ml-auto flex items-center gap-1.5">
-                  <span className="text-[10px] uppercase tracking-wider text-muted">Was this right?</span>
-                  <button
-                    onClick={() => onVerdict?.(d, 'positive')}
-                    className="rounded-md px-2 py-1 text-[11px] font-semibold transition-colors"
-                    style={d.verdict === 'positive'
-                      ? { background: 'rgba(50,215,75,0.22)', color: '#32D74B' }
-                      : { background: 'var(--chip,#1A1F27)', color: '#8A9099' }}
-                    title="Confirm this is trash — teaches the model to keep finding it"
-                  >
-                    ✓ Yes
-                  </button>
-                  <button
-                    onClick={() => onVerdict?.(d, 'negative')}
-                    className="rounded-md px-2 py-1 text-[11px] font-semibold transition-colors"
-                    style={d.verdict === 'negative'
-                      ? { background: 'rgba(255,69,58,0.22)', color: '#FF453A' }
-                      : { background: 'var(--chip,#1A1F27)', color: '#8A9099' }}
-                    title="Not trash — the model stops matching things that look like this"
-                  >
-                    ✗ No
-                  </button>
-                </div>
-              )}
-            </div>
+              </div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
@@ -282,7 +250,7 @@ const DetectionRow = memo(function DetectionRow({ d, n, expanded, onToggle, onWh
   )
 }, sameRow)
 function sameRow(a, b) {
-  if (a.n !== b.n || a.expanded !== b.expanded || a.onToggle !== b.onToggle || a.onWhatsApp !== b.onWhatsApp || a.onVerdict !== b.onVerdict) return false
+  if (a.n !== b.n || a.expanded !== b.expanded || a.onToggle !== b.onToggle || a.onWhatsApp !== b.onWhatsApp) return false
   if (a.d === b.d) return true
   const ka = Object.keys(a.d)
   return ka.length === Object.keys(b.d).length && ka.every((k) => a.d[k] === b.d[k])
@@ -333,30 +301,6 @@ export default function DetectionsScreen() {
   const { telemetry, simulated } = useSystem()
   const live = useLivePosition(telemetry.data)
   const homePoint = useHomePoint(telemetry.data, live, simulated)
-
-  // Optional operator label. Feeds the same pipeline the automatic signals
-  // feed, with reason 'operator' — the strongest weight the trainer gives.
-  const onVerdict = useCallback(async (d, verdict) => {
-    const entry = markSightingVerdict(d.key, verdict)
-    if (!entry) return
-    if (entry.verdict == null) return // toggled back off
-    await recordOperatorVerdict({
-      verdict,
-      sightingId: d.key,
-      photo: entry.photo || (await ensurePhoto(d.key)),
-      boxes: entry.boxes || [],
-      frameW: null,
-      frameH: null,
-      geo: { lat: d.lat, lng: d.lng },
-    })
-    toast.push({
-      level: 'ok',
-      title: verdict === 'positive' ? 'Marked as real trash' : 'Marked as a false positive',
-      msg: verdict === 'positive'
-        ? 'Added to the training set as a confirmed example.'
-        : 'Similar-looking boxes are suppressed from now on, and this frame becomes a negative for the next retrain.',
-    })
-  }, [toast])
 
   const onWhatsApp = useCallback((d) => {
     const text = buildAlertText({ itemCount: d.count, cls: d.class, lat: d.lat, lng: d.lng, source: d.origin })
@@ -585,7 +529,7 @@ export default function DetectionsScreen() {
             </div>
           ) : (
             rows.map((d, i) => (
-              <DetectionRow key={d.key} d={d} n={i + 1} expanded={expanded === d.key} onToggle={toggleRow} onWhatsApp={onWhatsApp} onVerdict={onVerdict} />
+              <DetectionRow key={d.key} d={d} n={i + 1} expanded={expanded === d.key} onToggle={toggleRow} onWhatsApp={onWhatsApp} />
             ))
           )}
         </div>

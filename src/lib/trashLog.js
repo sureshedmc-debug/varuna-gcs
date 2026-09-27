@@ -130,13 +130,8 @@ export function getTrashLog() {
  * @param {number} [s.alt]            aircraft altitude (m), if known
  * @param {number} [s.accuracy]       position accuracy (± m), if known
  * @param {string} [s.photo]          JPEG data URL of this frame, if captured
- * @param {string} [s.cleanPhoto]     the same frame WITHOUT the AI's boxes drawn
- *   on it. Kept separately because the self-training loop trains on it, and a
- *   training image with rectangles painted on teaches the model to find
- *   rectangles. Never shown in the UI.
- * @param {Array}  [s.boxes]          detected boxes, normalised 0..1, for labels
  */
-export function recordTrashSighting({ lat, lng, count, confidence, source, posSource, alt, accuracy, photo, cleanPhoto, boxes, className, estWidthM, estHeightM }) {
+export function recordTrashSighting({ lat, lng, count, confidence, source, posSource, alt, accuracy, photo, className, estWidthM, estHeightM }) {
   const n = Number(count)
   if (!Number.isFinite(n) || n <= 0) return
   const now = Date.now()
@@ -167,8 +162,7 @@ export function recordTrashSighting({ lat, lng, count, confidence, source, posSo
     if (photo && (!match.photo || (conf ?? 0) > (match.confidence ?? 0))) {
       match.photo = photo
       match.hasPhoto = true
-      if (boxes?.length) match.boxes = boxes
-      savePhotos(match.id, { boxed: photo, clean: cleanPhoto }).catch(() => {})
+      savePhotos(match.id, { boxed: photo }).catch(() => {})
     }
     // Best size seen so far for this spot (biggest box on the sharpest frame).
     if (Number.isFinite(Number(estWidthM)) && (match.estWidthM == null || Number(estWidthM) > match.estWidthM)) match.estWidthM = Number(estWidthM)
@@ -176,7 +170,7 @@ export function recordTrashSighting({ lat, lng, count, confidence, source, posSo
     if (className && match.class === 'trash') match.class = className
   } else {
     const id = `t-${++seq}`
-    if (photo) savePhotos(id, { boxed: photo, clean: cleanPhoto }).catch(() => {})
+    if (photo) savePhotos(id, { boxed: photo }).catch(() => {})
     log = [
       {
         id,
@@ -192,7 +186,6 @@ export function recordTrashSighting({ lat, lng, count, confidence, source, posSo
         posSource: located ? posSource : null,
         photo: photo || null,
         hasPhoto: !!photo,
-        boxes: boxes?.length ? boxes : null,
         estWidthM: Number.isFinite(Number(estWidthM)) ? Number(estWidthM) : null,
         estHeightM: Number.isFinite(Number(estHeightM)) ? Number(estHeightM) : null,
         firstSeen: now,
@@ -210,19 +203,6 @@ export function clearTrashLog() {
   emit()
   flushPersist() // a clear is saved right away
   clearPhotos().catch(() => {}) // the stored imagery goes with it
-}
-
-/**
- * Record the operator's ✓/✗ on one sighting. Purely optional — the detector
- * teaches itself without it (see selfLearn.js) — but a human verdict is the
- * strongest label available, so it's kept on the entry and shown in the list.
- */
-export function markSightingVerdict(id, verdict) {
-  const entry = log.find((e) => e.id === id)
-  if (!entry) return null
-  entry.verdict = entry.verdict === verdict ? null : verdict
-  emit()
-  return entry
 }
 
 /** Fetch one entry's photo on demand (for rows outside the startup hydration). */

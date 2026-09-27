@@ -11,7 +11,6 @@ import { getFovSettings, setFovSettings, useFovSettings, DEFAULT_AVG_WEIGHT_G } 
 import { sendReportReadyEmail } from '../lib/alerts/email'
 import { openWhatsApp } from '../lib/alerts/whatsapp'
 import { buildAlertText } from '../lib/alerts/format'
-import SelfLearningPanel from '../components/SelfLearningPanel'
 import OfflineMapsPanel from '../components/OfflineMapsPanel'
 
 /**
@@ -515,10 +514,6 @@ export default function SystemScreen() {
           Rough estimate — the report labels these numbers "rough" and prints the FOV assumption you chose here.
         </p>
         <FovPanel />
-      </Section>
-
-      <Section title="Self-learning detector">
-        <SelfLearningPanel />
       </Section>
 
       <Section title="Offline maps">
