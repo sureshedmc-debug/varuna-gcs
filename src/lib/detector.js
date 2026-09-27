@@ -20,18 +20,76 @@ export async function loadOrt() {
   return ortPromise
 }
 
+// `navigator.gpu` merely EXISTING does not mean a usable GPU is available:
+// requestAdapter() still returns null on a blocklisted driver, a headless or
+// remote session, or a device already under pressure. That distinction turns
+// out to matter here.
+//
+// onnxruntime-web is ONE shared WASM module for every model. A WebGPU session
+// create that fails PART WAY through can leave that module's heap in a bad
+// state, and every later create on it then traps with "memory access out of
+// bounds" - including the CPU fallback, which is meant to be the safety net.
+// So a GPU problem surfaces as a total failure to load any model at all, and
+// once the module traps there is no way back short of reloading the page.
+//
+// Two guards: ask for an adapter before touching the GPU path at all, and
+// after a single WebGPU failure stop trying it for the rest of the session
+// (three models each retrying it is three chances to poison the runtime).
+let adapterOk = null // null = not probed yet
+let webgpuFailed = false
+
+async function webgpuUsable() {
+  if (webgpuFailed) return false
+  if (adapterOk !== null) return adapterOk
+  adapterOk = false
+  try {
+    if (typeof navigator !== 'undefined' && navigator.gpu) {
+      adapterOk = !!(await navigator.gpu.requestAdapter())
+    }
+  } catch {
+    adapterOk = false
+  }
+  return adapterOk
+}
+
+// onnxruntime initialises its WASM runtime lazily, on the first
+// InferenceSession.create. Two creates racing that first init throw
+// "multiple calls to 'initWasm()' detected" and leave the runtime half
+// built - after which every later create traps with "memory access out of
+// bounds" and NO model can load until the page is reloaded.
+//
+// React StrictMode makes that race the default in development: it mounts,
+// runs effects, unmounts and remounts, so the model-loading effect fires
+// twice and the second createDetector starts while the first is still in
+// flight. (Production doesn't double-invoke, which is why this only ever
+// showed up on localhost.) Two WebcamDetect instances mounted at once would
+// do the same thing anywhere.
+//
+// Funnelling every create through one chain removes the race outright, and
+// costs nothing: they were already awaited one after another.
+let createChain = Promise.resolve()
+function serialized(fn) {
+  const run = createChain.then(fn, fn)
+  // Keep the chain alive whether or not this create succeeded.
+  createChain = run.then(() => {}, () => {})
+  return run
+}
+
 /** Create an inference session for `modelUrl`, preferring WebGPU and falling
  * back to WASM/SIMD on CPU. Shared by every local model in this app. */
 export async function createSession(ort, modelUrl, onProgress) {
+  return serialized(async () => {
   let session
   let ep = 'wasm'
   const opts = { graphOptimizationLevel: 'all' }
-  if (typeof navigator !== 'undefined' && navigator.gpu) {
+  if (await webgpuUsable()) {
     try {
       onProgress && onProgress('Loading model (GPU)â€¦')
       session = await ort.InferenceSession.create(modelUrl, { ...opts, executionProviders: ['webgpu'] })
       ep = 'webgpu'
-    } catch {
+    } catch (e) {
+      console.warn('[ort] WebGPU unavailable, using CPU for the rest of this session:', e?.message ?? e)
+      webgpuFailed = true
       session = null
     }
   }
@@ -41,6 +99,7 @@ export async function createSession(ort, modelUrl, onProgress) {
     ep = 'wasm'
   }
   return { session, ep }
+  })
 }
 
 export async function createDetector(onProgress, modelUrl = '/models/trash.onnx', classNames = ['Trash'], inputSize = DEFAULT_IN) {

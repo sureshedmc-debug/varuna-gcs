@@ -103,7 +103,15 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
   const [trashDetection,   setTrashDetection]   = useState(true)
   const [isRecording,      setIsRecording]      = useState(false)
 
-  confRef.current = confThr
+  // The gear slider's value. It has to be state, not a bare ref assignment:
+  // `confRef.current = confThr` in the component body re-ran on EVERY render,
+  // and setCount/setFps re-render several times a second, so dragging the
+  // slider was overwritten back to the prop within milliseconds — the control
+  // silently did nothing. The prop (the Live tab's own slider) still wins when
+  // it changes, so the two stay in sync.
+  const [conf, setConf] = useState(confThr)
+  useEffect(() => { setConf(confThr) }, [confThr])
+  confRef.current = conf
 
   // Position for geotagging trash, matched to where the camera actually is:
   //  - Drone mode: the drone GPS streamed over the WebSocket (telemetry), or
@@ -165,7 +173,15 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
         if (autoStart) start(defaultSource)
       } catch (e) {
         if (!alive) return
-        setStatus('error'); setMsg('Failed to load model: ' + (e?.message ?? e))
+        // "memory access out of bounds" is a WASM trap. Once the shared
+        // onnxruntime module traps, nothing can use it again until the page is
+        // reloaded, so say so rather than leaving a dead Start button.
+        const raw = String(e?.message ?? e)
+        const trapped = /memory access out of bounds|out of memory|abort/i.test(raw)
+        setStatus('error')
+        setMsg(trapped
+          ? `Failed to load model: ${raw}. Reload the page to recover — if it keeps happening, the GPU path is at fault.`
+          : 'Failed to load model: ' + raw)
       }
     })()
     return () => { alive=false; stop(); detRef.current?.dispose(); faceDetRef.current?.dispose(); personDetRef.current?.dispose() }
@@ -499,10 +515,10 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
             style={{background:'rgba(11,18,32,0.85)',border:'1px solid rgba(255,255,255,0.09)',boxShadow:'0 8px 24px rgba(0,0,0,0.4)',minWidth:'220px'}}>
             <span>🎯</span>
             <span className="flex-1 text-[12px] font-semibold text-white/80">Confidence</span>
-            <input type="range" min={0.05} max={0.9} step={0.05} defaultValue={confThr}
-              onChange={e=>{ confRef.current=Number(e.target.value) }}
+            <input type="range" min={0.05} max={0.9} step={0.05} value={conf}
+              onChange={e=>setConf(Number(e.target.value))}
               className="w-24 accent-[#3B9EFF]" />
-            <span className="w-8 text-right font-mono text-[11px] text-[#3B9EFF]">{Math.round(confThr*100)}%</span>
+            <span className="w-8 text-right font-mono text-[11px] text-[#3B9EFF]">{Math.round(conf*100)}%</span>
           </div>
 
           {/* Long Range */}
