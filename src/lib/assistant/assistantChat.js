@@ -5,7 +5,8 @@
 
 import { SYSTEM_PROMPT } from './appKnowledge'
 import { TOOLS, runTool } from './tools'
-import { groqChat } from './groqClient'
+import { llmChat } from './llmClient'
+import { getLlmConfig } from './llmSettings'
 
 const MAX_TOOL_ROUNDS = 5
 const MAX_HISTORY = 30 // messages kept (older ones dropped to bound tokens)
@@ -48,7 +49,8 @@ export function createAssistantChat(ctx, onEvent = () => {}) {
     let reply = ''
     try {
       for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
-        const json = await groqChat({
+        const json = await llmChat({
+          config: getLlmConfig('assistant'),
           messages: [{ role: 'system', content: SYSTEM_PROMPT }, ...flat(), ...turn],
           tools: round === MAX_TOOL_ROUNDS ? undefined : TOOLS, // last round: force a text answer
         })

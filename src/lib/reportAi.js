@@ -1,26 +1,14 @@
-// AI-written analysis for the Word trash report, via Groq. Uses its OWN Groq
-// API key (separate from the VARUNA Assist chatbot's key), stored only in this
-// browser. With no key, the report falls back to the built-in narrative
-// (reportDoc.fallbackNarrative).
+// AI-written analysis for the Word trash report. Uses the operator's chosen
+// LLM provider from llmSettings ('report' slot) — Groq, Gemini, OpenRouter,
+// or a custom OpenAI-compatible endpoint. Its config is stored separately
+// from the voice-assistant's config, so the operator can use a different
+// provider/model for each.
+//
+// With no configured/reachable provider, the report falls back to the built-in
+// narrative (reportDoc.fallbackNarrative), so a report always renders.
 
-import { groqChat } from './assistant/groqClient'
-
-const KEY_STORE = 'varuna.groqReportKey'
-
-export function getReportKey() {
-  try {
-    return localStorage.getItem(KEY_STORE) || ''
-  } catch {
-    return ''
-  }
-}
-export function setReportKey(k) {
-  try {
-    localStorage.setItem(KEY_STORE, k || '')
-  } catch {
-    /* private mode */
-  }
-}
+import { llmChat } from './assistant/llmClient'
+import { getLlmConfig } from './assistant/llmSettings'
 
 const SCHEMA_HINT = `Respond with ONLY a single valid JSON object with exactly these string/array fields:
 {
@@ -77,16 +65,17 @@ function parseJsonLoose(text) {
 }
 
 /**
- * Ask Groq for the report narrative. Throws on missing key, network/HTTP error,
- * or an empty reply (the caller then uses the built-in narrative).
+ * Ask the configured LLM for the report narrative. Throws on missing config,
+ * network/HTTP error, or an empty reply (the caller then uses the built-in
+ * narrative). Pass `config` to override the stored one (used when the
+ * operator has just edited the picker but not saved).
  */
-export async function generateReportNarrative(data, { key } = {}) {
-  const apiKey = key || getReportKey()
-  if (!apiKey) throw new Error('Missing Groq API key')
+export async function generateReportNarrative(data, { config } = {}) {
+  const cfg = config || getLlmConfig('report')
   let json
   try {
-    json = await groqChat({
-      key: apiKey,
+    json = await llmChat({
+      config: cfg,
       json: true,
       temperature: 0.4,
       maxTokens: 2500,
@@ -97,12 +86,12 @@ export async function generateReportNarrative(data, { key } = {}) {
     })
   } catch (e) {
     if (e?.status === 413 || /too large|tokens per minute|TPM/i.test(e?.message || '')) {
-      throw new Error('The dataset is too large for your Groq plan’s per-minute limit — try again in a minute')
+      throw new Error('The dataset is too large for this plan’s per-minute limit — try again in a minute')
     }
     throw e
   }
   const text = (json?.choices?.[0]?.message?.content || '').trim()
-  if (!text) throw new Error('Groq returned an empty response')
+  if (!text) throw new Error('The AI returned an empty response')
   // Not JSON → surface the raw text as the summary so the doc still has content.
   return { ...(parseJsonLoose(text) || { executiveSummary: text }), aiWritten: true }
 }

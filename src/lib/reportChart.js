@@ -243,6 +243,186 @@ function wrapLabel(ctx, text, cx, y, maxW) {
   }
 }
 
+// 256-step colour ramp (cold → hot) used to colourize the accumulated density
+// in renderHeatmapChart, the same "gradient lookup by alpha" technique real
+// heatmap libraries use — built once as a 1×256 canvas, read back as pixels.
+function heatPalette() {
+  const c = document.createElement('canvas')
+  c.width = 1
+  c.height = 256
+  const ctx = c.getContext('2d')
+  const g = ctx.createLinearGradient(0, 0, 0, 256)
+  g.addColorStop(0.0, 'rgba(59,130,246,0)')
+  g.addColorStop(0.25, 'rgba(59,130,246,1)')
+  g.addColorStop(0.5, 'rgba(34,211,238,1)')
+  g.addColorStop(0.7, 'rgba(52,211,153,1)')
+  g.addColorStop(0.85, 'rgba(250,204,21,1)')
+  g.addColorStop(1.0, 'rgba(239,68,68,1)')
+  ctx.fillStyle = g
+  ctx.fillRect(0, 0, 1, 256)
+  return ctx.getImageData(0, 0, 1, 256).data
+}
+
+/**
+ * Render a density heatmap of trash locations as a PNG data URL. No map
+ * tiles (would need a network fetch, breaking the report's offline
+ * generation) — instead plots points in their own relative lat/lng space
+ * with a light grid and corner coordinates for reference, same self-contained
+ * canvas approach as the bar/pie charts above.
+ * `points`: [{ lat, lng, weight }] — weight 0..1, already normalised by the caller.
+ */
+export function renderHeatmapChart({ title = 'Trash Density Heatmap', points = [], width = 900, height = 520 } = {}) {
+  let canvas
+  try {
+    canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+  } catch {
+    return ''
+  }
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return ''
+
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, width, height)
+  ctx.fillStyle = '#14171c'
+  ctx.font = '700 22px Inter, Arial, sans-serif'
+  ctx.textBaseline = 'top'
+  ctx.fillText(title, 30, 22)
+
+  const padL = 70
+  const padR = 40
+  const padTop = 70
+  const padBottom = 60
+  const plotW = width - padL - padR
+  const plotH = height - padTop - padBottom
+
+  if (!points.length) {
+    ctx.fillStyle = '#9199a6'
+    ctx.font = '500 14px Inter, Arial, sans-serif'
+    ctx.fillText('No located trash yet — run detection with GPS to build a density map.', 30, 60)
+    try {
+      return canvas.toDataURL('image/png')
+    } catch {
+      return ''
+    }
+  }
+
+  let minLat = Math.min(...points.map((p) => p.lat))
+  let maxLat = Math.max(...points.map((p) => p.lat))
+  let minLng = Math.min(...points.map((p) => p.lng))
+  let maxLng = Math.max(...points.map((p) => p.lng))
+  // A single point (or a tight cluster) has ~zero span — pad it out to a
+  // sensible ~80 m box so the plot isn't a single dot with no context.
+  const MIN_SPAN = 0.0008
+  if (maxLat - minLat < MIN_SPAN) {
+    const mid = (maxLat + minLat) / 2
+    minLat = mid - MIN_SPAN / 2
+    maxLat = mid + MIN_SPAN / 2
+  }
+  if (maxLng - minLng < MIN_SPAN) {
+    const mid = (maxLng + minLng) / 2
+    minLng = mid - MIN_SPAN / 2
+    maxLng = mid + MIN_SPAN / 2
+  }
+  const toXY = (lat, lng) => [
+    padL + ((lng - minLng) / (maxLng - minLng)) * plotW,
+    // North (higher lat) is up — invert Y.
+    padTop + (1 - (lat - minLat) / (maxLat - minLat)) * plotH,
+  ]
+
+  // Backdrop panel + grid so the heat blobs have a spatial frame of reference.
+  ctx.fillStyle = '#0b1220'
+  ctx.fillRect(padL, padTop, plotW, plotH)
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)'
+  ctx.lineWidth = 1
+  for (let i = 1; i < 6; i++) {
+    const gx = padL + (plotW * i) / 6
+    const gy = padTop + (plotH * i) / 6
+    ctx.beginPath()
+    ctx.moveTo(gx, padTop)
+    ctx.lineTo(gx, padTop + plotH)
+    ctx.moveTo(padL, gy)
+    ctx.lineTo(padL + plotW, gy)
+    ctx.stroke()
+  }
+
+  // Accumulate density on an offscreen alpha canvas: each point stamps a soft
+  // radial-gradient circle (black centre → transparent edge), scaled by its
+  // weight, drawn additively so overlaps build up higher alpha = hotter.
+  const radius = Math.max(24, Math.min(plotW, plotH) / 8)
+  const tmp = document.createElement('canvas')
+  tmp.width = radius * 2
+  tmp.height = radius * 2
+  const tctx = tmp.getContext('2d')
+  const grad = tctx.createRadialGradient(radius, radius, 0, radius, radius, radius)
+  grad.addColorStop(0, 'rgba(0,0,0,1)')
+  grad.addColorStop(1, 'rgba(0,0,0,0)')
+  tctx.fillStyle = grad
+  tctx.fillRect(0, 0, radius * 2, radius * 2)
+
+  const alphaCv = document.createElement('canvas')
+  alphaCv.width = plotW
+  alphaCv.height = plotH
+  const actx = alphaCv.getContext('2d')
+  for (const p of points) {
+    const [x, y] = toXY(p.lat, p.lng)
+    actx.globalAlpha = Math.max(0.12, Math.min(1, p.weight ?? 0.4))
+    actx.drawImage(tmp, x - padL - radius, y - padTop - radius)
+  }
+
+  // Colourize: map each pixel's accumulated alpha through the heat palette.
+  const palette = heatPalette()
+  const img = actx.getImageData(0, 0, plotW, plotH)
+  const out = actx.createImageData(plotW, plotH)
+  for (let i = 0; i < img.data.length; i += 4) {
+    const a = img.data[i + 3]
+    if (!a) continue
+    out.data[i] = palette[a * 4]
+    out.data[i + 1] = palette[a * 4 + 1]
+    out.data[i + 2] = palette[a * 4 + 2]
+    out.data[i + 3] = Math.min(255, a + 90) // floor opacity so light hits stay visible, not just hot spots
+  }
+  actx.putImageData(out, 0, 0)
+  ctx.drawImage(alphaCv, padL, padTop)
+
+  // Frame + corner coordinates for spatial reference (no map tiles available offline).
+  ctx.strokeStyle = 'rgba(255,255,255,0.18)'
+  ctx.strokeRect(padL, padTop, plotW, plotH)
+  ctx.fillStyle = '#4b5563'
+  ctx.font = '500 10px Consolas, monospace'
+  ctx.fillText(`${minLat.toFixed(5)}, ${minLng.toFixed(5)}`, padL, padTop + plotH + 6)
+  ctx.textAlign = 'right'
+  ctx.fillText(`${maxLat.toFixed(5)}, ${maxLng.toFixed(5)}`, padL + plotW, padTop - 16)
+  ctx.textAlign = 'left'
+
+  // Legend: a small horizontal gradient bar, Low → High.
+  const legX = padL
+  const legY = padTop + plotH + 22
+  const legW = 200
+  const legGrad = ctx.createLinearGradient(legX, 0, legX + legW, 0)
+  legGrad.addColorStop(0, '#3B82F6')
+  legGrad.addColorStop(0.5, '#22D3EE')
+  legGrad.addColorStop(0.75, '#34D399')
+  legGrad.addColorStop(1, '#EF4444')
+  ctx.fillStyle = legGrad
+  ctx.fillRect(legX, legY, legW, 10)
+  ctx.strokeStyle = '#d1d5db'
+  ctx.strokeRect(legX, legY, legW, 10)
+  ctx.fillStyle = '#4b5563'
+  ctx.font = '600 11px Inter, Arial, sans-serif'
+  ctx.fillText('Low density', legX, legY + 16)
+  ctx.textAlign = 'right'
+  ctx.fillText('High density', legX + legW, legY + 16)
+  ctx.textAlign = 'left'
+
+  try {
+    return canvas.toDataURL('image/png')
+  } catch {
+    return ''
+  }
+}
+
 /**
  * Build the standard set of report charts from a dataset (see buildTrashDataset).
  * Returns [{ title, dataUrl }] skipping any that failed to render.
@@ -262,6 +442,14 @@ export function renderReportCharts(data) {
     if (url) out.push({ title: 'Detections by Type', dataUrl: url })
     const pieUrl = renderPieChart({ title: 'Trash Type Breakdown', items: classItems })
     if (pieUrl) out.push({ title: 'Trash Type Breakdown', dataUrl: pieUrl })
+  }
+
+  const located = (data?.detections || []).filter((d) => d.located && Number.isFinite(d.lat) && Number.isFinite(d.lng))
+  if (located.length) {
+    const maxCount = Math.max(1, ...located.map((d) => Number(d.count) || 1))
+    const heatPoints = located.map((d) => ({ lat: d.lat, lng: d.lng, weight: 0.35 + 0.65 * ((Number(d.count) || 1) / maxCount) }))
+    const heatUrl = renderHeatmapChart({ title: 'Trash Density Heatmap', points: heatPoints })
+    if (heatUrl) out.push({ title: 'Trash Density Heatmap', dataUrl: heatUrl })
   }
 
   const coverage = [

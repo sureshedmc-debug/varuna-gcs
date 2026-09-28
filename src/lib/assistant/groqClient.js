@@ -102,9 +102,11 @@ export async function groqChat({ messages, tools, key: keyOverride, temperature 
   throw lastErr
 }
 
-/** Speech → text with Groq Whisper. `blob` is the browser recording (webm/ogg/wav are accepted). */
-export async function groqTranscribe(blob) {
-  const key = getGroqKey()
+/** Speech → text with Groq Whisper. `blob` is the browser recording (webm/ogg/wav are accepted).
+ *  Pass `apiKey` explicitly (e.g. the assistant's LLM config key when it's Groq);
+ *  falls back to the legacy stand-alone Groq key for backward compat. */
+export async function groqTranscribe(blob, { apiKey } = {}) {
+  const key = apiKey || getGroqKey()
   if (!key) throw new Error('NO_KEY')
   const ext = /ogg/.test(blob.type) ? 'ogg' : /wav/.test(blob.type) ? 'wav' : /mp4/.test(blob.type) ? 'm4a' : 'webm'
   const form = new FormData()

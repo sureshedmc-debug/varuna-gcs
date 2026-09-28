@@ -112,10 +112,22 @@ function loadVoices() {
 }
 loadVoices()
 
+// A calmer, more composed-sounding voice than the OS default, when one of
+// these happens to be installed — purely a taste preference (a measured,
+// unhurried co-pilot tone), never required; falls straight through to the
+// ordinary language-matched pick below if none of these exist on this device.
+const CALM_VOICE_NAMES = ['Microsoft Ravi', 'Microsoft Guy', 'Microsoft Mark', 'Google UK English Male', 'Daniel']
+
 // Devanagari → Hindi voice; otherwise Indian English (reads Hinglish well).
 function pickVoice(text) {
   const voices = window.speechSynthesis?.getVoices?.() || []
   const hindi = /[ऀ-ॿ]/.test(text)
+  if (!hindi) {
+    for (const name of CALM_VOICE_NAMES) {
+      const v = voices.find((x) => x.name === name)
+      if (v) return v
+    }
+  }
   const want = hindi ? ['hi-IN'] : ['en-IN', 'hi-IN', 'en-GB', 'en-US']
   for (const lang of want) {
     const v = voices.find((x) => (x.lang || '').replace('_', '-') === lang)
@@ -145,7 +157,10 @@ function speakNow(synth, text, onWord, resolve) {
     u.voice = voice
     u.lang = voice.lang
   }
-  u.rate = 1.05
+  // Slightly slower and a touch lower than the default — reads as composed
+  // and measured rather than rushed; still comfortably intelligible.
+  u.rate = 0.97
+  u.pitch = 0.92
   let settled = false
   let guard = 0
   const startedAt = Date.now()
@@ -176,4 +191,135 @@ function speakNow(synth, text, onWord, resolve) {
 
 export function stopSpeaking() {
   window.speechSynthesis?.cancel()
+}
+
+// -------- Browser-native speech-to-text (Chrome/Edge webkitSpeechRecognition) --
+// Used when the assistant provider isn't Groq (no Whisper key), so the whole
+// pipeline can stay off the network. Accuracy is lower than Whisper for
+// Hinglish / accents, but it's genuinely free and offline.
+const Recognition = typeof window !== 'undefined' ? window.SpeechRecognition || window.webkitSpeechRecognition : null
+
+export const browserSttSupported = !!Recognition
+
+/**
+ * Same shape as listenUntilSilence but returns TEXT instead of an audio blob.
+ * @param {object} o
+ * @param {(level:number)=>void} [o.onLevel]  mic level 0..1, ~10x/sec
+ * @param {number} [o.startTimeoutMs]
+ * @param {number} [o.silenceMs]
+ * @param {string} [o.lang]  'en-IN' by default (Whisper's Hinglish substitute)
+ * @returns {{ done: Promise<{text:string, seconds:number}|null>, cancel: () => void }}
+ */
+export function browserListenToText({ onLevel, startTimeoutMs = 7000, silenceMs = 1300, lang = 'en-IN' } = {}) {
+  if (!Recognition) {
+    return { done: Promise.resolve(null), cancel: () => {} }
+  }
+  let cancelled = false
+  let cancelFn = () => {
+    cancelled = true
+  }
+  const done = (async () => {
+    // Run a parallel mic-level analyser so the orb still animates — the
+    // browser's speech recognizer doesn't expose amplitude directly.
+    let ctx, analyser, mediaStream, levelIv
+    try {
+      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
+      const Ctx = window.AudioContext || window.webkitAudioContext
+      ctx = new Ctx()
+      const src = ctx.createMediaStreamSource(mediaStream)
+      analyser = ctx.createAnalyser()
+      analyser.fftSize = 1024
+      src.connect(analyser)
+      const buf = new Float32Array(analyser.fftSize)
+      levelIv = setInterval(() => {
+        analyser.getFloatTimeDomainData(buf)
+        let sum = 0
+        for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i]
+        onLevel?.(Math.min(1, Math.sqrt(sum / buf.length) * 9))
+      }, 60)
+    } catch {
+      /* mic unavailable — recognizer will still try but the orb won't react */
+    }
+
+    const rec = new Recognition()
+    rec.lang = lang
+    rec.continuous = true
+    rec.interimResults = true
+    rec.maxAlternatives = 1
+
+    const startedAt = Date.now()
+    let finalText = ''
+    let interim = ''
+    let anySpeech = false
+    let lastSpeechAt = 0
+    let silenceTimer = 0
+    let startTimeout = 0
+    let hardTimeout = 0
+
+    const cleanup = () => {
+      clearTimeout(silenceTimer)
+      clearTimeout(startTimeout)
+      clearTimeout(hardTimeout)
+      clearInterval(levelIv)
+      try { rec.abort() } catch { /* ignore */ }
+      try { mediaStream?.getTracks().forEach((t) => t.stop()) } catch { /* ignore */ }
+      try { ctx?.close() } catch { /* ignore */ }
+      onLevel?.(0)
+    }
+
+    let resolveDone
+    const donePromise = new Promise((r) => (resolveDone = r))
+    const finish = (text) => {
+      cleanup()
+      if (cancelled) return resolveDone(null)
+      const seconds = (Date.now() - startedAt) / 1000
+      resolveDone(text ? { text, seconds } : null)
+    }
+
+    cancelFn = () => {
+      cancelled = true
+      finish(null)
+    }
+
+    rec.onresult = (e) => {
+      anySpeech = true
+      lastSpeechAt = Date.now()
+      interim = ''
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const r = e.results[i]
+        if (r.isFinal) finalText += (finalText ? ' ' : '') + r[0].transcript
+        else interim += r[0].transcript
+      }
+      // Rearm the silence timer whenever new speech comes in.
+      clearTimeout(silenceTimer)
+      silenceTimer = setTimeout(() => finish((finalText + ' ' + interim).trim()), silenceMs)
+    }
+    rec.onerror = (e) => {
+      if (e.error === 'no-speech') return // silence is expected during pauses
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') return finish(null)
+      // Any other error: finish with whatever we captured (may be nothing).
+      finish((finalText + ' ' + interim).trim() || null)
+    }
+    rec.onend = () => {
+      // Never fire before the silence-timer path — but as a safety net, resolve
+      // with the accumulated text if the engine closes on its own.
+      finish((finalText + ' ' + interim).trim() || null)
+    }
+
+    try {
+      rec.start()
+    } catch (e) {
+      finish(null)
+      return null
+    }
+    // No speech within the start window → give up.
+    startTimeout = setTimeout(() => {
+      if (!anySpeech) finish(null)
+    }, startTimeoutMs)
+    // Hard cap so a stuck engine can't hold the mic forever.
+    hardTimeout = setTimeout(() => finish((finalText + ' ' + interim).trim() || null), 20000)
+
+    return donePromise
+  })()
+  return { done, cancel: () => cancelFn() }
 }

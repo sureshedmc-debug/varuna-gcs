@@ -151,14 +151,42 @@ export function buildTrashDataset(list = [], trashStats = { peak: 0, last: 0, up
   }
 }
 
-function bullets(arr) {
+// Alternating row background for tables — computed inline per row rather than
+// via a CSS nth-child selector, since Word's HTML renderer (mshtml) has patchy
+// CSS3 selector support but always honours an inline style attribute.
+function zebra(i) {
+  return i % 2 ? ' style="background:#f5f8fa"' : ''
+}
+
+// 'check' = affirmative findings (green), 'action' = things to do (amber).
+function bullets(arr, variant = 'check') {
   if (!Array.isArray(arr) || !arr.length) return ''
-  return `<ul>${arr.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`
+  const cls = variant === 'action' ? 'action' : 'check'
+  return `<ul class="${cls}">${arr.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>`
 }
 
 function section(title, body) {
   if (!body) return ''
   return `<h2>${esc(title)}</h2><p>${esc(body).replace(/\n+/g, '</p><p>')}</p>`
+}
+
+// Big headline numbers as a single-row table of coloured cards — the first
+// thing a reader's eye should land on, before the fine-grained metrics table.
+function kpiCards(data) {
+  const s = data.summary
+  const weight = s.totalEstWeightG >= 1000 ? `${(s.totalEstWeightG / 1000).toFixed(1)} kg` : `${s.totalEstWeightG || 0} g`
+  const cards = [
+    ['Detections', fmtNum(s.total), '#0e5a3f'],
+    ['Located (GPS)', fmtNum(s.located), '#0b6e99'],
+    ['Avg. Confidence', s.avgConfidence != null ? `${s.avgConfidence}%` : '—', '#9a5b00'],
+    ['Est. Weight Removed', weight, '#7c2d92'],
+  ]
+  return `<table class="kpi"><tr>${cards
+    .map(
+      (c) =>
+        `<td style="border-top:3pt solid ${c[2]}"><div class="kpi-num" style="color:${c[2]}">${esc(c[1])}</div><div class="kpi-lbl">${esc(c[0])}</div></td>`,
+    )
+    .join('')}</tr></table>`
 }
 
 function metricsTable(data) {
@@ -175,7 +203,7 @@ function metricsTable(data) {
     ['Camera FOV assumption', s.fovAssumption || '—'],
   ]
   return `<table class="tbl"><tr><th>Metric</th><th>Value</th></tr>${rows
-    .map((r) => `<tr><td>${esc(r[0])}</td><td class="num">${fmtNum(r[1])}</td></tr>`)
+    .map((r, i) => `<tr${zebra(i)}><td>${esc(r[0])}</td><td class="num">${fmtNum(r[1])}</td></tr>`)
     .join('')}</table>`
 }
 
@@ -184,7 +212,7 @@ function byClassTable(data) {
   const entries = Object.entries(bc)
   if (!entries.length) return ''
   return `<h2>Breakdown by Type</h2><table class="tbl"><tr><th>Type</th><th>Count</th></tr>${entries
-    .map(([k, v]) => `<tr><td>${esc(k)}</td><td class="num">${fmtNum(v)}</td></tr>`)
+    .map(([k, v], i) => `<tr${zebra(i)}><td>${esc(k)}</td><td class="num">${fmtNum(v)}</td></tr>`)
     .join('')}</table>`
 }
 
@@ -192,7 +220,7 @@ function byOriginTable(data) {
   const entries = Object.entries(data.summary.byOrigin || {})
   if (!entries.length) return ''
   return `<h2>Detection Sources</h2><table class="tbl"><tr><th>Source</th><th>Records</th></tr>${entries
-    .map(([k, v]) => `<tr><td>${esc(k)}</td><td class="num">${fmtNum(v)}</td></tr>`)
+    .map(([k, v], i) => `<tr${zebra(i)}><td>${esc(k)}</td><td class="num">${fmtNum(v)}</td></tr>`)
     .join('')}</table>`
 }
 
@@ -207,8 +235,8 @@ function areaBlock(data) {
   ]
   return `<h2>Survey Area</h2><table class="tbl"><tr><th>Item</th><th>Coordinates</th><th>Map</th></tr>${rows
     .map(
-      (r) =>
-        `<tr><td>${esc(r[0])}</td><td class="num">${esc(r[1])}</td><td>${
+      (r, i) =>
+        `<tr${zebra(i)}><td>${esc(r[0])}</td><td class="num">${esc(r[1])}</td><td>${
           r[2] ? `<a href="${esc(r[2])}">Open in Google Maps</a>` : '—'
         }</td></tr>`,
     )
@@ -223,7 +251,7 @@ function locationTable(data) {
   const body = rows
     .map(
       (d, i) =>
-        `<tr>${hasPhotos ? `<td>${d.photoName ? imgTag(d.photoName, 120, 'trash photo') : '—'}</td>` : ''}<td class="num">${i + 1}</td><td>${esc(d.class)}</td><td class="num">${fmtNum(d.count)}</td><td class="num">${
+        `<tr${zebra(i)}>${hasPhotos ? `<td>${d.photoName ? imgTag(d.photoName, 120, 'trash photo') : '—'}</td>` : ''}<td class="num">${i + 1}</td><td>${esc(d.class)}</td><td class="num">${fmtNum(d.count)}</td><td class="num">${
           d.confidence != null ? d.confidence + '%' : '—'
         }</td><td class="num">${d.lat.toFixed(6)}</td><td class="num">${d.lng.toFixed(6)}</td><td class="num">${
           d.alt != null ? d.alt + ' m' : '—'
@@ -293,7 +321,7 @@ function unlocatedTable(data) {
   }<th>#</th><th>Type</th><th>Items</th><th>Conf.</th><th>Source</th><th>Time</th></tr>${rows
     .map(
       (d, i) =>
-        `<tr>${
+        `<tr${zebra(i)}>${
           hasPhotos ? `<td>${d.photoName ? imgTag(d.photoName, 120, 'trash photo') : '—'}</td>` : ''
         }<td class="num">${i + 1}</td><td>${esc(d.class)}</td><td class="num">${fmtNum(d.count)}</td><td class="num">${
           d.confidence != null ? d.confidence + '%' : '—'
@@ -367,23 +395,34 @@ function buildHtml({ data, narrative, charts }) {
   const styles = `
     <style>
       @page { size: A4; margin: 1in; }
-      body { font-family: 'Calibri', Arial, sans-serif; color: #1a1a1a; font-size: 11pt; line-height: 1.5; }
-      h1 { font-size: 26pt; color: #0b3d2e; margin: 0 0 4pt 0; }
-      h2 { font-size: 15pt; color: #0e5a3f; border-bottom: 1.5pt solid #16A34A; padding-bottom: 3pt; margin-top: 20pt; }
-      .sub { color: #555; font-size: 11pt; margin: 0 0 2pt 0; }
-      .brand { color: #16A34A; font-weight: bold; letter-spacing: 2pt; font-size: 12pt; }
+      body { font-family: 'Calibri', Arial, sans-serif; color: #1e2430; font-size: 11pt; line-height: 1.55; }
+      h1 { font-size: 28pt; color: #0b3d2e; margin: 0 0 4pt 0; letter-spacing: -0.3pt; }
+      h2 { font-size: 14pt; color: #0e5a3f; background: #eaf7ef; border-left: 4pt solid #16A34A; padding: 5pt 10pt; margin: 22pt 0 8pt 0; }
+      .sub { color: #5b6472; font-size: 11pt; margin: 0 0 2pt 0; }
+      .brand { color: #16A34A; font-weight: bold; letter-spacing: 2.5pt; font-size: 11pt; }
       .tbl { border-collapse: collapse; width: 100%; margin: 8pt 0 4pt 0; }
-      .tbl th { background: #0e5a3f; color: #fff; text-align: left; padding: 6pt 8pt; font-size: 10pt; }
-      .tbl td { border: 0.5pt solid #cbd5e1; padding: 5pt 8pt; font-size: 10pt; }
+      .tbl th { background: #0e5a3f; color: #fff; text-align: left; padding: 7pt 9pt; font-size: 9.5pt; letter-spacing: 0.3pt; }
+      .tbl td { border: 0.5pt solid #dbe3ea; padding: 6pt 9pt; font-size: 10pt; }
       .tbl td.num { text-align: right; font-family: 'Consolas', monospace; }
       .chart { text-align: center; margin: 12pt 0 2pt 0; }
-      .cap { text-align: center; color: #555; font-size: 9pt; font-style: italic; margin: 0 0 10pt 0; }
-      ul { margin: 4pt 0 8pt 18pt; }
-      li { margin: 2pt 0; }
-      .cover { border-left: 6pt solid #16A34A; padding: 8pt 0 8pt 14pt; margin-bottom: 12pt; }
-      .small { color: #555; font-size: 9pt; }
+      .cap { text-align: center; color: #5b6472; font-size: 9pt; font-style: italic; margin: 0 0 10pt 0; }
+      ul { margin: 4pt 0 8pt 4pt; padding: 0; }
+      ul.check, ul.action { list-style: none; margin: 8pt 0; }
+      ul.check li, ul.action li { padding: 4pt 0 4pt 20pt; position: relative; font-size: 10.5pt; }
+      ul.check li:before { content: "\\2713"; position: absolute; left: 0; color: #16A34A; font-weight: bold; }
+      ul.action li:before { content: "\\25B8"; position: absolute; left: 2pt; color: #C2760C; font-weight: bold; }
+      .callout { background: #f6fbf8; border-left: 4pt solid #16A34A; border-radius: 3pt; padding: 10pt 14pt; margin: 8pt 0 14pt 0; }
+      .callout p { margin: 0; }
+      .callout.warn { background: #fff9ec; border-left-color: #C2760C; }
+      .cover { border-bottom: 2pt solid #16A34A; padding: 0 0 14pt 0; margin-bottom: 16pt; }
+      .small { color: #5b6472; font-size: 9pt; }
       .link { font-size: 9pt; margin: 1pt 0; font-family: 'Consolas', monospace; }
       a { color: #0b57d0; }
+      .kpi { border-collapse: separate; border-spacing: 8pt 0; width: 100%; margin: 6pt 0 18pt 0; }
+      .kpi td { background: #f7f9fb; text-align: center; padding: 12pt 6pt; width: 25%; }
+      .kpi-num { font-size: 22pt; font-weight: 800; font-family: 'Consolas', monospace; }
+      .kpi-lbl { font-size: 8.5pt; color: #5b6472; text-transform: uppercase; letter-spacing: 0.5pt; margin-top: 2pt; }
+      hr.div { border: none; border-top: 0.75pt solid #dbe3ea; margin: 18pt 0; }
     </style>`
 
   // MSO word document header
@@ -399,12 +438,15 @@ function buildHtml({ data, narrative, charts }) {
       <p class="sub">Generated: ${esc(generated)}</p>
     </div>`
 
+  const exec = n.executiveSummary ? `<h2>Executive Summary</h2><div class="callout"><p>${esc(n.executiveSummary).replace(/\n+/g, '</p><p>')}</p></div>` : ''
+
   const body = `<body>
     ${cover}
-    ${section('Executive Summary', n.executiveSummary)}
+    ${kpiCards(data)}
+    ${exec}
     <h2>Key Metrics</h2>
     ${metricsTable(data)}
-    ${n.keyFindings ? `<h2>Key Findings</h2>${bullets(n.keyFindings)}` : ''}
+    ${n.keyFindings ? `<h2>Key Findings</h2>${bullets(n.keyFindings, 'check')}` : ''}
     ${chartsBlock(charts)}
     ${byClassTable(data)}
     ${byOriginTable(data)}
@@ -413,8 +455,9 @@ function buildHtml({ data, narrative, charts }) {
     ${section('Spatial Analysis', n.spatialAnalysis)}
     ${section('Temporal Analysis', n.temporalAnalysis)}
     ${section('Environmental Impact', n.environmentalImpact)}
-    ${n.recommendations ? `<h2>Recommendations</h2>${bullets(n.recommendations)}` : ''}
+    ${n.recommendations ? `<h2>Recommendations</h2><div class="callout warn">${bullets(n.recommendations, 'action')}</div>` : ''}
     ${section('Data Quality Notes', n.dataQualityNotes)}
+    <hr class="div" />
     ${locationTable(data)}
     ${unlocatedTable(data)}
     ${videoBlock(data)}

@@ -13,7 +13,9 @@ import { fmtClock, fmtCoord, num } from '../lib/format'
 import { useTrashStats, resetTrashStats } from '../lib/detectionStats'
 import { useTrashLog, clearTrashLog, mapsLink, ensurePhoto, hydratePhotos, getTrashLog } from '../lib/trashLog'
 import { useMissionRecording, captureMissionPoster, clearMissionRecording } from '../lib/missionRecording'
-import { getReportKey, setReportKey, generateReportNarrative } from '../lib/reportAi'
+import { generateReportNarrative } from '../lib/reportAi'
+import { getLlmConfig, isLlmConfigReady } from '../lib/assistant/llmSettings'
+import LlmPicker from '../components/LlmPicker'
 import { renderReportCharts } from '../lib/reportChart'
 import { buildTrashDataset, downloadWordReport, fallbackNarrative } from '../lib/reportDoc'
 import { estimateWeightG, fmtWeight, getFovSettings } from '../lib/sizeEstimate'
@@ -286,7 +288,6 @@ export default function DetectionsScreen() {
   const trashStats = useTrashStats()
   const sightings = useTrashLog()
   const video = useMissionRecording()
-  const [apiKey, setApiKey] = useState(getReportKey())
   const [reporting, setReporting] = useState(false)
   const [expanded, setExpanded] = useState(null)
   const [showReport, setShowReport] = useState(true)
@@ -387,8 +388,9 @@ export default function DetectionsScreen() {
 
   async function generateReport() {
     setReporting(true)
-    // Persist the key for next time (empty is allowed → falls back to a local report).
-    setReportKey(apiKey)
+    // The report LLM config is edited & saved through <LlmPicker> above — read
+    // the current one at generation time (nothing to persist here).
+    const reportCfg = getLlmConfig('report')
     try {
       // Only the newest sightings have their photos in memory; the rest sit in
       // IndexedDB. Pull them back first, or the report silently drops the
@@ -417,21 +419,25 @@ export default function DetectionsScreen() {
       }
 
       let narrative
-      if (apiKey.trim()) {
+      if (isLlmConfigReady(reportCfg)) {
         try {
-          // Groq gets a compact copy (no photos/links, first 40 rows) to stay within
-          // free-tier token limits — the Word file itself still lists every location.
+          // The AI gets a compact copy (no photos/links, first 40 rows) to stay
+          // within free-tier / small-context limits — the Word file itself
+          // still lists every location.
           const { video: _v, ...slim } = data
           const rows = slim.detections.slice(0, 40).map(({ photo, mapUrl, lastSeen, ...d }) => d)
-          narrative = await generateReportNarrative({ ...slim, detections: rows, detectionsShown: `${rows.length} of ${slim.detections.length}` }, { key: apiKey.trim() })
+          narrative = await generateReportNarrative(
+            { ...slim, detections: rows, detectionsShown: `${rows.length} of ${slim.detections.length}` },
+            { config: reportCfg },
+          )
           toast.push({ level: 'ok', title: 'AI analysis ready', msg: 'Building Word document…' })
         } catch (e) {
           narrative = fallbackNarrative(data)
-          toast.push({ level: 'warn', title: 'Groq AI unavailable', msg: `${e.message || e}. Used a built-in report instead.` })
+          toast.push({ level: 'warn', title: 'AI unavailable', msg: `${e.message || e}. Used a built-in report instead.` })
         }
       } else {
         narrative = fallbackNarrative(data)
-        toast.push({ level: 'warn', title: 'No API key', msg: 'Generated a built-in report (add a Groq key for AI analysis).' })
+        toast.push({ level: 'warn', title: 'AI not configured', msg: 'Pick a provider under the report card, or continue with the built-in report.' })
       }
 
       const filename = downloadWordReport({ data, narrative, charts })
@@ -551,19 +557,12 @@ export default function DetectionsScreen() {
                 Generates a Word document with 3D graphs, analysis, and every trash location with its coordinates and a Google Maps link.
               </p>
 
-              <label className="mb-1 text-[10px] uppercase tracking-wider text-muted">Groq API key (for reports)</label>
-              <input
-                type="password"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder="Paste a Groq API key (gsk_…)"
-                autoComplete="off"
-                spellCheck={false}
-                className="inp touch mb-1 w-full px-3 text-sm"
-              />
-              <p className="mb-3 text-[10px] text-muted">
-                Separate from the ASK AI assistant&apos;s key. Get one free at console.groq.com. Stored only in this browser. No key → a built-in report is generated instead.
-              </p>
+              <div className="mb-3 rounded-lg border border-line bg-chip/40 p-3">
+                <LlmPicker kind="report" />
+                <p className="mt-2 text-[10px] text-muted">
+                  Independent from the voice assistant&apos;s AI. Stored only in this browser. Nothing configured → a built-in report is generated instead.
+                </p>
+              </div>
 
               <Btn disabled={reporting} onClick={generateReport} className="mb-2">
                 {reporting ? 'Generating…' : `Generate report (Word) · ${locatedCount} location${locatedCount === 1 ? '' : 's'}`}

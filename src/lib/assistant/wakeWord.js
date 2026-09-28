@@ -36,7 +36,11 @@ export function matchWake(text) {
  * `onWake({ rest })` fires once per wake; listening pauses until resume().
  */
 export function createWakeListener({ onWake, onState = () => {}, lang = 'en-IN' }) {
-  if (!Recognition) return null
+  if (!Recognition) {
+    // eslint-disable-next-line no-console
+    console.warn('[wakeWord] SpeechRecognition is not available in this runtime — wake word cannot work here.')
+    return null
+  }
   let rec = null
   let wanted = false // should be listening
   let paused = false
@@ -75,6 +79,8 @@ export function createWakeListener({ onWake, onState = () => {}, lang = 'en-IN' 
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const r = e.results[i]
         for (let a = 0; a < r.length; a++) {
+          // eslint-disable-next-line no-console
+          console.debug('[wakeWord] heard:', JSON.stringify(r[a].transcript), r.isFinal ? '(final)' : '(interim)')
           const hit = matchWake(r[a].transcript)
           if (!hit) continue
           latest = hit
@@ -88,6 +94,8 @@ export function createWakeListener({ onWake, onState = () => {}, lang = 'en-IN' 
       }
     }
     r0.onerror = (e) => {
+      // eslint-disable-next-line no-console
+      console.warn('[wakeWord] recognition error:', e.error)
       if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
         wanted = false
         onState('blocked')
@@ -99,6 +107,8 @@ export function createWakeListener({ onWake, onState = () => {}, lang = 'en-IN' 
       clearTimeout(settle)
       if (rec !== r0) return // an older instance ending — the current one is fine
       rec = null
+      // eslint-disable-next-line no-console
+      console.debug('[wakeWord] recognition ended', wanted && !paused ? '(restarting)' : '(staying stopped)')
       // Chrome ends continuous recognition every ~minute or on silence: restart.
       if (wanted && !paused) {
         clearTimeout(restartTimer)
@@ -107,8 +117,12 @@ export function createWakeListener({ onWake, onState = () => {}, lang = 'en-IN' 
     }
     try {
       rec.start()
+      // eslint-disable-next-line no-console
+      console.debug('[wakeWord] recognition started')
       onState('listening')
-    } catch {
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn('[wakeWord] rec.start() threw:', e?.message || e)
       rec = null
     }
   }
