@@ -54,7 +54,7 @@ function Shell({ onLock }) {
   // Lets the AI assistant switch tabs (e.g. open Missions after planning).
   useEffect(() => registerNavigator(setTab), [])
   const Screen = SCREENS[tab]
-  const fullBleed = tab === 'home' || tab === 'live' || tab === 'mission'
+  const fullBleed = tab === 'live' || tab === 'mission'
 
   return (
     <div className="relative min-h-screen">

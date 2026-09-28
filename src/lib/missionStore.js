@@ -2,9 +2,8 @@
 // operator has uploaded, read by:
 //   - MissionScreen: to know whether the currently-edited plan is the one
 //     that's actually been uploaded (gates the Run button).
-//   - MissionControlScreen (Home tab): to draw the real flight path on the
-//     map instead of a fake placeholder — nothing is drawn until a mission
-//     has actually been uploaded.
+//   - MissionControlScreen (Home tab): the "Active mission" card — shown
+//     only once a mission has actually been uploaded.
 //   - simulator.js: to know what path to fly when Start is pressed.
 //
 // Shape: { name, waypoints: [{lat,lng,action}], altitude, speedKmh, target, status }

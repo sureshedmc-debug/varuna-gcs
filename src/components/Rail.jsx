@@ -10,7 +10,7 @@ const ICONS = {
 }
 
 const TABS = [
-  { id: 'home', label: 'Map' },
+  { id: 'home', label: 'Home' },
   { id: 'live', label: 'Live' },
   { id: 'mission', label: 'Missions' },
   { id: 'detections', label: 'Detections' },

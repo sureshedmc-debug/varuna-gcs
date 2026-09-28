@@ -1,31 +1,29 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AnimatePresence, motion } from 'framer-motion'
+import { lazy, Suspense, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { motion } from 'framer-motion'
 import { api } from '../api/client'
 import { useSystem } from '../components/SystemContext'
 import { usePolling } from '../hooks/usePolling'
-import { useIsDesktop } from '../hooks/useMediaQuery'
 import { useToast } from '../components/Toast'
-import { StatusOrb, StaleBadge, SwipeConfirm } from '../components/ui'
-import { ViewToggle, EYE, EYE_OFF, SWAP } from '../components/ViewToggle'
+import { StatusOrb, StaleBadge } from '../components/ui'
 import { ThemeToggle } from '../components/ThemeToggle'
-import { Bars, Line, LoadBar } from '../components/MiniChart'
-import { Marker } from 'react-leaflet'
 import { useLivePosition, useHomePoint } from '../hooks/useLaptopGps'
 import { useActiveMission, missionFor } from '../lib/missionStore'
-import { cmd } from '../lib/commands'
+import { useTrashLog, mapsLink } from '../lib/trashLog'
+import { clusterHotspots, buildHotspotPlan } from '../lib/hotspots'
+import { setPlanDraft } from '../lib/planDraftStore'
+import { distanceM, estimateFlight } from '../lib/missionPatterns'
+import { pick, bool, num, relTime, DASH } from '../lib/format'
+import './homeDashboard.css'
 
-const HoloDrone = lazy(() => import('../components/HoloDrone'))
-import MapCanvas, { Drone3DMarker, homeIcon } from '../components/MapCanvas'
-import VideoHUD from '../components/VideoHUD'
-import { pick, bool, num, fmtClock, fmtCoord, DASH } from '../lib/format'
+const HomeDrone3D = lazy(() => import('../components/HomeDrone3D'))
 
 /* ---------- rolling series for sparklines (real recent telemetry) ---------- */
-function useRolling(value, cap = 20) {
+function useRolling(value, cap = 24) {
   const [arr, setArr] = useState([])
   const last = useRef(null)
   useEffect(() => {
     const raw = Number(value)
-    if (Number.isNaN(raw)) return
+    if (value == null || value === '' || Number.isNaN(raw)) return
     const v = Math.round(raw * 100) / 100 // ignore changes the tiles can't even show
     if (last.current === v) return
     last.current = v
@@ -38,437 +36,201 @@ function readT(t) {
   return {
     armed: bool(pick(t, ['armed', 'is_armed'])),
     mode: pick(t, ['flight_mode', 'mode', 'custom_mode']),
-    lat: pick(t, ['lat', 'latitude']),
-    lng: pick(t, ['lng', 'lon', 'longitude']),
     sats: pick(t, ['satellites', 'satellites_visible', 'num_sats', 'sats']),
     volt: pick(t, ['battery_voltage', 'voltage', 'battery']),
     batt: pick(t, ['battery_percent', 'battery_remaining', 'battery_level']),
     alt: pick(t, ['altitude', 'alt', 'relative_alt', 'rel_alt']),
-    speed: pick(t, ['speed', 'groundspeed', 'ground_speed']),
+    speed: pick(t, ['speed', 'groundspeed', 'ground_speed']), // m/s
     heading: pick(t, ['heading', 'yaw', 'hdg']),
+    climb: pick(t, ['climb', 'climb_rate', 'vertical_speed']),
+    hdop: pick(t, ['hdop']),
+    fix: pick(t, ['fix_type', 'gps_fix_type']),
+    wpCurrent: pick(t, ['mission_current', 'current_wp', 'wp_index', 'current_waypoint']),
   }
 }
 
-/* ---------- home-tab-only palette (simple flat slate cards, single teal
-   accent) — scoped to this file; every other screen keeps the app's default
-   glass/blue look untouched via the shared `.glass` class + `--accent`. ---------- */
-const HOME = {
-  panel: 'rgba(15,18,23,0.88)',
-  border: 'rgba(255,255,255,0.06)',
-  chip: 'rgba(255,255,255,0.04)',
-  accent: '#2DD4BF',
-  accentSoft: 'rgba(45,212,191,0.14)',
-  text: '#E7ECEF',
-  muted: '#8891A0',
+const toRad = (d) => (d * Math.PI) / 180
+function bearingDeg(a, b) {
+  const y = Math.sin(toRad(b[1] - a[1])) * Math.cos(toRad(b[0]))
+  const x = Math.cos(toRad(a[0])) * Math.sin(toRad(b[0])) - Math.sin(toRad(a[0])) * Math.cos(toRad(b[0])) * Math.cos(toRad(b[1] - a[1]))
+  return (((Math.atan2(y, x) * 180) / Math.PI) + 360) % 360
 }
-const LEVEL_COLOR = { ok: '#34D399', warn: '#F59E0B', bad: '#EF4444', idle: HOME.muted }
-// No backdrop blur: these cards float over the live map, and re-blurring the
-// map under ~10 cards on every pan/frame was a big GPU cost. Opaque panel instead.
-function cardStyle(radius = 12) {
-  return { background: HOME.panel, border: `1px solid ${HOME.border}`, borderRadius: radius }
+const CARDINAL = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
+const LEVEL_VAR = { ok: 'var(--hd-ok)', warn: 'var(--hd-warn)', bad: 'var(--hd-bad)', idle: 'var(--hd-dim)' }
+const dayStart = (offsetDays = 0) => {
+  const d = new Date()
+  d.setHours(0, 0, 0, 0)
+  d.setDate(d.getDate() + offsetDays) // calendar days, correct across DST changes
+  return d.getTime()
 }
-
-/* ---------- reusable panel sections ---------- */
-function Panel({ title, right, children, className = '' }) {
-  return (
-    <div className={`p-2.5 ${className}`} style={cardStyle()}>
-      <div className="mb-1.5 flex items-center justify-between">
-        <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: HOME.muted }}>{title}</span>
-        {right}
-      </div>
-      {children}
-    </div>
-  )
+function fmtDuration(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000))
+  const h = Math.floor(s / 3600)
+  const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0')
+  const ss = String(s % 60).padStart(2, '0')
+  return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`
 }
 
-function AircraftCard({ t, armed, connected }) {
-  const voltN = Number(t.volt)
-  const battLevel = Number.isNaN(voltN) ? 'idle' : voltN >= 11.1 ? 'ok' : voltN >= 10.5 ? 'warn' : 'bad'
-  const battPct = t.batt != null ? `${num(t.batt, 0)}%` : `${num(t.volt, 1)} V`
-  return (
-    <div className="overflow-hidden" style={cardStyle()}>
-      <div className="flex items-center justify-between px-2.5 pt-2">
-        <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: HOME.muted }}>Selected Aircraft</span>
-        <span
-          className="rounded-md px-1.5 py-0.5 text-[9px] font-bold"
-          style={{ background: armed ? HOME.accentSoft : 'rgba(52,211,153,0.14)', color: armed ? HOME.accent : '#6EE7B7' }}
-        >
-          {armed === undefined ? 'UNKNOWN' : armed ? 'IN FLIGHT' : 'STANDBY'}
-        </span>
-      </div>
-      <div className="flex items-center gap-2.5 p-2.5">
-        <div className="flex h-10 w-11 shrink-0 items-center justify-center rounded-md bg-black/25">
-          <svg viewBox="0 0 48 48" width="30" height="30" style={{ color: HOME.accent }}>
-            <g fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
-              <circle cx="12" cy="12" r="6" /><circle cx="36" cy="12" r="6" />
-              <circle cx="12" cy="36" r="6" /><circle cx="36" cy="36" r="6" />
-              <path d="M14 14l8 8m12-8l-8 8m0 4l-8 8m20 0l-8-8" />
-              <rect x="20" y="20" width="8" height="8" rx="2" fill="currentColor" stroke="none" />
-            </g>
-          </svg>
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="text-sm font-bold" style={{ color: HOME.text }}>VARUNA-01</div>
-          <div className="mt-0.5 grid grid-cols-1 gap-0.5 text-[11px]">
-            <Row k="Battery" v={battPct} level={battLevel} />
-            <Row k="Link" v={connected ? 'Strong' : 'Lost'} level={connected ? 'ok' : 'bad'} />
-            <Row k="Altitude" v={`${num(t.alt, 1)} m`} />
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
-function Row({ k, v, level }) {
-  return (
-    <div className="flex items-center justify-between">
-      <span style={{ color: HOME.muted }}>{k}</span>
-      <span className="flex items-center gap-1 font-mono tnum font-semibold" style={{ color: level ? undefined : HOME.text }}>
-        {level && <StatusOrb level={level} size={6} />}
-        <span style={level ? { color: LEVEL_COLOR[level] } : undefined}>{v}</span>
-      </span>
-    </div>
-  )
-}
-
-function OverviewTiles({ battSeries, sptSeries, satSeries, aiOn }) {
-  return (
-    <div className="grid grid-cols-2 gap-1.5">
-      <Tile label="Battery" value={battSeries.length ? `${num(battSeries.at(-1), 1)}V` : DASH}>
-        <Line data={battSeries.length ? battSeries : [0, 0]} color="#34D399" width={64} height={18} />
-      </Tile>
-      <Tile label="Speed" value={sptSeries.length ? `${num(sptSeries.at(-1), 1)}` : DASH}>
-        <Line data={sptSeries.length ? sptSeries : [0, 0]} color={HOME.accent} width={64} height={18} />
-      </Tile>
-      <Tile label="GPS sats" value={satSeries.length ? num(satSeries.at(-1), 0) : DASH}>
-        <Bars data={satSeries.length ? satSeries.slice(-10) : [0]} color="#34D399" width={64} height={18} />
-      </Tile>
-      <Tile label="AI link" value={aiOn ? 'Active' : 'Off'}>
-        <div className="flex h-[18px] items-center">
-          <StatusOrb level={aiOn ? 'ok' : 'idle'} size={9} pulse={aiOn} />
-        </div>
-      </Tile>
-    </div>
-  )
-}
-function Tile({ label, value, children }) {
-  return (
-    <div className="rounded-md p-1.5" style={{ background: HOME.chip }}>
-      <div className="text-[9px]" style={{ color: HOME.muted }}>{label}</div>
-      <div className="mb-0.5 font-mono text-[13px] font-bold tnum" style={{ color: HOME.text }}>{value}</div>
-      {children}
-    </div>
-  )
-}
-
-function HealthTiles({ health, ai, cam, gpsOk }) {
-  const items = [
-    { k: 'Pixhawk', ok: bool(pick(health, ['pixhawk_connected', 'pixhawk'])) },
-    { k: 'GPS', ok: gpsOk },
-    { k: 'Camera', ok: bool(pick(cam, ['camera_connected'])) ?? bool(pick(health, ['camera_connected', 'camera'])) },
-    { k: 'AI', ok: bool(pick(ai, ['model_loaded', 'ai_enabled'])) },
-  ]
-  return (
-    <div className="grid grid-cols-4 gap-1.5">
-      {items.map((it) => (
-        <div key={it.k} className="rounded-md p-1.5 text-center" style={{ background: HOME.chip }}>
-          <StatusOrb level={it.ok === true ? 'ok' : it.ok === false ? 'bad' : 'idle'} size={8} pulse={it.ok === false} />
-          <div className="mt-0.5 text-[9px] font-semibold" style={{ color: HOME.text }}>{it.k}</div>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-function EventLog({ entries }) {
-  const [tab, setTab] = useState('all')
-  const filtered = entries.filter((e) => tab === 'all' || e.kind === tab)
-  const alerts = entries.filter((e) => e.kind === 'alert').length
-  return (
-    <div>
-      <div className="mb-1.5 flex gap-1">
-        {[['all', 'ALL'], ['alert', 'ALERTS'], ['info', 'INFO'], ['mission', 'MISSION']].map(([k, l]) => (
-          <button
-            key={k}
-            onClick={() => setTab(k)}
-            className="relative rounded px-2 py-0.5 text-[9px] font-semibold tracking-wide"
-            style={{ background: tab === k ? HOME.accentSoft : 'transparent', color: tab === k ? HOME.text : HOME.muted }}
-          >
-            {l}
-            {k === 'alert' && alerts > 0 && (
-              <span className="absolute -right-1 -top-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-bad text-[8px] font-bold text-white">{alerts}</span>
-            )}
-          </button>
-        ))}
-      </div>
-      <div className="flex max-h-32 flex-col gap-1 overflow-y-auto pr-1">
-        {filtered.length === 0 && <div className="py-3 text-center text-[11px]" style={{ color: HOME.muted }}>No events.</div>}
-        {filtered.map((e, i) => (
-          <div key={i} className="flex items-center gap-1.5 rounded px-1.5 py-1 text-[11px]" style={{ background: e.kind === 'alert' ? 'rgba(239,68,68,0.1)' : HOME.chip }}>
-            <StatusOrb level={e.kind === 'alert' ? 'bad' : e.kind === 'mission' ? 'warn' : 'ok'} size={6} />
-            <span className="w-12 shrink-0 font-mono tnum text-[9px]" style={{ color: HOME.muted }}>{e.time}</span>
-            <span className="shrink-0 font-semibold" style={{ color: e.kind === 'alert' ? '#FCA5A5' : HOME.text }}>{e.code}</span>
-            <span className="truncate" style={{ color: HOME.muted }}>{e.text}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-/* ---------- the screen ---------- */
-export default function MissionControlScreen({ onNavigate }) {
-  const { telemetry, health, pi, backendReachable, simulated } = useSystem()
-  const now = Date.now()
-  // Only the layout that is actually on screen is mounted (not desktop + mobile
-  // both, hidden by CSS) — halves the maps, 3D drones and video streams.
-  const isDesktop = useIsDesktop()
-  const toast = useToast()
-  const ai = usePolling(api.aiStatus, 5000)
-  const cam = usePolling(api.cameraStatus, 6000)
-  const det = usePolling(() => api.aiDetections(20), 6000)
-  const [view, setView] = useState('3D')
-  const [panelsHidden, setPanelsHidden] = useState(false)
-  const [mainView, setMainView] = useState('map') // 'map' | 'video' (DJI-style swap)
-  const [rthOpen, setRthOpen] = useState(false)
-  const [rthId, setRthId] = useState(0)
-
-  const t = readT(telemetry.data)
-  const connected = telemetry.status === 'live' || telemetry.status === 'polling'
-  const aiOn = bool(pick(ai.data, ['ai_enabled', 'enabled', 'live_boxes'])) ?? false
-  // Live position: drone GPS when it has a fix, otherwise laptop GPS (test mode).
-  const live = useLivePosition(telemetry.data)
-  const center = live.position
-  const hasFix = !!center
-
-  // Home point (the "H" RTL marker): the drone's reported home if the backend
-  // sends one, otherwise the first position seen this session. A drone fix
-  // always replaces a laptop-GPS home.
-  const homePoint = useHomePoint(telemetry.data, live, simulated)
-
-  // The real planned flight path, once one has actually been uploaded from
-  // the Mission tab — nothing invented here. No mission uploaded → no
-  // overlay, just the aircraft's live position (see MapCanvas/PatrolOverlay).
-  const activeMission = missionFor(useActiveMission(), simulated ? 'sim' : 'real')
-  const missionWps = activeMission?.waypoints
-  const patrol = useMemo(
-    () => (missionWps?.length ? missionWps.map((w, i) => ({ lat: w.lat, lng: w.lng, label: String(i + 1), radius: 40 })) : null),
-    [missionWps],
-  )
-
-  const battSeries = useRolling(t.volt)
-  const sptSeries = useRolling(t.speed)
-  const satSeries = useRolling(t.sats)
-
-  // Subsystem load values for the diagnostics bars (from real status).
-  const camFps = Number(pick(cam.data, ['measured_fps']))
-  const camTarget = Number(pick(cam.data, ['target_fps'])) || 30
-  const camLoad = Number.isNaN(camFps) ? 0 : Math.min(100, (camFps / camTarget) * 100)
-  const aiConf = Number(pick(ai.data, ['confidence_threshold']))
-  const aiLoad = Number.isNaN(aiConf) ? 0 : aiConf * 100
-  const linkLoad = connected ? 82 : 8
-
-  async function returnHome() {
-    try {
-      toast.fromResult(await cmd.rtl(), 'Returning to Home')
-    } catch (e) {
-      toast.push({ level: 'bad', title: `Command failed: ${e?.message || e}` })
-    }
+/* ---------- small building blocks ---------- */
+function Spark({ data, color }) {
+  const gid = useId().replace(/:/g, '')
+  const w = 200
+  const h = 46
+  if (data.length < 2) {
+    return (
+      <svg className="hd-spark" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" aria-hidden="true">
+        <line x1="0" x2={w} y1={h / 2} y2={h / 2} stroke="var(--hd-line2)" strokeDasharray="3 4" />
+      </svg>
+    )
   }
-  const openRth = useCallback(() => {
-    setRthId((n) => n + 1)
-    setRthOpen(true)
-  }, [])
-  const homeHandlers = useMemo(() => ({ click: openRth }), [openRth])
-
-  const homeMarker = homePoint && (
-    <Marker
-      position={homePoint}
-      icon={homeIcon()}
-      title="Home point — tap for Return to Home"
-      eventHandlers={homeHandlers}
-    />
+  const min = Math.min(...data)
+  const max = Math.max(...data)
+  const r = max - min || 1
+  const pts = data.map((v, i) => [(i / (data.length - 1)) * w, h - 4 - ((v - min) / r) * (h - 12)])
+  const d = pts.map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(1)} ${p[1].toFixed(1)}`).join(' ')
+  const last = pts[pts.length - 1]
+  return (
+    <svg className="hd-spark" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" aria-hidden="true">
+      <defs>
+        <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor={color} stopOpacity=".28" />
+          <stop offset="1" stopColor={color} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <line x1="0" x2={w} y1={h / 2} y2={h / 2} stroke="var(--hd-line)" strokeDasharray="3 4" />
+      <path d={`${d} L${w} ${h} L0 ${h}Z`} fill={`url(#${gid})`} />
+      <path d={d} fill="none" stroke={color} strokeWidth="1.8" vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
+      {/* zero-length round-capped stroke = a dot that stays round when the SVG is stretched */}
+      <path d={`M${last[0]} ${last[1]}h0`} stroke={color} strokeWidth="6" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+    </svg>
   )
-  const drone3d = center && <Drone3DMarker position={center} />
+}
 
-  // Build event log from real data: warnings (alerts) + detections (info).
-  const entries = []
-  const th = pi.data?.throttledState || pi.data?.throttled_state
-  if (th && (th.under_voltage || th.undervoltage)) entries.push({ kind: 'alert', time: fmtClock(now / 1000), code: 'PWR', text: 'Undervoltage detected' })
-  if (backendReachable === false) entries.push({ kind: 'alert', time: fmtClock(now / 1000), code: 'LINK', text: 'Backend unreachable' })
-  ;(det.data?.detections || []).forEach((d) => {
-    entries.push({ kind: 'info', time: fmtClock(d.timestamp), code: 'DET', text: `${d.class || 'debris'} ${d.located === false ? '· unlocated' : ''}` })
-  })
-
-  const panels = (
-    <>
-      <AircraftCard t={t} armed={t.armed} connected={connected} />
-      <Panel title="System Overview" right={<StaleBadge lastUpdate={telemetry.lastUpdate} connected={connected} />}>
-        <OverviewTiles battSeries={battSeries} sptSeries={sptSeries} satSeries={satSeries} aiOn={aiOn} />
-      </Panel>
-      <Panel title="Diagnostics">
-        <div className="rounded-md bg-black/25">
-          <Suspense fallback={<div style={{ height: 90 }} />}>
-            <HoloDrone height={90} />
-          </Suspense>
-        </div>
-        <div className="mt-1.5 flex flex-col gap-1.5">
-          <LoadBar label="Camera" pct={camLoad} color="#34D399" />
-          <LoadBar label="AI model" pct={aiLoad} color={HOME.accent} />
-          <LoadBar label="Comms link" pct={linkLoad} color="#34D399" />
-        </div>
-      </Panel>
-      <Panel title="Platform Health">
-        <HealthTiles health={health.data} ai={ai.data} cam={cam.data} gpsOk={live.droneFix ? (Number(t.sats) >= 6 ? true : undefined) : false} />
-      </Panel>
-      <Panel title="Event Log">
-        <EventLog entries={entries} />
-      </Panel>
-    </>
+function Kpi({ title, value, unit, detail, series, color, level }) {
+  return (
+    <article className="hd-card hd-kpi s3">
+      <span className="hd-stripe" style={{ background: color }} />
+      <div className="hd-card-h">
+        <span className="hd-t">{title}</span>
+        <StatusOrb level={level} size={7} />
+      </div>
+      <div className="hd-kpi-v">
+        <b>{value}</b>
+        <span>{unit}</span>
+      </div>
+      <div className="hd-kpi-d">{detail}</div>
+      <Spark data={series} color={color} />
+    </article>
   )
+}
 
-  const videoBlock = (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex items-center justify-between">
-        <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: HOME.muted }}>Live Feed</span>
-        <div className="flex gap-0.5 rounded-md p-0.5" style={{ background: HOME.chip }}>
-          {['2D', '3D'].map((v) => (
-            <button key={v} onClick={() => setView(v)} className="rounded px-2 py-0.5 text-[10px] font-bold" style={{ background: view === v ? HOME.accent : 'transparent', color: view === v ? '#04211C' : HOME.muted }}>{v}</button>
+function Meter({ label, value, pct, color }) {
+  const w = Number.isFinite(pct) ? Math.max(0, Math.min(100, pct)) : 0
+  return (
+    <div className="hd-meter">
+      <div className="hd-meter-h">
+        <span>{label}</span>
+        <b>{value}</b>
+      </div>
+      <div className="hd-track">
+        <i style={{ width: `${w}%`, background: color }} />
+      </div>
+    </div>
+  )
+}
+
+const ROSE_TICKS = (() => {
+  const out = []
+  for (let a = 0; a < 360; a += 5) {
+    const big = a % 30 === 0
+    const r1 = 92 - (big ? 12 : a % 10 === 0 ? 8 : 5)
+    const rad = ((a - 90) * Math.PI) / 180
+    out.push({ a, big, x1: 100 + Math.cos(rad) * r1, y1: 100 + Math.sin(rad) * r1, x2: 100 + Math.cos(rad) * 88, y2: 100 + Math.sin(rad) * 88 })
+  }
+  return out
+})()
+
+function Compass({ heading, homeBearing }) {
+  const hd = Number(heading)
+  const has = Number.isFinite(hd)
+  const h = has ? ((Math.round(hd) % 360) + 360) % 360 : 0
+  return (
+    <div className="hd-compass">
+      <svg viewBox="0 0 200 200" role="img" aria-label={has ? `Heading ${h} degrees` : 'Heading unknown'}>
+        <circle cx="100" cy="100" r="92" fill="var(--hd-panel2)" stroke="var(--hd-line2)" />
+        <g transform={`rotate(${-h} 100 100)`} style={{ transition: 'transform .6s ease-out' }}>
+          {ROSE_TICKS.map((t) => (
+            <line key={t.a} x1={t.x1} y1={t.y1} x2={t.x2} y2={t.y2} stroke={t.big ? 'var(--hd-text)' : 'var(--hd-dim)'} strokeWidth={t.big ? 1.6 : 1} />
           ))}
-        </div>
-      </div>
-      <div className="overflow-hidden rounded-lg" style={{ height: 110 }}>
-        <VideoHUD speed={t.speed} altitude={t.alt} aiOn={aiOn} />
-      </div>
-      <div className="grid grid-cols-3 gap-1.5 text-center">
-        {[['MODE', t.mode || DASH], ['HDG', `${num(t.heading, 0)}°`], ['SATS', num(t.sats, 0)]].map(([k, v]) => (
-          <div key={k} className="rounded-md py-1" style={{ background: HOME.chip }}>
-            <div className="text-[8px]" style={{ color: HOME.muted }}>{k}</div>
-            <div className="font-mono text-xs font-bold tnum" style={{ color: HOME.text }}>{v}</div>
-          </div>
+          {[['N', 0], ['E', 90], ['S', 180], ['W', 270]].map(([l, a]) => {
+            const rad = ((a - 90) * Math.PI) / 180
+            const x = 100 + Math.cos(rad) * 64
+            const y = 100 + Math.sin(rad) * 64
+            return (
+              <text key={l} x={x} y={y + 4} textAnchor="middle" fontSize="12" fontWeight="800" fill={l === 'N' ? 'var(--hd-bad)' : 'var(--hd-muted)'} transform={`rotate(${a} ${x} ${y})`}>
+                {l}
+              </text>
+            )
+          })}
+        </g>
+        <path d="M100 6 l7 12 h-14z" fill="var(--hd-accent)" />
+        {homeBearing != null && (
+          <g transform={`rotate(${homeBearing - h} 100 100)`}>
+            <path d="M100 40 l5 9 h-10z" fill="var(--hd-warn)" />
+          </g>
+        )}
+        <circle cx="100" cy="100" r="44" fill="var(--hd-panel)" stroke="var(--hd-line)" />
+        <text x="100" y="100" textAnchor="middle" fontSize="26" fontWeight="700" fill="var(--hd-text)" style={{ fontFamily: 'var(--hd-mono)' }}>
+          {has ? `${h}°` : DASH}
+        </text>
+        <text x="100" y="120" textAnchor="middle" fontSize="11" fontWeight="700" fill="var(--hd-muted)" letterSpacing="2">
+          {has ? CARDINAL[Math.round(h / 45) % 8] : 'NO HDG'}
+        </text>
+      </svg>
+    </div>
+  )
+}
+
+// Bars are SVG (stretched to the card width); text is HTML so it never distorts.
+function HourChart({ hourly }) {
+  const W = 480
+  const H = 104
+  const top = 16
+  const bw = W / 24
+  const max = Math.max(1, ...hourly)
+  return (
+    <div className="hd-hours-wrap">
+      <span className="hd-hours-max">{max}/h</span>
+      <svg className="hd-hours" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img" aria-label="Trash items detected per hour today">
+        {[0, 0.5, 1].map((f) => {
+          const y = top + (H - top) * (1 - f)
+          return <line key={f} x1="0" x2={W} y1={y} y2={y} stroke="var(--hd-line)" vectorEffect="non-scaling-stroke" />
+        })}
+        {hourly.map((v, i) => {
+          const bh = Math.max(v ? 4 : 2, (v / max) * (H - top))
+          return (
+            <rect
+              key={i}
+              x={i * bw + 3}
+              y={H - bh}
+              width={bw - 6}
+              height={bh}
+              rx="2.5"
+              fill={v && v === max ? 'var(--hd-accent)' : v ? 'color-mix(in srgb, var(--hd-accent) 45%, transparent)' : 'var(--hd-line2)'}
+            />
+          )
+        })}
+      </svg>
+      <div className="hd-hours-axis" aria-hidden="true">
+        {[0, 6, 12, 18, 23].map((i) => (
+          <span key={i} style={{ left: `${((i + 0.5) / 24) * 100}%` }}>{String(i).padStart(2, '0')}</span>
         ))}
       </div>
     </div>
   )
-
-  return (
-    <motion.div
-      initial={{ rotateX: 16, rotateY: -12, scale: 0.92, opacity: 0 }}
-      animate={{ rotateX: 0, rotateY: 0, scale: 1, opacity: 1 }}
-      transition={{ type: 'spring', stiffness: 90, damping: 18, mass: 0.9 }}
-      style={{ transformPerspective: 1400 }}
-    >
-      {/* ===== Desktop / tablet: map with floating panels ===== */}
-      {isDesktop ? (
-      <div className="relative hidden md:block" style={{ height: 'calc(100vh - 56px)' }}>
-        {/* Background = the active main view (DJI-style swap between map & video) */}
-        <div className="absolute inset-0 z-0 isolate overflow-hidden rounded-2xl border border-line">
-          {mainView === 'map' ? (
-            <MapCanvas center={center} hasFix={hasFix} waypoints={patrol} droneMarker={drone3d}>
-              {homeMarker}
-            </MapCanvas>
-          ) : (
-            <VideoHUD speed={t.speed} altitude={t.alt} aiOn={aiOn} fill />
-          )}
-        </div>
-
-        {/* View + theme controls (bottom-center — clear of the fault banner) */}
-        <div className="absolute bottom-3 left-1/2 z-30 flex -translate-x-1/2 flex-wrap justify-center gap-2">
-          <ViewToggle
-            active={panelsHidden}
-            onClick={() => setPanelsHidden((v) => !v)}
-            label={panelsHidden ? 'Show widgets' : 'Hide widgets'}
-            icon={panelsHidden ? EYE_OFF : EYE}
-          />
-          <ViewToggle
-            active={mainView === 'video'}
-            onClick={() => setMainView((v) => (v === 'map' ? 'video' : 'map'))}
-            label={mainView === 'video' ? 'Map view' : 'Video view'}
-            icon={SWAP}
-          />
-          <ThemeToggle />
-        </div>
-
-        {/* Left panel stack */}
-        <AnimatePresence>
-          {!panelsHidden && (
-            <motion.div
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              transition={{ type: 'spring', stiffness: 260, damping: 26 }}
-              className="absolute left-3 top-3 z-20 flex w-[250px] flex-col gap-2 overflow-y-auto pr-1"
-              style={{ maxHeight: 'calc(100% - 24px)' }}
-            >
-              {panels}
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Right live-feed widget — always kept when in map view (the "live widget") */}
-        {mainView === 'map' && (
-          <motion.div className="absolute right-3 top-3 z-20 w-[280px]">
-            <div className="p-2.5" style={cardStyle()}>{videoBlock}</div>
-          </motion.div>
-        )}
-
-        {/* Position source (map view only) */}
-        {mainView === 'map' && (
-          <div className="absolute left-1/2 top-3 z-20 flex -translate-x-1/2 items-center gap-1.5">
-            <PositionChip live={live} />
-            {simulated && <SimBadge />}
-          </div>
-        )}
-
-        {/* Bottom-right mini card */}
-        <AnimatePresence>
-          {!panelsHidden && (
-            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }} className="absolute bottom-3 right-3 z-20 flex items-center gap-2 px-2.5 py-1.5" style={cardStyle()}>
-              <StatusOrb level={connected ? 'ok' : 'bad'} size={8} pulse={!connected} />
-              <div>
-                <div className="text-[11px] font-bold" style={{ color: HOME.text }}>VARUNA-01</div>
-                <div className="text-[9px]" style={{ color: HOME.muted }}>{t.armed ? 'IN FLIGHT' : 'STANDBY'} · {t.batt != null ? `${num(t.batt, 0)}%` : `${num(t.volt, 1)}V`}</div>
-              </div>
-              <button onClick={() => onNavigate('live')} className="ml-1.5 rounded-md px-2 py-1 text-[10px] font-bold" style={{ background: HOME.accentSoft, color: HOME.accent }}>OPEN LIVE</button>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-
-      ) : (
-      /* ===== Mobile: stacked ===== */
-      <div className="flex flex-col gap-3 md:hidden">
-        <div className="relative h-56 overflow-hidden rounded-2xl border border-line">
-          <MapCanvas center={center} hasFix={hasFix} waypoints={patrol} zoom={15} droneMarker={drone3d}>
-            {homeMarker}
-          </MapCanvas>
-          <div className="absolute left-2 top-2 z-[500] flex items-center gap-1.5">
-            <PositionChip live={live} />
-            {simulated && <SimBadge />}
-          </div>
-        </div>
-        <div className="p-2.5" style={cardStyle()}>{videoBlock}</div>
-        {panels}
-      </div>
-      )}
-
-      <SwipeConfirm open={rthOpen} openId={rthId} cmd="rth" onClose={() => setRthOpen(false)} onConfirm={returnHome} />
-    </motion.div>
-  )
 }
 
-/** Flags that the aircraft below is a virtual (simulated) one, not real hardware. */
-function SimBadge() {
-  return (
-    <div className="flex items-center gap-1.5 px-2 py-1" style={{ ...cardStyle(999), border: '1px solid rgba(245,158,11,0.4)' }}>
-      <span style={{ fontSize: 8 }}>🛈</span>
-      <span className="text-[10px] font-bold" style={{ color: '#F59E0B' }}>SIMULATED</span>
-    </div>
-  )
-}
-
-/** Small chip telling the operator where the map position comes from. */
-function PositionChip({ live, className = '' }) {
+function PositionChip({ live }) {
   const text =
     live.source === 'drone'
       ? 'Drone GPS'
@@ -479,9 +241,460 @@ function PositionChip({ live, className = '' }) {
           : 'Waiting for GPS…'
   const level = live.source === 'drone' ? 'ok' : live.source === 'laptop' ? 'warn' : 'bad'
   return (
-    <div className={`flex items-center gap-1.5 px-2.5 py-1 ${className}`} style={cardStyle(999)}>
+    <span className="hd-chip">
       <StatusOrb level={level} size={7} pulse={!live.source} />
-      <span className="text-[10px] font-semibold" style={{ color: HOME.text }}>{text}</span>
-    </div>
+      {text}
+    </span>
+  )
+}
+
+/* ---------- the screen ---------- */
+export default function MissionControlScreen({ onNavigate }) {
+  const { telemetry, health, pi, backendReachable, simulated, armedSince } = useSystem()
+  const toast = useToast()
+  const ai = usePolling(api.aiStatus, 5000)
+  const cam = usePolling(api.cameraStatus, 6000)
+  const trash = useTrashLog()
+
+  const t = readT(telemetry.data)
+  const connected = telemetry.status === 'live' || telemetry.status === 'polling'
+  const aiOn = bool(pick(ai.data, ['ai_enabled', 'enabled', 'live_boxes'])) ?? false
+  const live = useLivePosition(telemetry.data)
+  const center = live.position
+  const homePoint = useHomePoint(telemetry.data, live, simulated)
+  const activeMission = missionFor(useActiveMission(), simulated ? 'sim' : 'real')
+
+  const battSeries = useRolling(t.volt)
+  const altSeries = useRolling(t.alt)
+  const spdSeries = useRolling(t.speed != null && t.speed !== '' ? Number(t.speed) * 3.6 : null)
+  const satSeries = useRolling(t.sats)
+
+  /* ----- battery ----- */
+  const voltN = Number(t.volt)
+  const hasVolt = t.volt != null && t.volt !== '' && Number.isFinite(voltN)
+  // MAVLink battery_remaining is -1 when the autopilot doesn't know.
+  const battFrac = t.batt != null && t.batt !== '' && Number.isFinite(Number(t.batt)) && Number(t.batt) >= 0
+    ? Number(t.batt) / 100
+    : hasVolt
+      ? (voltN - 10.5) / (12.6 - 10.5) // 3S pack: 10.5 V empty … 12.6 V full
+      : null
+  const battPct = battFrac == null ? null : Math.round(Math.max(0, Math.min(1, battFrac)) * 100)
+  const battLevel = !hasVolt ? (battPct == null ? 'idle' : battPct > 40 ? 'ok' : battPct > 20 ? 'warn' : 'bad') : voltN >= 11.1 ? 'ok' : voltN >= 10.5 ? 'warn' : 'bad'
+  const battWord = { ok: 'Healthy', warn: 'Low — plan to land', bad: 'Critical — land now', idle: 'No reading' }[battLevel]
+  const battDelta = battSeries.length > 1 ? battSeries.at(-1) - battSeries[0] : null
+
+  /* ----- navigation ----- */
+  const homeDist = center && homePoint ? distanceM(center, homePoint) : null
+  const homeBrg = center && homePoint && homeDist > 1 ? bearingDeg(center, homePoint) : null
+  const satsN = Number(t.sats)
+  const gpsLevel = !live.droneFix ? 'bad' : satsN >= 6 ? 'ok' : satsN >= 4 ? 'warn' : 'bad'
+  const fixText = Number(t.fix) >= 3 ? '3D fix' : Number(t.fix) === 2 ? '2D fix' : live.droneFix ? 'fix' : 'no drone fix'
+
+  /* ----- flight status line ----- */
+  const offline = !connected && !simulated
+  const running = activeMission?.status === 'running'
+  const statusLine = offline
+    ? 'is offline'
+    : t.armed === undefined
+      ? 'is connected, arm state unknown'
+      : t.armed
+      ? running
+        ? `is flying ${activeMission.name || 'the uploaded mission'}`
+        : `is airborne in ${t.mode || 'flight'}`
+      : 'is on standby'
+  const pill = offline ? 'OFFLINE' : t.armed === undefined ? 'UNKNOWN' : t.armed ? 'IN FLIGHT' : 'STANDBY'
+  const hour = new Date().getHours()
+  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening'
+  const dateLine = new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })
+
+  /* ----- mission ----- */
+  // Same estimate the mission planner uses: home → waypoints → back home, plus climb/descent.
+  const mission = useMemo(() => {
+    const wps = (activeMission?.waypoints || []).map((w) => [w.lat, w.lng])
+    const est = estimateFlight(homePoint, wps, { altitude: Number(activeMission?.altitude) || 10, speedKmh: Number(activeMission?.speedKmh) || 5 })
+    return { count: wps.length, distKm: est.lengthM / 1000, minutes: Math.max(1, Math.round(est.minutes)) }
+  }, [activeMission, homePoint])
+  const wpNow = Number(t.wpCurrent)
+  const wpIdx = running && Number.isFinite(wpNow) ? Math.max(1, Math.min(mission.count, wpNow)) : null
+
+  /* ----- detections (today, from the trash log) ----- */
+  // Recomputed in render (the screen re-renders on every telemetry update) so
+  // the day boundary rolls over at midnight even with no new detections.
+  const today = dayStart(0)
+  const det = useMemo(() => {
+    const yesterday = dayStart(-1)
+    const hourly = new Array(24).fill(0)
+    let items = 0
+    let prev = 0
+    let confSum = 0
+    let confN = 0
+    let located = 0
+    let photos = 0
+    let entries = 0
+    for (const e of trash) {
+      const ts = Number(e.firstSeen) || 0
+      const n = Number(e.count) || 0
+      if (ts >= today) {
+        entries++
+        items += n
+        hourly[new Date(ts).getHours()] += n
+        if (Number.isFinite(e.confidence)) {
+          confSum += e.confidence
+          confN++
+        }
+        if (e.located) located++
+        if (e.hasPhoto || e.photo) photos++
+      } else if (ts >= yesterday) prev += n
+    }
+    const peak = hourly.indexOf(Math.max(...hourly))
+    return {
+      hourly,
+      items,
+      delta: items - prev,
+      peak: items ? peak : null,
+      avgConf: confN ? Math.round((confSum / confN) * 100) : null,
+      gpsPct: entries ? Math.round((located / entries) * 100) : null,
+      photos,
+    }
+  }, [trash, today])
+
+  /* ----- hotspots ----- */
+  const hotspots = useMemo(() => clusterHotspots(trash).slice(0, 3), [trash])
+  function planHotspotMission() {
+    const plan = buildHotspotPlan(trash, { home: homePoint || center })
+    if (!plan.ok) {
+      toast.push({ level: 'warn', title: plan.reason })
+      return
+    }
+    setPlanDraft({
+      name: `Hotspots (${plan.waypoints.length})`,
+      waypoints: plan.waypoints,
+      altitude: plan.altitude,
+      speedKmh: plan.speedKmh,
+      pattern: 'hotspot',
+      lakeName: `${plan.waypoints.length} hotspots`,
+      polygon: null,
+      summary: `Hotspot route · ${plan.waypoints.length} stops · ${(plan.lengthM / 1000).toFixed(1)} km · ~${plan.minutes} min`,
+      warnings: plan.warnings,
+    })
+    onNavigate('mission')
+  }
+
+  /* ----- health + diagnostics ----- */
+  const p = pi.data || {}
+  const temp = Number(pick(p, ['temperature', 'temp', 'cpu_temp']))
+  const ram = Number(pick(p, ['ram_percent', 'memory_percent', 'ram', 'mem']))
+  const disk = Number(pick(p, ['disk_percent', 'disk']))
+  const th = p.throttledState || p.throttled_state
+  const underVolt = !!(th && (th.under_voltage || th.undervoltage))
+  const camFps = Number(pick(cam.data, ['measured_fps']))
+  const camTarget = Number(pick(cam.data, ['target_fps'])) || 30
+  const camLoad = Number.isFinite(camFps) ? Math.min(100, (camFps / camTarget) * 100) : null
+  const aiConf = Number(pick(ai.data, ['confidence_threshold']))
+  const camOk = bool(pick(cam.data, ['camera_connected'])) ?? bool(pick(health.data, ['camera_connected', 'camera']))
+  const pixhawkOk = bool(pick(health.data, ['pixhawk_connected', 'pixhawk']))
+  const aiModel = bool(pick(ai.data, ['model_loaded', 'ai_enabled']))
+  const gpsOk = live.droneFix ? (satsN >= 6 ? true : undefined) : false
+  const piLevel = underVolt ? 'bad' : Number.isFinite(temp) ? (temp >= 80 ? 'warn' : 'ok') : 'idle'
+  const lvl = (ok) => (ok === true ? 'ok' : ok === false ? 'bad' : 'idle')
+  const healthItems = [
+    { k: 'Pixhawk', level: lvl(pixhawkOk), note: pixhawkOk ? 'connected' : pixhawkOk === false ? 'offline' : 'unknown' },
+    { k: 'GPS', level: lvl(gpsOk), note: live.droneFix ? `${num(t.sats, 0)} sats` : 'no drone fix' },
+    { k: 'Camera', level: lvl(camOk), note: Number.isFinite(camFps) ? `${num(camFps, 0)} fps` : camOk ? 'connected' : camOk === false ? 'offline' : 'unknown' },
+    { k: 'AI model', level: lvl(aiModel), note: aiOn ? 'detecting' : aiModel ? 'loaded' : aiModel === false ? 'not loaded' : 'unknown' },
+    { k: 'Backend', level: simulated ? 'warn' : lvl(backendReachable), note: simulated ? 'simulator' : backendReachable ? 'reachable' : backendReachable === false ? 'unreachable' : 'checking' },
+    { k: 'Pi power', level: piLevel, note: underVolt ? 'undervoltage' : Number.isFinite(temp) ? `${num(temp, 0)} °C` : 'no data' },
+  ]
+  const healthOk = healthItems.filter((h) => h.level === 'ok').length
+  const link = telemetry.status === 'live' ? { pct: 100, word: 'Live', bars: 4 } : telemetry.status === 'polling' ? { pct: 60, word: 'Polling', bars: 2 } : { pct: 0, word: 'Lost', bars: 0 }
+
+  return (
+    <motion.div
+      initial={{ rotateX: 16, rotateY: -12, scale: 0.92, opacity: 0 }}
+      animate={{ rotateX: 0, rotateY: 0, scale: 1, opacity: 1 }}
+      transition={{ type: 'spring', stiffness: 90, damping: 18, mass: 0.9 }}
+      style={{ transformPerspective: 1400 }}
+    >
+      <div className="hd">
+        {/* ===== Header ===== */}
+        <section className="hd-head">
+          <div>
+            <div className="hd-eyebrow">{dateLine} · Mission control</div>
+            <h1 className="hd-h1">
+              {greeting}. <em>VARUNA-01</em> {statusLine}.
+            </h1>
+            <div className="hd-chips">
+              <PositionChip live={live} />
+              <span className="hd-chip">
+                <StatusOrb level={lvl(pixhawkOk)} size={7} />
+                {pixhawkOk ? 'Pixhawk linked' : pixhawkOk === false ? 'Pixhawk offline' : 'Pixhawk unknown'}
+              </span>
+              <span className="hd-chip">
+                <StatusOrb level={aiOn ? 'ok' : 'idle'} size={7} pulse={aiOn} />
+                {aiOn ? 'AI detection running' : 'AI detection off'}
+              </span>
+              {simulated && <span className="hd-chip sim">SIMULATED</span>}
+              <StaleBadge lastUpdate={telemetry.lastUpdate} connected={connected} />
+            </div>
+          </div>
+          <ThemeToggle />
+        </section>
+
+        <section className="hd-grid">
+          {/* ===== Aircraft ===== */}
+          <article className="hd-card hd-hero s8">
+            <div className="hd-hero-top">
+              <div>
+                <div className="hd-t">Aircraft</div>
+                <div className="hd-name">VARUNA-01</div>
+                <div className="hd-sub">River-cleanup quadcopter · Pixhawk + Raspberry Pi</div>
+              </div>
+              <span className={`hd-pill ${offline ? 'off' : ''}`}>{pill}</span>
+            </div>
+            <div className="hd-hero-body">
+              <div className="hd-stage">
+                <Suspense fallback={null}>
+                  <HomeDrone3D battery={battPct == null ? null : battPct / 100} />
+                </Suspense>
+                <span className="hd-stage-tag mono">Drag to rotate</span>
+              </div>
+              <div className="hd-stats">
+                <div className="hd-ring-row">
+                  <div className="hd-ring">
+                    <svg viewBox="0 0 80 80" aria-hidden="true">
+                      <circle cx="40" cy="40" r="34" fill="none" stroke="var(--hd-panel2)" strokeWidth="8" />
+                      <circle
+                        cx="40"
+                        cy="40"
+                        r="34"
+                        fill="none"
+                        stroke={LEVEL_VAR[battLevel]}
+                        strokeWidth="8"
+                        strokeLinecap="round"
+                        strokeDasharray="213.6"
+                        strokeDashoffset={(213.6 * (1 - (battPct ?? 0) / 100)).toFixed(1)}
+                        style={{ transition: 'stroke-dashoffset .8s' }}
+                      />
+                    </svg>
+                    <b>{battPct == null ? DASH : `${battPct}%`}</b>
+                  </div>
+                  <div>
+                    <div className="hd-t">Battery</div>
+                    <div className="mono" style={{ fontSize: 18, fontWeight: 700 }}>{hasVolt ? `${num(voltN, 1)} V` : DASH}</div>
+                    <div style={{ color: LEVEL_VAR[battLevel], fontSize: 11.5, fontWeight: 600 }}>{battWord}</div>
+                  </div>
+                </div>
+                <div>
+                  <div className="hd-kv"><span>Flight mode</span><span>{t.mode || DASH}</span></div>
+                  <div className="hd-kv">
+                    <span>Link</span>
+                    <span>
+                      <span className="hd-bars4" aria-hidden="true">
+                        {[4, 7, 10, 12].map((h, i) => <i key={h} className={i < link.bars ? 'on' : ''} style={{ height: h }} />)}
+                      </span>
+                      {link.word}
+                    </span>
+                  </div>
+                  <div className="hd-kv"><span>Armed</span><span>{t.armed === undefined ? DASH : t.armed ? 'Yes' : 'No'}</span></div>
+                  <div className="hd-kv"><span>Altitude</span><span>{num(t.alt, 1)} m</span></div>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          {/* ===== Navigation ===== */}
+          <article className="hd-card hd-nav s4">
+            <div className="hd-card-h">
+              <span className="hd-t">Navigation</span>
+              <span className="mono" style={{ fontSize: 11, color: 'var(--hd-muted)' }}>
+                {center ? `${center[0].toFixed(5)}, ${center[1].toFixed(5)}` : 'No position'}
+              </span>
+            </div>
+            <div className="hd-nav-in">
+              <Compass heading={t.heading} homeBearing={homeBrg} />
+              <div className="hd-tiles2">
+                <div><small>Home distance</small><b>{homeDist == null ? DASH : homeDist >= 1000 ? `${(homeDist / 1000).toFixed(2)} km` : `${Math.round(homeDist)} m`}</b></div>
+                <div><small>Home bearing</small><b>{homeBrg == null ? DASH : `${Math.round(homeBrg)}°`}</b></div>
+                <div><small>Vertical speed</small><b>{t.climb == null ? DASH : `${Number(t.climb) > 0 ? '+' : ''}${num(t.climb, 1)} m/s`}</b></div>
+                <div><small>Flight time</small><b>{armedSince ? fmtDuration(Date.now() - armedSince) : DASH}</b></div>
+              </div>
+            </div>
+          </article>
+
+          {/* ===== KPI tiles ===== */}
+          <Kpi
+            title="Battery"
+            value={hasVolt ? num(voltN, 1) : DASH}
+            unit="V"
+            level={battLevel}
+            color={LEVEL_VAR[battLevel === 'idle' ? 'ok' : battLevel]}
+            series={battSeries}
+            detail={battDelta == null ? 'waiting for readings' : <><span className={`hd-delta ${battDelta < 0 ? 'hd-down' : 'hd-up'}`}>{battDelta > 0 ? '+' : ''}{battDelta.toFixed(2)}</span>recent trend</>}
+          />
+          <Kpi
+            title="Altitude"
+            value={num(t.alt, 1)}
+            unit="m"
+            level={t.alt == null ? 'idle' : 'ok'}
+            color="var(--hd-accent)"
+            series={altSeries}
+            detail={activeMission?.altitude ? `mission height ${num(activeMission.altitude, 0)} m` : 'relative to home'}
+          />
+          <Kpi
+            title="Ground speed"
+            value={t.speed == null || t.speed === '' ? DASH : num(Number(t.speed) * 3.6, 1)}
+            unit="km/h"
+            level={t.speed == null ? 'idle' : 'ok'}
+            color="var(--hd-info)"
+            series={spdSeries}
+            detail={activeMission?.speedKmh ? `mission speed ${num(activeMission.speedKmh, 0)} km/h` : 'cap 15 km/h'}
+          />
+          <Kpi
+            title="GPS satellites"
+            value={num(t.sats, 0)}
+            unit={`sats · ${fixText}`}
+            level={gpsLevel}
+            color={LEVEL_VAR[gpsLevel]}
+            series={satSeries}
+            detail={t.hdop != null ? `HDOP ${num(t.hdop, 1)}` : satsN >= 6 ? 'good for missions' : 'need 6+ to fly missions'}
+          />
+
+          {/* ===== Mission ===== */}
+          <article className="hd-card hd-mis s4">
+            <div className="hd-card-h">
+              <span className="hd-t">Active mission</span>
+              <button className="hd-link" onClick={() => onNavigate('mission')}>Missions →</button>
+            </div>
+            {activeMission ? (
+              <>
+                <div>
+                  <div className="hd-mname">{activeMission.name || 'Uploaded mission'}</div>
+                  <div className="hd-msub">
+                    {mission.count} waypoints · {num(activeMission.altitude, 0)} m · {num(activeMission.speedKmh, 0)} km/h
+                  </div>
+                </div>
+                <div className="hd-pipe">
+                  <span className="ok">✓ Saved</span>
+                  <span className="ok">✓ Uploaded</span>
+                  <span className={running ? 'now' : ''}>{running ? 'Flying' : 'Ready to start'}</span>
+                </div>
+                {mission.count > 0 && mission.count <= 60 && (
+                  <div>
+                    {wpIdx != null && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, marginBottom: 6 }}>
+                        <span style={{ color: 'var(--hd-muted)' }}>Waypoint <b className="mono" style={{ color: 'var(--hd-text)' }}>{wpIdx}</b> of {mission.count}</span>
+                        <b className="mono">{Math.round(((wpIdx - 1) / Math.max(1, mission.count - 1)) * 100)}%</b>
+                      </div>
+                    )}
+                    <div className="hd-wps" aria-hidden="true">
+                      {Array.from({ length: mission.count }, (_, i) => (
+                        <i key={i} className={wpIdx == null ? '' : i + 1 < wpIdx ? 'done' : i + 1 === wpIdx ? 'cur' : ''} />
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div className="hd-tiles3">
+                  <div><small>Round trip</small><b>{mission.distKm.toFixed(1)} km</b></div>
+                  <div><small>Est. time</small><b>{mission.minutes} min</b></div>
+                  <div><small>Aircraft</small><b>{activeMission.target === 'sim' ? 'Sim' : 'Real'}</b></div>
+                </div>
+              </>
+            ) : (
+              <div className="hd-empty">No mission uploaded yet. Plan one on the Missions tab, then Save → Upload.</div>
+            )}
+          </article>
+
+          {/* ===== Detections today ===== */}
+          <article className="hd-card hd-detc s5">
+            <div className="hd-card-h">
+              <span className="hd-t">Trash detected today</span>
+              <button className="hd-link" onClick={() => onNavigate('detections')}>Detections →</button>
+            </div>
+            <div className="hd-det-top">
+              <div className="hd-det-big">
+                {det.items}
+                <small>items</small>
+              </div>
+              <div style={{ textAlign: 'right', fontSize: 11.5, color: 'var(--hd-muted)' }}>
+                <span className={`hd-delta ${det.delta >= 0 ? 'hd-up' : 'hd-down'}`}>{det.delta > 0 ? '+' : ''}{det.delta}</span> vs yesterday
+                <br />
+                <span className="mono">{det.peak == null ? 'no detections yet' : `peak ${String(det.peak).padStart(2, '0')}:00–${String((det.peak + 1) % 24).padStart(2, '0')}:00`}</span>
+              </div>
+            </div>
+            <HourChart hourly={det.hourly} />
+            <div className="hd-foot3">
+              <div><small>Avg confidence</small><b>{det.avgConf == null ? DASH : `${det.avgConf}%`}</b></div>
+              <div><small>With GPS</small><b>{det.gpsPct == null ? DASH : `${det.gpsPct}%`}</b></div>
+              <div><small>Photos saved</small><b>{det.photos}</b></div>
+            </div>
+          </article>
+
+          {/* ===== Platform health ===== */}
+          <article className="hd-card hd-hl s3">
+            <div className="hd-card-h">
+              <span className="hd-t">Platform health</span>
+              <span className="mono" style={{ fontSize: 10.5, color: healthOk === healthItems.length ? 'var(--hd-ok)' : 'var(--hd-warn)' }}>
+                {healthOk}/{healthItems.length} OK
+              </span>
+            </div>
+            <div className="hd-health">
+              {healthItems.map((h) => (
+                <div key={h.k}>
+                  <StatusOrb level={h.level} size={8} pulse={h.level === 'bad'} />
+                  <span style={{ minWidth: 0 }}>
+                    <b>{h.k}</b>
+                    <small>{h.note}</small>
+                  </span>
+                </div>
+              ))}
+            </div>
+          </article>
+
+          {/* ===== Hotspots ===== */}
+          <article className="hd-card s6">
+            <div className="hd-card-h">
+              <span className="hd-t">Worst hotspots</span>
+              <button className="hd-link" onClick={planHotspotMission} disabled={!hotspots.length}>Plan hotspot mission →</button>
+            </div>
+            {hotspots.length ? (
+              <div className="hd-hot">
+                {hotspots.map((h, i) => {
+                  const tone = [['rgba(239,68,68,.15)', '#EF4444'], ['rgba(249,115,22,.15)', '#F97316'], ['rgba(250,204,21,.15)', '#CA8A04']][i]
+                  return (
+                    <div key={h.id} className="hd-hot-row">
+                      <span className="hd-rank" style={{ background: tone[0], color: tone[1] }}>{i + 1}</span>
+                      <div style={{ minWidth: 0 }}>
+                        <b>{h.itemsTotal} item{h.itemsTotal === 1 ? '' : 's'} · seen {relTime(h.lastSeen)}</b>
+                        <small>{h.lat.toFixed(5)}, {h.lng.toFixed(5)}</small>
+                        <div className="hd-heatbar"><i style={{ width: `${Math.round((h.weight / hotspots[0].weight) * 100)}%` }} /></div>
+                      </div>
+                      <a className="hd-link" href={mapsLink(h.lat, h.lng)} target="_blank" rel="noopener noreferrer">Map ↗</a>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
+              <div className="hd-empty">No trash locations recorded yet. Run detection with a GPS fix to build hotspots.</div>
+            )}
+          </article>
+
+          {/* ===== Diagnostics ===== */}
+          <article className="hd-card s6">
+            <div className="hd-card-h">
+              <span className="hd-t">Diagnostics</span>
+              <span className="mono" style={{ fontSize: 10.5, color: 'var(--hd-muted)' }}>Raspberry Pi</span>
+            </div>
+            <div className="hd-meters">
+              <Meter label="Camera throughput" value={camLoad == null ? DASH : `${Math.round(camLoad)}%`} pct={camLoad} color="var(--hd-ok)" />
+              <Meter label="CPU temperature" value={Number.isFinite(temp) ? `${num(temp, 0)} °C` : DASH} pct={Number.isFinite(temp) ? (temp / 85) * 100 : null} color={temp >= 80 ? 'var(--hd-bad)' : temp >= 65 ? 'var(--hd-warn)' : 'var(--hd-ok)'} />
+              <Meter label="AI confidence gate" value={Number.isFinite(aiConf) ? `${Math.round(aiConf * 100)}%` : DASH} pct={Number.isFinite(aiConf) ? aiConf * 100 : null} color="var(--hd-accent)" />
+              <Meter label="Memory" value={Number.isFinite(ram) ? `${num(ram, 0)}%` : DASH} pct={ram} color={ram > 90 ? 'var(--hd-bad)' : ram > 75 ? 'var(--hd-warn)' : 'var(--hd-info)'} />
+              <Meter label="Comms link" value={link.word} pct={link.pct} color={link.pct ? 'var(--hd-ok)' : 'var(--hd-bad)'} />
+              <Meter label="Storage" value={Number.isFinite(disk) ? `${num(disk, 0)}%` : DASH} pct={disk} color={disk > 90 ? 'var(--hd-bad)' : 'var(--hd-info)'} />
+            </div>
+          </article>
+        </section>
+      </div>
+    </motion.div>
   )
 }

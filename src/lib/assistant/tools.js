@@ -33,7 +33,7 @@ const DECLARATIONS = [
     description: 'Switch the app to a tab.',
     parameters: {
       type: S.OBJECT,
-      properties: { tab: { type: S.STRING, enum: TABS, description: 'home = Map tab, live = Live camera, mission = Missions planner, detections, replay = mission replay, system' } },
+      properties: { tab: { type: S.STRING, enum: TABS, description: 'home = Home dashboard, live = Live camera, mission = Missions planner, detections, replay = mission replay, system' } },
       required: ['tab'],
     },
   },

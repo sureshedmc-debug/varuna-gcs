@@ -56,6 +56,17 @@ export function SystemProvider({ children }) {
   const simTelemetry = useMemo(() => ({ data: sim.data, status: 'live', lastUpdate: sim.lastUpdate }), [sim])
   const telemetry = simulated ? simTelemetry : realTelemetry
 
+  // When the motors were last armed (null while disarmed/unknown). Lives here,
+  // not in a screen, so flight time survives tab switches.
+  const armedSinceRef = useRef(null)
+  const armedNow = pick(telemetry.data, ['armed', 'is_armed'])
+  if (armedNow === true || armedNow === 'true' || armedNow === 1) {
+    if (armedSinceRef.current == null) armedSinceRef.current = Date.now()
+  } else if (armedNow === false || armedNow === 'false' || armedNow === 0) {
+    armedSinceRef.current = null
+  }
+  const armedSince = armedSinceRef.current
+
   // Mission lifecycle → position-history recorder + impact totals. Runs once,
   // hooks the mission store's status transitions ('running' → 'uploaded'/null =
   // mission ended). Sample rate is throttled inside positionHistory itself.
@@ -101,8 +112,8 @@ export function SystemProvider({ children }) {
   }, [telemetry])
 
   const value = useMemo(
-    () => ({ ping, pi, health, telemetry, backendReachable, simulated }),
-    [ping, pi, health, telemetry, backendReachable, simulated],
+    () => ({ ping, pi, health, telemetry, backendReachable, simulated, armedSince }),
+    [ping, pi, health, telemetry, backendReachable, simulated, armedSince],
   )
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }
