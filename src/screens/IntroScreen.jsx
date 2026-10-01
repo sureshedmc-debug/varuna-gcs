@@ -1,100 +1,231 @@
-import { Suspense, lazy, useState } from 'react'
-import { motion } from 'framer-motion'
+import { useEffect, useRef, useState } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
 import { StatusOrb } from '../components/ui'
 
-const IntroScene = lazy(() => import('../components/IntroScene'))
+const TITLE = 'VARUNA'
+const ease = [0.16, 1, 0.3, 1]
+
+function prefersReducedMotion() {
+  try {
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  } catch {
+    return false
+  }
+}
+
+// The white impact outlives this screen: it sits above the freshly mounted app
+// and fades out while the app settles in from a slight zoom + defocus.
+function playRevealHandoff() {
+  const flash = document.createElement('div')
+  Object.assign(flash.style, {
+    position: 'fixed',
+    inset: '0',
+    zIndex: '2147483000',
+    pointerEvents: 'none',
+    background: 'radial-gradient(circle at 50% 50%, #ffffff 0%, #fbfdff 30%, #e6f3ff 58%, #cdd8ff 85%)',
+  })
+  document.body.appendChild(flash)
+  const remove = () => flash.remove()
+  if (typeof flash.animate === 'function') {
+    flash.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 720, delay: 40, easing: 'cubic-bezier(.2,.7,.2,1)', fill: 'forwards' }).onfinish = remove
+    const root = document.getElementById('root')
+    root?.animate(
+      [
+        { transform: 'scale(1.045)', filter: 'blur(10px) brightness(1.5)' },
+        { transform: 'scale(1)', filter: 'blur(0px) brightness(1)' },
+      ],
+      { duration: 900, easing: 'cubic-bezier(.16,1,.3,1)' },
+    )
+  } else {
+    setTimeout(remove, 400)
+  }
+}
 
 /**
- * Full-screen cinematic intro / activation gate.
- *
- * Plays a REAL video background from /intro-bg.mp4 (drop your own drone-over-
- * river cleanup clip into public/intro-bg.mp4 — no code change needed). If that
- * file is missing/unplayable, it falls back to an original 3D scene so it's
- * never blank.
- * Click anywhere to activate → the app home page.
+ * Cinematic activation gate: a quadcopter powers on in the dark and hovers.
+ * Click / Enter / Space → it rushes the camera, the headlights white out the
+ * frame, and the app is revealed underneath.
  */
 export default function IntroScreen({ onActivate }) {
-  const [leaving, setLeaving] = useState(false)
-  const [videoOk, setVideoOk] = useState(true)
+  const mountRef = useRef(null)
+  const apiRef = useRef(null)
+  const activateRef = useRef(onActivate)
+  activateRef.current = onActivate
+  const [reduce] = useState(prefersReducedMotion)
+  const [phase, setPhase] = useState('idle') // idle | rush | leaving
+  const [fallback, setFallback] = useState(false)
 
-  function enter() {
-    if (leaving) return
-    setLeaving(true)
-    setTimeout(onActivate, 650)
+  useEffect(() => {
+    let cancelled = false
+    let api = null
+    import('../lib/droneIntro')
+      .then(({ createDroneIntro }) => {
+        if (cancelled || !mountRef.current) return
+        api = createDroneIntro(mountRef.current, {
+          reducedMotion: reduce,
+          onReveal: () => {
+            if (cancelled) return
+            if (reduce || !api?.supported) {
+              setPhase('leaving')
+              setTimeout(() => activateRef.current(), 380)
+              return
+            }
+            playRevealHandoff()
+            activateRef.current()
+          },
+        })
+        apiRef.current = api
+        if (!api.supported) setFallback(true)
+      })
+      .catch(() => {
+        if (!cancelled) setFallback(true)
+      })
+    return () => {
+      cancelled = true
+      api?.dispose()
+      apiRef.current = null
+    }
+  }, [reduce])
+
+  function launch() {
+    if (phase !== 'idle') return
+    setPhase('rush')
+    if (apiRef.current) {
+      apiRef.current.go()
+    } else {
+      setPhase('leaving')
+      setTimeout(() => activateRef.current(), 380)
+    }
   }
+
+  const showUi = phase === 'idle'
 
   return (
     <motion.div
-      onClick={enter}
-      className="fixed inset-0 z-[100] cursor-pointer select-none overflow-hidden"
-      animate={leaving ? { opacity: 0, scale: 1.08, filter: 'blur(6px)' } : { opacity: 1, scale: 1 }}
-      transition={{ duration: 0.6, ease: 'easeInOut' }}
-      style={{ background: 'radial-gradient(120% 90% at 50% 0%, #0a1418 0%, #05080a 60%, #04070a 100%)' }}
+      role="button"
+      tabIndex={0}
+      aria-label="Launch VARUNA AI"
+      onClick={launch}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          launch()
+        }
+      }}
+      className="fixed inset-0 z-[100] cursor-pointer select-none overflow-hidden bg-black outline-none"
+      animate={{ opacity: phase === 'leaving' ? 0 : 1 }}
+      transition={{ duration: 0.35, ease: 'easeOut' }}
+      style={fallback ? { background: 'radial-gradient(120% 90% at 50% 0%, #0a1418 0%, #05080a 60%, #04070a 100%)' } : undefined}
     >
-      {/* Real video background (preferred) */}
-      {videoOk ? (
-        <video
-          className="absolute inset-0 h-full w-full object-cover"
-          src="/intro-bg.mp4"
-          autoPlay
-          muted
-          loop
-          playsInline
-          onError={() => setVideoOk(false)}
-        />
-      ) : (
-        // Fallback: original 3D drone-over-water scene (only if no video file).
-        <Suspense fallback={null}>
-          <IntroScene />
-        </Suspense>
-      )}
+      <div ref={mountRef} className="absolute inset-0" />
 
-      {/* cinematic gradients for text legibility over any footage */}
-      <div className="pointer-events-none absolute inset-0 z-10">
-        <div className="absolute inset-0 bg-black/30" />
-        <div className="absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-black/70 to-transparent" />
-        <div className="absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-black/85 to-transparent" />
-      </div>
+      <AnimatePresence>
+        {showUi && (
+          <motion.div
+            key="hud"
+            className="pointer-events-none absolute inset-0"
+            initial={{ opacity: 1 }}
+            exit={{ opacity: 0, scale: 1.03, filter: 'blur(6px)', transition: { duration: 0.22, ease: 'easeIn' } }}
+          >
+            {/* legibility gradients */}
+            <div className="absolute inset-x-0 bottom-0 h-[45%] bg-gradient-to-t from-black/85 via-black/40 to-transparent" />
+            <div className="absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-black/60 to-transparent" />
 
-      {/* HUD frame */}
-      <div className="pointer-events-none absolute inset-4 z-20 rounded-2xl border border-white/10 md:inset-8" />
+            {/* HUD corner brackets */}
+            {[
+              'left-4 top-4 border-l border-t md:left-8 md:top-8',
+              'right-4 top-4 border-r border-t md:right-8 md:top-8',
+              'bottom-4 left-4 border-b border-l md:bottom-8 md:left-8',
+              'bottom-4 right-4 border-b border-r md:bottom-8 md:right-8',
+            ].map((c, i) => (
+              <motion.span
+                key={c}
+                className={`absolute h-6 w-6 border-white/25 md:h-9 md:w-9 ${c}`}
+                initial={{ opacity: 0, scale: 1.6 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ delay: 1.1 + i * 0.06, duration: 0.7, ease }}
+              />
+            ))}
 
-      <div className="absolute left-6 top-6 z-30 flex items-center gap-2 md:left-12 md:top-12">
-        <StatusOrb level="ok" size={9} pulse />
-        <span className="font-mono text-[11px] tracking-[0.25em] text-mint">SYSTEM ONLINE</span>
-      </div>
-      <div className="absolute right-6 top-6 z-30 hidden font-mono text-[11px] tracking-[0.2em] text-white/60 md:block md:right-12 md:top-12">
-        RIVER PATROL · ENV. MONITORING
-      </div>
+            <motion.div
+              className="absolute left-7 top-7 flex items-center gap-2 md:left-14 md:top-14"
+              initial={{ opacity: 0, x: -10 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: 1.25, duration: 0.6, ease }}
+            >
+              <StatusOrb level="ok" size={8} pulse />
+              <span className="font-mono text-[10.5px] tracking-[0.28em] text-white/75">SYSTEMS ONLINE</span>
+            </motion.div>
+            <motion.div
+              className="absolute right-7 top-7 hidden font-mono text-[10.5px] tracking-[0.24em] text-white/45 md:right-14 md:top-14 md:block"
+              initial={{ opacity: 0, x: 10 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: 1.35, duration: 0.6, ease }}
+            >
+              RIVER PATROL · ENV. MONITORING
+            </motion.div>
 
-      <div className="absolute inset-0 z-30 flex flex-col items-center justify-center px-6 text-center">
-        <motion.div initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3, duration: 0.9, ease: 'easeOut' }}>
-          <div className="mb-3 flex items-center justify-center gap-2 font-mono text-[11px] tracking-[0.4em] text-accent">
-            <span className="h-px w-8 bg-accent/60" />
-            AUTONOMOUS AERIAL INTELLIGENCE
-            <span className="h-px w-8 bg-accent/60" />
-          </div>
-          <h1 className="text-6xl font-black tracking-tight text-white sm:text-7xl md:text-8xl" style={{ textShadow: '0 0 40px rgba(59,158,255,0.45)' }}>
-            VARUNA <span className="text-accent">AI</span>
-          </h1>
-          <p className="mx-auto mt-4 max-w-xl text-sm text-white/80 sm:text-base">
-            Autonomous drone system for river debris cleanup & environmental monitoring — scanning waterways, detecting waste, acting in real time.
-          </p>
-        </motion.div>
-      </div>
+            <div className="absolute inset-x-0 bottom-16 flex flex-col items-center px-6 text-center md:bottom-20">
+              <motion.div
+                className="mb-3 flex items-center gap-3 font-mono text-[10.5px] tracking-[0.42em] text-white/60"
+                initial={{ opacity: 0, letterSpacing: '0.7em' }}
+                animate={{ opacity: 1, letterSpacing: '0.42em' }}
+                transition={{ delay: 1.7, duration: 1.1, ease }}
+              >
+                <span className="h-px w-8 bg-white/30" />
+                AUTONOMOUS AERIAL INTELLIGENCE
+                <span className="h-px w-8 bg-white/30" />
+              </motion.div>
 
-      <div className="absolute inset-x-0 bottom-24 z-30 flex justify-center">
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 1 }} className="flex items-center gap-2 rounded-full border border-mint/30 bg-black/50 px-4 py-1.5 backdrop-blur">
-          <motion.span className="h-2 w-2 rounded-full bg-mint" animate={{ opacity: [1, 0.2, 1] }} transition={{ duration: 1.4, repeat: Infinity }} />
-          <span className="font-mono text-[11px] tracking-wider text-mint">SCANNING RIVER SURFACE · DEBRIS DETECTION ACTIVE</span>
-        </motion.div>
-      </div>
+              <h1 className="flex items-baseline gap-[0.18em] text-5xl font-black tracking-tight text-white sm:text-6xl md:text-7xl" aria-label="VARUNA AI">
+                <span className="flex">
+                  {TITLE.split('').map((ch, i) => (
+                    <motion.span
+                      key={i}
+                      aria-hidden
+                      initial={{ opacity: 0, y: 18, filter: 'blur(10px)' }}
+                      animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+                      transition={{ delay: 1.85 + i * 0.055, duration: 0.8, ease }}
+                    >
+                      {ch}
+                    </motion.span>
+                  ))}
+                </span>
+                <motion.span
+                  aria-hidden
+                  className="bg-gradient-to-r from-cyan-300 to-violet-400 bg-clip-text text-transparent"
+                  initial={{ opacity: 0, y: 18, filter: 'blur(10px)' }}
+                  animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+                  transition={{ delay: 2.25, duration: 0.8, ease }}
+                >
+                  AI
+                </motion.span>
+              </h1>
 
-      <motion.div className="absolute inset-x-0 bottom-10 z-30 flex flex-col items-center gap-2" animate={{ opacity: [0.55, 1, 0.55] }} transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}>
-        <span className="rounded-full bg-white/12 px-5 py-2 text-sm font-semibold tracking-wide text-white backdrop-blur">
-          Click anywhere to activate
-        </span>
-      </motion.div>
+              <motion.button
+                type="button"
+                tabIndex={-1}
+                className="pointer-events-auto relative mt-7 flex items-center gap-2.5 rounded-full border border-white/15 bg-white/[0.06] px-5 py-2.5 backdrop-blur-md"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 2.6, duration: 0.7, ease }}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  launch()
+                }}
+              >
+                <motion.span
+                  className="absolute inset-0 rounded-full border border-cyan-300/40"
+                  animate={{ scale: [1, 1.18], opacity: [0.6, 0] }}
+                  transition={{ duration: 1.8, repeat: Infinity, ease: 'easeOut', delay: 3.2 }}
+                />
+                <span className="h-1.5 w-1.5 rounded-full bg-cyan-300 shadow-[0_0_10px_2px_rgba(103,232,249,0.7)]" />
+                <span className="font-mono text-[11px] font-semibold tracking-[0.24em] text-white/85">CLICK ANYWHERE TO LAUNCH</span>
+              </motion.button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   )
 }
