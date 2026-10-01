@@ -21,7 +21,7 @@ const R = {
   whitePeak: 1.52,
   reveal: 1.62,
 }
-const IDLE_Z = -14
+const IDLE_Z = -10
 const ARRIVE_D = 1.35
 
 const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x))
@@ -604,9 +604,9 @@ export function createDroneIntro(container, { onReveal, reducedMotion = false } 
   function idlePos(time, out) {
     const ent = 1 - Math.pow(1 - clamp(time / TL.settle), 3)
     out.ent = ent
-    out.x = lerp(-3.4, 0, ent) + Math.sin(time * 0.33) * 1.6 * ent
-    out.y = lerp(2.3, 1.05, ent) + Math.sin(time * 0.9) * 0.16 * ent + Math.sin(time * 2.1) * 0.03
-    out.z = lerp(-44, IDLE_Z, ent) + Math.sin(time * 0.45 + 1.2) * 1.1 * ent
+    out.x = lerp(-3.4, 0, ent) + Math.sin(time * 0.33) * 1.1 * ent
+    out.y = lerp(2.5, 1.38, ent) + Math.sin(time * 0.9) * 0.14 * ent + Math.sin(time * 2.1) * 0.03
+    out.z = lerp(-40, IDLE_Z, ent) + Math.sin(time * 0.45 + 1.2) * 0.7 * ent
     return out
   }
   const pA = {}
@@ -646,7 +646,7 @@ export function createDroneIntro(container, { onReveal, reducedMotion = false } 
     const rushing = g >= 0
     const s = rushing ? rushPose(g) : idlePose(t)
     const v01 = rushing ? Math.pow(smooth(R.launch + 0.1, R.arrive - 0.05, g), 1.3) : 0
-    const near = smooth(12, 1.5, -s.z)
+    const near = smooth(8.5, 1.5, -s.z)
     const flood = rushing ? smooth(R.whiteStart, R.whitePeak, g) : 0
 
     D.drone.position.set(s.x, s.y, s.z)

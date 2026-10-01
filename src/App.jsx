@@ -3,7 +3,6 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { ToastProvider } from './components/Toast'
 import { SystemProvider, useSystem } from './components/SystemContext'
 import { WarningBanner, deriveWarnings } from './components/WarningBanner'
-import { PinGate, getStoredSession } from './components/PinGate'
 import { Rail } from './components/Rail'
 import { TopBar } from './components/TopBar'
 import { registerNavigator } from './lib/planDraftStore'
@@ -96,7 +95,7 @@ function Shell({ onLock }) {
 
 function entered() {
   try {
-    return localStorage.getItem('varuna.entered') === '1'
+    return sessionStorage.getItem('varuna.entered') === '1'
   } catch {
     return false
   }
@@ -104,7 +103,6 @@ function entered() {
 
 export default function App() {
   const [active, setActive] = useState(entered())
-  const [session, setSession] = useState(getStoredSession())
 
   // Intro / activation screen first. Click anywhere → activate → home page.
   if (!active) {
@@ -112,7 +110,7 @@ export default function App() {
       <IntroScreen
         onActivate={() => {
           try {
-            localStorage.setItem('varuna.entered', '1')
+            sessionStorage.setItem('varuna.entered', '1')
           } catch {
             /* private mode */
           }
@@ -122,11 +120,9 @@ export default function App() {
     )
   }
 
-  if (!session) return <PinGate onUnlock={setSession} />
-
   function lock() {
     try {
-      localStorage.removeItem('varuna.entered')
+      sessionStorage.removeItem('varuna.entered')
     } catch {
       /* private mode */
     }

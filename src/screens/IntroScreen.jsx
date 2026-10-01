@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { StatusOrb } from '../components/ui'
+import { playSciFiReveal } from '../lib/revealFx'
 
 const TITLE = 'VARUNA'
 const ease = [0.16, 1, 0.3, 1]
@@ -10,34 +11,6 @@ function prefersReducedMotion() {
     return window.matchMedia('(prefers-reduced-motion: reduce)').matches
   } catch {
     return false
-  }
-}
-
-// The white impact outlives this screen: it sits above the freshly mounted app
-// and fades out while the app settles in from a slight zoom + defocus.
-function playRevealHandoff() {
-  const flash = document.createElement('div')
-  Object.assign(flash.style, {
-    position: 'fixed',
-    inset: '0',
-    zIndex: '2147483000',
-    pointerEvents: 'none',
-    background: 'radial-gradient(circle at 50% 50%, #ffffff 0%, #fbfdff 30%, #e6f3ff 58%, #cdd8ff 85%)',
-  })
-  document.body.appendChild(flash)
-  const remove = () => flash.remove()
-  if (typeof flash.animate === 'function') {
-    flash.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 720, delay: 40, easing: 'cubic-bezier(.2,.7,.2,1)', fill: 'forwards' }).onfinish = remove
-    const root = document.getElementById('root')
-    root?.animate(
-      [
-        { transform: 'scale(1.045)', filter: 'blur(10px) brightness(1.5)' },
-        { transform: 'scale(1)', filter: 'blur(0px) brightness(1)' },
-      ],
-      { duration: 900, easing: 'cubic-bezier(.16,1,.3,1)' },
-    )
-  } else {
-    setTimeout(remove, 400)
   }
 }
 
@@ -70,7 +43,7 @@ export default function IntroScreen({ onActivate }) {
               setTimeout(() => activateRef.current(), 380)
               return
             }
-            playRevealHandoff()
+            playSciFiReveal()
             activateRef.current()
           },
         })
