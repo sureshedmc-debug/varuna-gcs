@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>VARUNA GCS — Live</title>
+<link rel="stylesheet" href="base.css" />
+<style>
+.screen { display:grid; grid-template-columns:1fr 280px; grid-template-rows:1fr auto; gap:12px; padding:12px; height:calc(100vh - 48px); overflow:hidden; }
+.video-wrap { grid-row:1/3; position:relative; border-radius:18px; overflow:hidden; background:#000408; border:1px solid var(--line); }
+.video-bg { width:100%; height:100%; object-fit:cover; background: radial-gradient(ellipse at 30% 60%, #0a1f2e 0%, #000810 60%, #000 100%); display:flex; align-items:center; justify-content:center; }
+.no-feed { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; height:100%; color:var(--faint); }
+.no-feed svg { width:48px; height:48px; opacity:0.4; }
+.no-feed p { font-size:12px; letter-spacing:0.08em; }
+
+/* HUD overlays */
+.hud-top-left  { position:absolute; top:14px; left:14px; display:flex; flex-direction:column; gap:8px; z-index:10; }
+.hud-top-right { position:absolute; top:14px; right:14px; display:flex; flex-direction:column; align-items:flex-end; gap:8px; z-index:10; }
+.hud-bottom    { position:absolute; bottom:14px; left:50%; transform:translateX(-50%); z-index:10; }
+.hud-left      { position:absolute; left:14px; top:50%; transform:translateY(-50%); z-index:10; }
+.hud-right     { position:absolute; right:14px; top:50%; transform:translateY(-50%); z-index:10; }
+
+/* Status pill */
+.status-pill { display:flex; align-items:center; gap:8px; background:rgba(0,0,0,0.7); border:1px solid rgba(255,255,255,0.08); border-radius:20px; padding:6px 14px; backdrop-filter:blur(10px); }
+.status-pill .name { font-size:13px; font-weight:700; color:var(--ink); }
+.status-pill .sub  { font-size:10px; color:var(--muted); }
+
+/* AI badge */
+.ai-badge { display:flex; align-items:center; gap:6px; background:rgba(0,0,0,0.7); border:1px solid rgba(50,215,75,0.25); border-radius:20px; padding:5px 12px; backdrop-filter:blur(10px); }
+.ai-badge .ai-label { font-size:11px; font-weight:700; letter-spacing:0.08em; color:var(--ok); }
+.ai-badge-off .ai-label { color:var(--faint); }
+.ai-badge-off { border-color:rgba(255,255,255,0.08); }
+
+/* REC badge */
+.rec-badge { display:flex; align-items:center; gap:6px; background:rgba(0,0,0,0.7); border:1px solid rgba(255,69,58,0.3); border-radius:20px; padding:5px 12px; backdrop-filter:blur(10px); }
+.rec-dot { width:8px; height:8px; border-radius:50%; background:var(--bad); box-shadow:0 0 8px var(--bad); animation:pulse 1.2s infinite; }
+.rec-label { font-size:11px; font-weight:700; letter-spacing:0.1em; color:var(--bad); }
+
+/* Heading compass strip */
+.compass-strip { background:rgba(0,0,0,0.65); border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:6px 14px; backdrop-filter:blur(10px); display:flex; align-items:center; gap:3px; }
+.compass-tick { font-family:var(--font-mono); font-size:11px; color:rgba(255,255,255,0.25); padding:0 6px; }
+.compass-tick.active { color:#fff; font-weight:700; font-size:13px; position:relative; }
+.compass-tick.active::after { content:''; position:absolute; bottom:-4px; left:50%; transform:translateX(-50%); width:4px; height:4px; border-radius:50%; background:var(--accent); }
+.compass-tick.near { color:rgba(255,255,255,0.5); }
+.compass-label { font-size:9px; font-weight:700; letter-spacing:0.12em; color:var(--muted); margin-bottom:4px; text-align:center; }
+
+/* Tape ticks */
+.hud-tape-ticks { display:flex; flex-direction:column; gap:1px; align-items:center; }
+.tape-tick-val { font-family:var(--font-mono); font-size:10px; color:rgba(255,255,255,0.2); }
+.tape-tick-val.mid { font-size:18px; font-weight:700; color:#fff; text-shadow:0 0 12px rgba(59,158,255,0.9); }
+
+/* Horizon line */
+.horizon { position:absolute; left:15%; right:15%; top:50%; height:1px; background:rgba(255,255,255,0.15); transform:translateY(-50%) rotate(-2deg); pointer-events:none; }
+.horizon::before, .horizon::after { content:''; position:absolute; top:50%; width:30px; height:2px; background:rgba(255,255,255,0.55); transform:translateY(-50%); }
+.horizon::before { left:0; }
+.horizon::after  { right:0; }
+
+/* Right column */
+.right-col { display:flex; flex-direction:column; gap:10px; overflow-y:auto; }
+.telem-card { padding:16px; }
+.telem-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.telem-item { display:flex; flex-direction:column; gap:2px; }
+.telem-item .t-label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.1em; color:var(--faint); }
+.telem-item .t-val   { font-family:var(--font-mono); font-size:18px; font-weight:700; color:var(--ink); line-height:1.1; }
+.telem-item .t-unit  { font-size:10px; color:var(--muted); }
+.arm-badge { display:inline-flex; align-items:center; gap:5px; padding:3px 10px; border-radius:6px; font-size:11px; font-weight:700; }
+.armed   { background:rgba(255,69,58,0.15); color:var(--bad); border:1px solid rgba(255,69,58,0.3); }
+.disarmed{ background:rgba(50,215,75,0.12); color:var(--ok); border:1px solid rgba(50,215,75,0.25); }
+
+/* Capture / AI row */
+.action-row { display:flex; gap:8px; }
+.action-row button { flex:1; }
+
+/* Snapshot preview */
+.snapshot-strip { display:flex; gap:6px; overflow-x:auto; padding:2px 0; }
+.snapshot-thumb { width:56px; height:42px; border-radius:6px; background:var(--chip); flex-shrink:0; border:1px solid var(--line); display:flex; align-items:center; justify-content:center; font-size:9px; color:var(--faint); object-fit:cover; }
+.snapshot-add { width:56px; height:42px; border-radius:6px; background:var(--chip); flex-shrink:0; border:1px dashed var(--faint); display:flex; align-items:center; justify-content:center; font-size:18px; color:var(--faint); cursor:pointer; }
+
+/* Bottom command bar */
+.cmd-row { grid-column:1/-1; display:flex; justify-content:center; }
+</style>
+</head>
+<body>
+<div class="app-shell">
+  <!-- Topbar -->
+  <header class="topbar">
+    <div class="topbar-brand">
+      <span class="name">VARUNA</span><span class="ai">AI</span>
+      <span class="tag">GROUND CONTROL</span>
+    </div>
+    <div class="topbar-stats">
+      <div class="topbar-stat"><span class="label">AIRCRAFT</span><span class="value">VARUNA-01</span></div>
+      <div class="topbar-stat"><span class="label">MODE</span><span class="value">LOITER</span></div>
+      <div class="topbar-stat"><span class="label">STATE</span><span class="value" style="color:var(--bad)">ARMED</span></div>
+    </div>
+    <div class="topbar-right">
+      <div class="link-pill">
+        <span class="orb orb-ok" style="width:8px;height:8px"></span>
+        <span class="label" style="font-size:11px;font-weight:700;color:var(--ok)">LINK LIVE</span>
+      </div>
+      <button class="btn-icon"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M6 10V8a6 6 0 1112 0v2h1a1 1 0 011 1v9H5v-9a1 1 0 011-1h1zm2 0h8V8a4 4 0 10-8 0v2z"/></svg></button>
+    </div>
+  </header>
+
+  <!-- Rail -->
+  <nav class="rail">
+    <div class="rail-logo">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 2l3 6 6 .8-4.5 4.2L18 20l-6-3.4L6 20l1.5-7L3 8.8 9 8l3-6z"/></svg>
+    </div>
+    <a href="index.html" class="rail-item"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 10l8-6 8 6v9a1 1 0 01-1 1h-5v-6h-4v6H5a1 1 0 01-1-1v-9z"/></svg>Home</a>
+    <a href="live.html" class="rail-item active"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 6h16v12H4zM9.5 9.5l5 2.5-5 2.5v-5z"/></svg>Live</a>
+    <a href="mission.html" class="rail-item"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l7 4v12l-7 4-7-4V6l7-4zm0 4l-3 2 3 2 3-2-3-2z"/></svg>Missions</a>
+    <a href="detections.html" class="rail-item"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 5h16v3H4zM4 10h16v3H4zM4 15h10v3H4z"/></svg>Detect</a>
+    <a href="replay.html" class="rail-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 12a8 8 0 108-8 8 8 0 00-5.66 2.34"/><path d="M4 4v4.5H8.5"/><path d="M10 9l6 3-6 3V9z" fill="currentColor" stroke="none"/></svg>Replay</a>
+    <a href="system.html" class="rail-item"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 8a4 4 0 100 8 4 4 0 000-8zm9 4l1.6-1.2-1-2.4-1.9.5a7 7 0 00-1.1-1.1l.5-1.9-2.4-1-1.2 1.6a7 7 0 00-1.5 0L12 3l-2.4 1 .5 1.9a7 7 0 00-1.1 1.1L7 6.4l-2.4 1L5 9.8a7 7 0 000 1.5L3.4 12.5l1 2.4 1.9-.5a7 7 0 001.1 1.1L7 17.6l2.4 1 1.2-1.6a7 7 0 001.5 0l1.2 1.6 2.4-1-.5-1.9a7 7 0 001.1-1.1l1.9.5 1-2.4L21 12z"/></svg>System</a>
+    <button class="rail-lock"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 10V8a6 6 0 1112 0v2h1a1 1 0 011 1v9H5v-9a1 1 0 011-1h1zm2 0h8V8a4 4 0 10-8 0v2zm4 4a1.5 1.5 0 00-1 2.6V19h2v-2.4A1.5 1.5 0 0012 14z"/></svg>Lock</button>
+  </nav>
+
+  <!-- Screen -->
+  <main style="grid-row:2;grid-column:2;overflow:hidden;">
+    <div class="screen">
+
+      <!-- Video panel -->
+      <div class="video-wrap">
+        <!-- simulated dark video bg -->
+        <div class="video-bg">
+          <div class="no-feed">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 6h16v12H4zM9.5 9.5l5 2.5-5 2.5v-5z"/></svg>
+            <p>DRONE FEED · WAITING</p>
+          </div>
+          <!-- fake video frame tint -->
+          <div style="position:absolute;inset:0;background:radial-gradient(ellipse 90% 70% at 55% 45%, rgba(5,20,35,0.7) 0%, rgba(0,4,10,0.95) 100%);"></div>
+          <!-- fake river detail -->
+          <div style="position:absolute;inset:0;background:repeating-linear-gradient(92deg,transparent,transparent 120px,rgba(0,80,60,0.04) 121px),repeating-linear-gradient(182deg,transparent,transparent 80px,rgba(0,40,80,0.04) 81px);"></div>
+        </div>
+
+        <!-- Horizon -->
+        <div class="horizon"></div>
+
+        <!-- Reticle -->
+        <div class="reticle">
+          <div class="reticle-inner">
+            <div class="reticle-tl"></div>
+            <div class="reticle-tr"></div>
+            <div class="reticle-bl"></div>
+            <div class="reticle-br"></div>
+            <div class="reticle-ring"></div>
+          </div>
+        </div>
+
+        <!-- Top-left: status + AI -->
+        <div class="hud-top-left">
+          <div class="status-pill">
+            <span class="orb orb-ok orb-pulse" style="width:9px;height:9px"></span>
+            <div><div class="name">LIVE · VARUNA-01</div><div class="sub">varuna-pi.netbird · 12 ms</div></div>
+            <span class="badge badge-warn" style="margin-left:4px">SIM</span>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <div class="ai-badge">
+              <span class="orb orb-ok orb-pulse" style="width:7px;height:7px"></span>
+              <span class="ai-label">AI DETECTION</span>
+            </div>
+            <div class="rec-badge">
+              <span class="rec-dot"></span>
+              <span class="rec-label">LIVE</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Top-right: compass heading -->
+        <div class="hud-top-right">
+          <div style="display:flex;flex-direction:column;align-items:center;">
+            <div class="compass-label">HDG</div>
+            <div class="compass-strip">
+              <span class="compass-tick">240</span>
+              <span class="compass-tick near">250</span>
+              <span class="compass-tick near">260</span>
+              <span class="compass-tick active">270</span>
+              <span class="compass-tick near">280</span>
+              <span class="compass-tick near">290</span>
+              <span class="compass-tick">300</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Left tape: Speed -->
+        <div class="hud-left">
+          <div class="hud-tape">
+            <div class="tape-label">SPD</div>
+            <div class="hud-tape-ticks">
+              <div class="tape-tick-val">8</div>
+              <div class="tape-tick-val">7</div>
+              <div class="tape-tick-val">6</div>
+              <div class="tape-tick-val mid">4.5</div>
+              <div class="tape-tick-val">3</div>
+              <div class="tape-tick-val">2</div>
+              <div class="tape-tick-val">1</div>
+            </div>
+            <div class="tape-unit">m/s</div>
+          </div>
+        </div>
+
+        <!-- Right tape: Altitude -->
+        <div class="hud-right">
+          <div class="hud-tape">
+            <div class="tape-label">ALT</div>
+            <div class="hud-tape-ticks">
+              <div class="tape-tick-val">18</div>
+              <div class="tape-tick-val">16</div>
+              <div class="tape-tick-val">14</div>
+              <div class="tape-tick-val mid">12.3</div>
+              <div class="tape-tick-val">10</div>
+              <div class="tape-tick-val">8</div>
+              <div class="tape-tick-val">6</div>
+            </div>
+            <div class="tape-unit">m</div>
+          </div>
+        </div>
+
+        <!-- Bottom: flight controls -->
+        <div class="hud-bottom">
+          <div class="cmd-ring">
+            <button class="cmd-btn cmd-btn-arm"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M13 3v9h8l-9 9v-9H4z"/></svg>ARM</button>
+            <button class="cmd-btn cmd-btn-tkof"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20V4m0 0l-4 4m4-4l4 4"/></svg>TKOF</button>
+            <button class="cmd-btn cmd-btn-rtl"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M9 10h6M12 6v10m7-4a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>RTL</button>
+            <button class="cmd-btn cmd-btn-land"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 4v16m0 0l-4-4m4 4l4-4M4 20h16"/></svg>LAND</button>
+            <button class="cmd-btn cmd-btn-stop"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M6 6h12v12H6z"/></svg>STOP</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right column -->
+      <div class="right-col">
+        <!-- Telemetry card -->
+        <div class="glass telem-card">
+          <div class="flex items-center justify-between mb-3">
+            <span class="eyebrow">Telemetry</span>
+            <span class="arm-badge armed">● ARMED</span>
+          </div>
+          <div class="telem-grid">
+            <div class="telem-item">
+              <span class="t-label">Mode</span>
+              <span class="t-val" style="font-size:15px;color:var(--accent)">LOITER</span>
+            </div>
+            <div class="telem-item">
+              <span class="t-label">Altitude</span>
+              <div style="display:flex;align-items:baseline;gap:3px">
+                <span class="t-val">12.3</span><span class="t-unit">m</span>
+              </div>
+            </div>
+            <div class="telem-item">
+              <span class="t-label">Battery</span>
+              <div style="display:flex;flex-direction:column;gap:3px">
+                <div style="display:flex;align-items:baseline;gap:3px">
+                  <span class="t-val" style="color:var(--ok)">12.1</span><span class="t-unit">V</span>
+                </div>
+                <div class="bar-track"><div class="bar-fill" style="width:78%;background:var(--ok)"></div></div>
+              </div>
+            </div>
+            <div class="telem-item">
+              <span class="t-label">Speed</span>
+              <div style="display:flex;align-items:baseline;gap:3px">
+                <span class="t-val">4.5</span><span class="t-unit">m/s</span>
+              </div>
+            </div>
+            <div class="telem-item">
+              <span class="t-label">GPS Sats</span>
+              <div style="display:flex;align-items:center;gap:6px">
+                <span class="t-val" style="color:var(--ok)">12</span>
+                <span class="badge badge-ok" style="font-size:9px">LOCK</span>
+              </div>
+            </div>
+            <div class="telem-item">
+              <span class="t-label">Heading</span>
+              <div style="display:flex;align-items:baseline;gap:3px">
+                <span class="t-val">270</span><span class="t-unit">°W</span>
+              </div>
+            </div>
+          </div>
+          <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line);font-family:var(--font-mono);font-size:11px;color:var(--muted)">
+            17.3850°N, 78.4867°E
+          </div>
+        </div>
+
+        <!-- AI + Capture -->
+        <div class="glass p-4">
+          <div class="eyebrow mb-3">Camera & AI</div>
+          <div class="action-row mb-3">
+            <button class="btn btn-primary btn-sm">● AI On</button>
+            <button class="btn btn-secondary btn-sm">📸 Capture</button>
+          </div>
+          <div class="eyebrow mb-2" style="margin-top:4px">Recent snapshots</div>
+          <div class="snapshot-strip">
+            <div class="snapshot-thumb" style="background:linear-gradient(135deg,#0a2a1a,#0d1f2d);color:var(--cyan);font-size:8px;text-align:center;padding:4px">🍶<br>87%</div>
+            <div class="snapshot-thumb" style="background:linear-gradient(135deg,#1a0a2a,#1a1030);color:#a78bfa;font-size:8px;text-align:center;padding:4px">🛍<br>72%</div>
+            <div class="snapshot-thumb" style="background:linear-gradient(135deg,#2a1a0a,#1f1408);color:#fb923c;font-size:8px;text-align:center;padding:4px">🥫<br>91%</div>
+            <div class="snapshot-add">+</div>
+          </div>
+        </div>
+
+        <!-- Map PIP -->
+        <div class="glass" style="padding:12px">
+          <div class="flex items-center justify-between mb-2">
+            <span class="eyebrow">Map View</span>
+            <a href="mission.html" class="btn btn-ghost btn-sm" style="font-size:10px">Full ↗</a>
+          </div>
+          <div class="map-placeholder" style="height:130px;border-radius:10px">
+            <!-- Drone dot -->
+            <div style="position:absolute;top:48%;left:52%;transform:translate(-50%,-50%);z-index:5">
+              <div class="radar-dot" style="width:12px;height:12px;border-radius:50%;background:var(--accent);box-shadow:0 0 10px var(--accent)"></div>
+            </div>
+            <!-- Flight path -->
+            <svg style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none" viewBox="0 0 300 130">
+              <path d="M60,90 Q120,40 150,62 Q180,84 230,50" stroke="#3B9EFF" stroke-width="1.5" fill="none" stroke-dasharray="4 6" opacity="0.6"/>
+            </svg>
+            <div class="map-label">SATELLITE · LIVE TRACK</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+</body>
+</html>

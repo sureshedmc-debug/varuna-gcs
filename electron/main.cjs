@@ -95,15 +95,28 @@ function applyCsp(ses) {
   // 'wasm-unsafe-eval' is required: ONNX Runtime compiles the .wasm detector.
   // blob: covers its worker and the recorded mission video. No 'unsafe-eval',
   // so plain JS eval stays blocked.
+  //
+  // In --local / --dev mode the page comes from the Vite dev server on
+  // localhost:5173. Vite injects its HMR client via a <script> tag whose src
+  // is a localhost URL, so we must also allow that origin in connect-src (for
+  // the HMR WebSocket) and img-src / media-src (Vite's error overlay).
+  // In production (dist/) these extras are absent, so they don't broaden the
+  // attack surface for deployed builds.
+  const devOrigin = DEV_URL ? new URL(DEV_URL).origin : null   // e.g. http://localhost:5173
+  const devConnectExtra = devOrigin
+    ? `${devOrigin} ${devOrigin.replace('http://', 'ws://')}` // http + ws for HMR
+    : ''
+
   const csp = [
     "default-src 'self'",
-    "script-src 'self' 'wasm-unsafe-eval' blob:",
+    // Vite's HMR client is injected as an inline <script> in dev; allow that.
+    `script-src 'self' 'wasm-unsafe-eval' blob:${devOrigin ? " 'unsafe-inline'" : ''}`,
     "worker-src 'self' blob:",
     "style-src 'self' 'unsafe-inline'", // Tailwind + Framer Motion inject styles
     "font-src 'self' data:",
-    "img-src 'self' data: blob: https://server.arcgisonline.com",
-    "media-src 'self' blob: data:",
-    `connect-src 'self' ${CONNECT_HOSTS.join(' ')}`,
+    `img-src 'self' data: blob: https://server.arcgisonline.com${devOrigin ? ` ${devOrigin}` : ''}`,
+    `media-src 'self' blob: data:${devOrigin ? ` ${devOrigin}` : ''}`,
+    `connect-src 'self' ${CONNECT_HOSTS.join(' ')}${devConnectExtra ? ` ${devConnectExtra}` : ''}`,
     "form-action 'none'",
     "frame-ancestors 'none'",
     "object-src 'none'",
@@ -126,7 +139,11 @@ function applyCsp(ses) {
 
 function isOwnUrl(u) {
   try {
-    return new URL(u).origin === appOrigin
+    const origin = new URL(u).origin
+    // In --local / --dev mode appOrigin is the Vite dev server origin
+    // (e.g. http://localhost:5173). In production it is the loopback server
+    // origin (e.g. http://127.0.0.1:47621). Both are considered "own".
+    return origin === appOrigin
   } catch {
     return false
   }

@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>VARUNA GCS — Detections</title>
+<link rel="stylesheet" href="base.css"/>
+<style>
+.screen { display:grid; grid-template-columns:1fr 340px; gap:12px; padding:12px; height:calc(100vh - 48px); overflow:hidden; }
+.left-col  { display:flex; flex-direction:column; gap:10px; overflow:hidden; min-height:0; }
+.right-col { display:flex; flex-direction:column; gap:10px; overflow-y:auto; }
+
+/* Stats row */
+.stats-row { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; }
+.stat-block-v2 { background:var(--chip); border-radius:10px; padding:10px 12px; display:flex; flex-direction:column; gap:2px; }
+.stat-block-v2 .sv { font-family:var(--font-mono); font-size:22px; font-weight:700; line-height:1; }
+.stat-block-v2 .sl { font-size:10px; text-transform:uppercase; letter-spacing:0.09em; color:var(--muted); margin-top:2px; }
+
+/* Map */
+.map-wrap { border-radius:12px; overflow:hidden; position:relative; flex-shrink:0; height:200px; }
+
+/* Detection list */
+.det-list { flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:6px; min-height:0; padding-right:2px; }
+
+/* Detection card v2 */
+.det-card-v2 { background:var(--panel); border-radius:10px; border:1px solid var(--line); overflow:hidden; cursor:pointer; transition:border-color 0.15s,box-shadow 0.15s; }
+.det-card-v2:hover { border-color:rgba(59,158,255,0.3); box-shadow:0 0 0 1px rgba(59,158,255,0.08), 0 4px 16px rgba(0,0,0,0.3); }
+.det-card-v2 .card-row { display:flex; align-items:center; gap:0; }
+.det-card-v2 .left-accent { width:3px; align-self:stretch; flex-shrink:0; }
+.det-card-v2 .thumb { width:48px; height:48px; flex-shrink:0; margin:8px; border-radius:8px; object-fit:cover; display:flex; align-items:center; justify-content:center; font-size:20px; }
+.det-card-v2 .info { flex:1; padding:8px 8px 8px 0; min-width:0; }
+.det-card-v2 .info .class-name { font-size:13px; font-weight:700; color:var(--ink); display:flex; align-items:center; gap:6px; }
+.det-card-v2 .info .coords { font-family:var(--font-mono); font-size:10px; color:var(--muted); margin-top:2px; }
+.det-card-v2 .info .conf-row { display:flex; align-items:center; gap:6px; margin-top:4px; }
+.det-card-v2 .info .conf-bar-wrap { flex:1; height:3px; background:var(--chip2); border-radius:2px; overflow:hidden; }
+.det-card-v2 .info .conf-bar-inner { height:100%; border-radius:2px; }
+.det-card-v2 .info .conf-pct { font-family:var(--font-mono); font-size:10px; color:var(--muted); }
+.det-card-v2 .right-meta { display:flex; flex-direction:column; align-items:flex-end; gap:4px; padding:8px; flex-shrink:0; }
+.det-card-v2 .time { font-size:10px; color:var(--faint); font-family:var(--font-mono); }
+.det-card-v2.expanded .expand-body { display:flex; }
+.expand-body { display:none; border-top:1px solid var(--line); padding:10px 12px; gap:10px; }
+.expand-photo { width:80px; height:64px; border-radius:8px; flex-shrink:0; background:var(--chip); display:flex; align-items:center; justify-content:center; font-size:24px; object-fit:cover; }
+.detail-grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; flex:1; }
+.detail-item { display:flex; flex-direction:column; gap:1px; }
+.detail-item .dk { font-size:9px; text-transform:uppercase; letter-spacing:0.09em; color:var(--faint); }
+.detail-item .dv { font-family:var(--font-mono); font-size:11px; font-weight:600; color:var(--ink); }
+
+/* Filter bar */
+.filter-bar { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+.filter-chip { background:var(--chip); border:1px solid var(--line); border-radius:20px; padding:4px 12px; font-size:11px; font-weight:600; color:var(--muted); cursor:pointer; transition:all 0.15s; }
+.filter-chip.on { background:rgba(59,158,255,0.15); border-color:var(--accent); color:var(--accent); }
+.search-inp { flex:1; min-width:120px; background:var(--chip); border:1px solid var(--line); border-radius:20px; padding:5px 14px; font-size:12px; color:var(--ink); outline:none; }
+.search-inp::placeholder { color:var(--faint); }
+
+/* Donut chart */
+.donut-wrap { display:flex; align-items:center; gap:14px; }
+.legend-item { display:flex; align-items:center; gap:6px; font-size:11px; margin-bottom:4px; }
+.legend-dot { width:10px; height:10px; border-radius:2px; flex-shrink:0; }
+
+/* Right col: report card */
+.report-card { background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:16px; }
+.provider-row { display:flex; gap:6px; margin-bottom:10px; }
+.provider-btn { flex:1; background:var(--chip); border:1px solid var(--line); border-radius:8px; padding:7px 8px; font-size:11px; font-weight:600; color:var(--muted); text-align:center; cursor:pointer; transition:all 0.15s; }
+.provider-btn.on { background:rgba(59,158,255,0.15); border-color:var(--accent); color:var(--accent); }
+
+/* Impact strip */
+.impact-strip { display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; }
+.impact-item { background:var(--chip); border-radius:8px; padding:10px 8px; text-align:center; }
+.impact-item .iv { font-family:var(--font-mono); font-size:16px; font-weight:700; color:var(--cyan); }
+.impact-item .il { font-size:9px; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); margin-top:2px; }
+
+/* Video section */
+.video-ready { background:var(--chip); border-radius:8px; padding:10px 12px; display:flex; align-items:center; gap:8px; }
+.vr-dot { width:8px; height:8px; border-radius:50%; background:var(--ok); box-shadow:0 0 6px var(--ok); flex-shrink:0; }
+</style>
+</head>
+<body>
+<div class="app-shell">
+  <header class="topbar">
+    <div class="topbar-brand"><span class="name">VARUNA</span><span class="ai">AI</span><span class="tag">GROUND CONTROL</span></div>
+    <div class="topbar-stats">
+      <div class="topbar-stat"><span class="label">DETECTIONS</span><span class="value" style="color:var(--accent)">24</span></div>
+      <div class="topbar-stat"><span class="label">LOCATED</span><span class="value" style="color:var(--ok)">18</span></div>
+      <div class="topbar-stat"><span class="label">SESSION</span><span class="value">42 min</span></div>
+    </div>
+    <div class="topbar-right">
+      <div class="link-pill"><span class="orb orb-ok" style="width:8px;height:8px"></span><span class="label" style="font-size:11px;font-weight:700;color:var(--ok)">LINK LIVE</span></div>
+      <button class="btn-icon"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M6 10V8a6 6 0 1112 0v2h1a1 1 0 011 1v9H5v-9a1 1 0 011-1h1zm2 0h8V8a4 4 0 10-8 0v2zm4 4a1.5 1.5 0 00-1 2.6V19h2v-2.4A1.5 1.5 0 0012 14z"/></svg></button>
+    </div>
+  </header>
+  <nav class="rail">
+    <div class="rail-logo"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 2l3 6 6 .8-4.5 4.2L18 20l-6-3.4L6 20l1.5-7L3 8.8 9 8l3-6z"/></svg></div>
+    <a href="index.html" class="rail-item"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 10l8-6 8 6v9a1 1 0 01-1 1h-5v-6h-4v6H5a1 1 0 01-1-1v-9z"/></svg>Home</a>
+    <a href="live.html" class="rail-item"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 6h16v12H4zM9.5 9.5l5 2.5-5 2.5v-5z"/></svg>Live</a>
+    <a href="mission.html" class="rail-item"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l7 4v12l-7 4-7-4V6l7-4zm0 4l-3 2 3 2 3-2-3-2z"/></svg>Missions</a>
+    <a href="detections.html" class="rail-item active"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 5h16v3H4zM4 10h16v3H4zM4 15h10v3H4z"/></svg>Detect</a>
+    <a href="replay.html" class="rail-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 12a8 8 0 108-8 8 8 0 00-5.66 2.34"/><path d="M4 4v4.5H8.5"/><path d="M10 9l6 3-6 3V9z" fill="currentColor" stroke="none"/></svg>Replay</a>
+    <a href="system.html" class="rail-item"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 8a4 4 0 100 8 4 4 0 000-8zm9 4l1.6-1.2-1-2.4-1.9.5a7 7 0 00-1.1-1.1l.5-1.9-2.4-1-1.2 1.6a7 7 0 00-1.5 0L12 3l-2.4 1 .5 1.9a7 7 0 00-1.1 1.1L7 6.4l-2.4 1L5 9.8a7 7 0 000 1.5L3.4 12.5l1 2.4 1.9-.5a7 7 0 001.1 1.1L7 17.6l2.4 1 1.2-1.6a7 7 0 001.5 0l1.2 1.6 2.4-1-.5-1.9a7 7 0 001.1-1.1l1.9.5 1-2.4L21 12z"/></svg>System</a>
+    <button class="rail-lock"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 10V8a6 6 0 1112 0v2h1a1 1 0 011 1v9H5v-9a1 1 0 011-1h1zm2 0h8V8a4 4 0 10-8 0v2zm4 4a1.5 1.5 0 00-1 2.6V19h2v-2.4A1.5 1.5 0 0012 14z"/></svg>Lock</button>
+  </nav>
+  <main style="grid-row:2;grid-column:2;overflow:hidden;">
+    <div class="screen">
+      <!-- Left: log -->
+      <div class="left-col">
+        <!-- Stats -->
+        <div class="stats-row">
+          <div class="stat-block-v2"><div class="sv" style="color:var(--accent)">24</div><div class="sl">Total</div></div>
+          <div class="stat-block-v2"><div class="sv" style="color:var(--ok)">18</div><div class="sl">Located</div></div>
+          <div class="stat-block-v2"><div class="sv" style="color:var(--warn)">6</div><div class="sl">Unlocated</div></div>
+          <div class="stat-block-v2"><div class="sv" style="color:var(--cyan)">~2.3 kg</div><div class="sl">Est. weight</div></div>
+        </div>
+
+        <!-- Map -->
+        <div class="map-wrap">
+          <div class="map-placeholder" style="height:200px;">
+            <!-- Radar markers -->
+            <div style="position:absolute;top:38%;left:40%;z-index:3">
+              <div style="position:relative;width:18px;height:18px">
+                <div style="position:absolute;inset:0;border-radius:50%;background:#3b82f6;box-shadow:0 0 8px #3b82f6;"></div>
+                <div style="position:absolute;inset:0;border-radius:50%;background:#3b82f6;opacity:0.5;animation:radar 2s ease-out infinite;"></div>
+              </div>
+            </div>
+            <div style="position:absolute;top:55%;left:60%;z-index:3">
+              <div style="position:relative;width:14px;height:14px">
+                <div style="position:absolute;inset:0;border-radius:50%;background:#a78bfa;box-shadow:0 0 6px #a78bfa;"></div>
+              </div>
+            </div>
+            <div style="position:absolute;top:45%;left:70%;z-index:3">
+              <div style="position:relative;width:22px;height:22px">
+                <div style="position:absolute;inset:0;border-radius:50%;background:#fb923c;box-shadow:0 0 10px #fb923c;"></div>
+                <div style="position:absolute;inset:0;border-radius:50%;background:#fb923c;opacity:0.4;animation:radar 2s ease-out infinite 0.5s;"></div>
+              </div>
+            </div>
+            <div style="position:absolute;top:30%;left:55%;z-index:3">
+              <div style="position:relative;width:14px;height:14px">
+                <div style="position:absolute;inset:0;border-radius:50%;background:#00ffd4;box-shadow:0 0 6px #00ffd4;"></div>
+              </div>
+            </div>
+            <!-- Heat blob -->
+            <div style="position:absolute;top:30%;left:55%;width:120px;height:80px;border-radius:50%;background:radial-gradient(ellipse,rgba(255,150,0,0.18) 0%,transparent 70%);transform:translate(-50%,-50%);z-index:2;pointer-events:none;"></div>
+            <div class="map-label">SATELLITE · 24 DETECTIONS</div>
+          </div>
+          <!-- Toolbar over map -->
+          <div style="position:absolute;top:8px;right:8px;z-index:5;display:flex;gap:6px;">
+            <button class="btn btn-secondary btn-sm" style="font-size:10px;padding:4px 10px">🌡 Heatmap</button>
+            <button class="btn btn-secondary btn-sm" style="font-size:10px;padding:4px 10px">🗺 Route ↗</button>
+            <button class="btn btn-secondary btn-sm" style="font-size:10px;padding:4px 10px">✈ Plan Mission</button>
+          </div>
+        </div>
+
+        <!-- Type chart row -->
+        <div style="background:var(--chip);border-radius:10px;padding:10px 14px;display:flex;align-items:center;gap:16px;flex-shrink:0;">
+          <div class="eyebrow" style="width:80px;flex-shrink:0">Breakdown</div>
+          <div class="donut-wrap">
+            <svg width="72" height="72" viewBox="0 0 72 72">
+              <!-- Donut arcs -->
+              <circle cx="36" cy="36" r="28" fill="none" stroke="#3b82f6" stroke-width="12" stroke-dasharray="70 106" stroke-dashoffset="-0" transform="rotate(-90 36 36)"/>
+              <circle cx="36" cy="36" r="28" fill="none" stroke="#a78bfa" stroke-width="12" stroke-dasharray="42 134" stroke-dashoffset="-70" transform="rotate(-90 36 36)"/>
+              <circle cx="36" cy="36" r="28" fill="none" stroke="#fb923c" stroke-width="12" stroke-dasharray="30 146" stroke-dashoffset="-112" transform="rotate(-90 36 36)"/>
+              <circle cx="36" cy="36" r="28" fill="none" stroke="#00ffd4" stroke-width="12" stroke-dasharray="34 142" stroke-dashoffset="-142" transform="rotate(-90 36 36)"/>
+              <circle cx="36" cy="36" r="20" fill="var(--panel)"/>
+              <text x="36" y="36" text-anchor="middle" dominant-baseline="middle" style="fill:var(--ink);font:700 13px Inter">24</text>
+            </svg>
+            <div>
+              <div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div><span>Plastic Bottle</span><span class="mono text-xs text-muted" style="margin-left:6px">10 · 42%</span></div>
+              <div class="legend-item"><div class="legend-dot" style="background:#a78bfa"></div><span>Plastic Bag</span><span class="mono text-xs text-muted" style="margin-left:6px">6 · 25%</span></div>
+              <div class="legend-item"><div class="legend-dot" style="background:#fb923c"></div><span>Can</span><span class="mono text-xs text-muted" style="margin-left:6px">4 · 17%</span></div>
+              <div class="legend-item"><div class="legend-dot" style="background:#00ffd4"></div><span>River Trash</span><span class="mono text-xs text-muted" style="margin-left:6px">4 · 17%</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Filter bar -->
+        <div class="filter-bar" style="flex-shrink:0">
+          <input class="search-inp" placeholder="🔍  Search class…"/>
+          <div class="filter-chip on">All</div>
+          <div class="filter-chip">PI AI</div>
+          <div class="filter-chip">Webcam</div>
+          <div class="filter-chip">Located</div>
+          <select class="inp" style="width:130px;border-radius:20px;font-size:11px;padding:5px 12px">
+            <option>Newest first</option>
+            <option>Oldest first</option>
+            <option>Highest conf.</option>
+          </select>
+        </div>
+
+        <!-- Detection list -->
+        <div class="det-list">
+          <!-- Card 1 expanded -->
+          <div class="det-card-v2 expanded">
+            <div class="card-row">
+              <div class="left-accent" style="background:#3b82f6"></div>
+              <div class="thumb" style="background:rgba(59,130,246,0.12)">🍶</div>
+              <div class="info">
+                <div class="class-name">
+                  Plastic Bottle
+                  <span class="badge badge-accent" style="font-size:9px">×3</span>
+                  <span class="badge" style="background:rgba(59,158,255,0.12);color:#3B9EFF;font-size:9px">DRONE FEED</span>
+                </div>
+                <div class="coords">17.3850°N, 78.4867°E · 12.3 m</div>
+                <div class="conf-row">
+                  <div class="conf-bar-wrap"><div class="conf-bar-inner" style="width:87%;background:#3b82f6"></div></div>
+                  <span class="conf-pct">87%</span>
+                  <span style="font-size:10px;color:var(--ok);margin-left:2px">2 min ago</span>
+                </div>
+              </div>
+              <div class="right-meta">
+                <span class="orb orb-ok" style="width:8px;height:8px"></span>
+                <a href="#" style="font-size:10px;color:var(--accent);font-weight:600">Map ↗</a>
+                <span class="time">14:32:07</span>
+              </div>
+            </div>
+            <div class="expand-body">
+              <div class="expand-photo">🍶</div>
+              <div class="detail-grid">
+                <div class="detail-item"><span class="dk">Latitude</span><span class="dv">17.3850°</span></div>
+                <div class="detail-item"><span class="dk">Longitude</span><span class="dv">78.4867°</span></div>
+                <div class="detail-item"><span class="dk">Altitude</span><span class="dv">12.3 m</span></div>
+                <div class="detail-item"><span class="dk">Items</span><span class="dv">3</span></div>
+                <div class="detail-item"><span class="dk">Confidence</span><span class="dv" style="color:var(--ok)">87%</span></div>
+                <div class="detail-item"><span class="dk">Source</span><span class="dv">Drone GPS</span></div>
+                <div class="detail-item"><span class="dk">Est. Size</span><span class="dv">0.24×0.18 m</span></div>
+                <div class="detail-item"><span class="dk">Est. Weight</span><span class="dv">~90 g</span></div>
+                <div class="detail-item"><span class="dk">Last Seen</span><span class="dv">14:35:22</span></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card 2 -->
+          <div class="det-card-v2">
+            <div class="card-row">
+              <div class="left-accent" style="background:#a78bfa"></div>
+              <div class="thumb" style="background:rgba(167,139,250,0.12)">🛍</div>
+              <div class="info">
+                <div class="class-name">Plastic Bag <span class="badge" style="background:rgba(191,90,242,0.15);color:#BF5AF2;font-size:9px">WEBCAM</span></div>
+                <div class="coords">17.3912°N, 78.4920°E · 10.1 m</div>
+                <div class="conf-row">
+                  <div class="conf-bar-wrap"><div class="conf-bar-inner" style="width:72%;background:#a78bfa"></div></div>
+                  <span class="conf-pct">72%</span>
+                  <span style="font-size:10px;color:var(--muted);margin-left:2px">8 min ago</span>
+                </div>
+              </div>
+              <div class="right-meta">
+                <span class="orb orb-ok" style="width:8px;height:8px"></span>
+                <a href="#" style="font-size:10px;color:var(--accent);font-weight:600">Map ↗</a>
+                <span class="time">14:26:14</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card 3 -->
+          <div class="det-card-v2">
+            <div class="card-row">
+              <div class="left-accent" style="background:#fb923c"></div>
+              <div class="thumb" style="background:rgba(251,146,60,0.12)">🥫</div>
+              <div class="info">
+                <div class="class-name">Can <span class="badge" style="background:rgba(59,158,255,0.12);color:#3B9EFF;font-size:9px">DRONE FEED</span></div>
+                <div class="coords">Unlocated — no GPS fix at capture</div>
+                <div class="conf-row">
+                  <div class="conf-bar-wrap"><div class="conf-bar-inner" style="width:91%;background:#fb923c"></div></div>
+                  <span class="conf-pct">91%</span>
+                  <span style="font-size:10px;color:var(--muted);margin-left:2px">12 min ago</span>
+                </div>
+              </div>
+              <div class="right-meta">
+                <span class="orb orb-warn orb-pulse" style="width:8px;height:8px"></span>
+                <span style="font-size:10px;color:var(--faint)">No GPS</span>
+                <span class="time">14:22:05</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card 4 -->
+          <div class="det-card-v2">
+            <div class="card-row">
+              <div class="left-accent" style="background:#00ffd4"></div>
+              <div class="thumb" style="background:rgba(0,255,212,0.08)">🌊</div>
+              <div class="info">
+                <div class="class-name">River Trash <span class="badge badge-accent" style="font-size:9px">×5</span></div>
+                <div class="coords">17.3978°N, 78.5032°E · 14.0 m</div>
+                <div class="conf-row">
+                  <div class="conf-bar-wrap"><div class="conf-bar-inner" style="width:79%;background:#00ffd4"></div></div>
+                  <span class="conf-pct">79%</span>
+                  <span style="font-size:10px;color:var(--warn);margin-left:2px">18 min ago</span>
+                </div>
+              </div>
+              <div class="right-meta">
+                <span class="orb orb-ok" style="width:8px;height:8px"></span>
+                <a href="#" style="font-size:10px;color:var(--accent);font-weight:600">Map ↗</a>
+                <span class="time">14:16:43</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card 5 -->
+          <div class="det-card-v2">
+            <div class="card-row">
+              <div class="left-accent" style="background:#fbbf24"></div>
+              <div class="thumb" style="background:rgba(251,191,36,0.1)">📄</div>
+              <div class="info">
+                <div class="class-name">Paper <span class="badge" style="background:rgba(191,90,242,0.15);color:#BF5AF2;font-size:9px">WEBCAM</span></div>
+                <div class="coords">17.4010°N, 78.5085°E · 11.8 m</div>
+                <div class="conf-row">
+                  <div class="conf-bar-wrap"><div class="conf-bar-inner" style="width:63%;background:#fbbf24"></div></div>
+                  <span class="conf-pct">63%</span>
+                  <span style="font-size:10px;color:var(--faint);margin-left:2px">24 min ago</span>
+                </div>
+              </div>
+              <div class="right-meta">
+                <span class="orb orb-ok" style="width:8px;height:8px"></span>
+                <a href="#" style="font-size:10px;color:var(--accent);font-weight:600">Map ↗</a>
+                <span class="time">14:10:19</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: report -->
+      <div class="right-col">
+        <!-- Impact -->
+        <div class="panel p-4">
+          <div class="eyebrow mb-3">Impact So Far</div>
+          <div class="impact-strip">
+            <div class="impact-item"><div class="iv">7</div><div class="il">Missions</div></div>
+            <div class="impact-item"><div class="iv">24</div><div class="il">Detections</div></div>
+            <div class="impact-item"><div class="iv">~2.3 kg</div><div class="il">Est. Waste</div></div>
+          </div>
+        </div>
+
+        <!-- Report card -->
+        <div class="report-card">
+          <div class="eyebrow mb-2">AI Environmental Report</div>
+          <p style="font-size:11px;color:var(--muted);line-height:1.6;margin-bottom:12px">Generates a Word document with 3D graphs, full analysis, and every trash location with coordinates and Google Maps links.</p>
+
+          <div class="eyebrow mb-2">AI Provider</div>
+          <div class="provider-row">
+            <div class="provider-btn on">Groq</div>
+            <div class="provider-btn">OpenAI</div>
+            <div class="provider-btn">Gemini</div>
+            <div class="provider-btn">None</div>
+          </div>
+          <input class="inp mb-3" placeholder="API key (stored locally)…" type="password"/>
+
+          <button class="btn btn-primary w-full" style="margin-bottom:8px">📄 Generate Report (Word) · 18 locations</button>
+
+          <!-- Video -->
+          <div class="video-ready">
+            <div class="vr-dot"></div>
+            <div>
+              <div style="font-size:12px;font-weight:600;color:var(--ink)">Mission video ready</div>
+              <div style="font-size:10px;color:var(--muted)">2 clips · 6:42 total · 48.3 MB</div>
+            </div>
+            <div style="margin-left:auto;display:flex;gap:6px">
+              <button class="btn btn-secondary btn-sm" style="font-size:10px">↓ Save</button>
+              <button class="btn btn-ghost btn-sm" style="font-size:10px;color:var(--bad)">Clear</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Alerts -->
+        <div class="panel p-4">
+          <div class="eyebrow mb-3">Alert Channels</div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <div style="display:flex;align-items:center;gap:8px;background:var(--chip);border-radius:8px;padding:10px 12px">
+              <span style="font-size:16px">📱</span>
+              <div style="flex:1">
+                <div style="font-size:12px;font-weight:600">WhatsApp</div>
+                <div style="font-size:10px;color:var(--muted)">Opens prefilled wa.me link</div>
+              </div>
+              <button class="btn btn-secondary btn-sm" style="font-size:10px">Setup</button>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;background:var(--chip);border-radius:8px;padding:10px 12px">
+              <span style="font-size:16px">📧</span>
+              <div style="flex:1">
+                <div style="font-size:12px;font-weight:600">Email (EmailJS)</div>
+                <div style="font-size:10px;color:var(--ok)">Configured · test OK</div>
+              </div>
+              <span class="orb orb-ok" style="width:8px;height:8px"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Clear -->
+        <div style="display:flex;justify-content:flex-end;padding:0 2px">
+          <button class="btn btn-ghost btn-sm" style="color:var(--bad);font-size:11px">Clear recorded locations</button>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+</body>
+</html>

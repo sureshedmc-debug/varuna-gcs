@@ -7,6 +7,7 @@ import { PinGate, getStoredSession } from './components/PinGate'
 import { Rail } from './components/Rail'
 import { TopBar } from './components/TopBar'
 import { registerNavigator } from './lib/planDraftStore'
+import { ErrorBoundary } from './components/ErrorBoundary'
 
 import { wakeWordEnabled } from './lib/assistant/wakeWord'
 
@@ -62,7 +63,7 @@ function Shell({ onLock }) {
       <TopBar onLock={onLock} onAssistant={() => setWakeSignal((n) => n + 1)} wakeState={wakeWordOn ? wakeState : 'off'} onToggleWake={toggleWakeWord} />
       <Rail active={tab} onChange={setTab} onLock={onLock} />
       <SystemWarnings />
-      <main className={`relative z-10 pt-[56px] ${fullBleed ? 'px-2 pb-2 md:pl-[80px] md:pr-2' : 'px-2.5 pb-24 md:pb-4 md:pl-[86px] md:pr-4'}`}>
+      <main className={`relative z-10 pt-[56px] ${fullBleed ? 'px-2 pb-2 md:pl-[200px] md:pr-2' : 'px-2.5 pb-24 md:pb-4 md:pl-[200px] md:pr-4'}`}>
         <AnimatePresence mode="wait">
           <motion.div
             key={tab}
@@ -71,16 +72,18 @@ function Shell({ onLock }) {
             exit={{ opacity: 0, y: -5 }}
             transition={{ type: 'tween', ease: 'easeOut', duration: 0.2 }}
           >
-            <Suspense fallback={
-              <div className="flex h-[60vh] items-center justify-center">
-                <div className="text-center">
-                  <div className="mb-3 inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-current border-r-transparent align-[-0.125em] motion-reduce:animate-[spin_1.5s_linear_infinite]" style={{ color: 'var(--accent-hex)' }} />
-                  <p className="text-sm text-muted">Loading AI modules...</p>
+            <ErrorBoundary key={tab}>
+              <Suspense fallback={
+                <div className="flex h-[60vh] items-center justify-center">
+                  <div className="text-center">
+                    <div className="mb-3 inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-current border-r-transparent align-[-0.125em] motion-reduce:animate-[spin_1.5s_linear_infinite]" style={{ color: 'var(--accent-hex)' }} />
+                    <p className="text-sm text-muted">Loading...</p>
+                  </div>
                 </div>
-              </div>
-            }>
-              <Screen onNavigate={setTab} />
-            </Suspense>
+              }>
+                <Screen onNavigate={setTab} />
+              </Suspense>
+            </ErrorBoundary>
           </motion.div>
         </AnimatePresence>
       </main>
@@ -93,7 +96,7 @@ function Shell({ onLock }) {
 
 function entered() {
   try {
-    return sessionStorage.getItem('varuna.entered') === '1'
+    return localStorage.getItem('varuna.entered') === '1'
   } catch {
     return false
   }
@@ -109,7 +112,7 @@ export default function App() {
       <IntroScreen
         onActivate={() => {
           try {
-            sessionStorage.setItem('varuna.entered', '1')
+            localStorage.setItem('varuna.entered', '1')
           } catch {
             /* private mode */
           }
@@ -123,7 +126,7 @@ export default function App() {
 
   function lock() {
     try {
-      sessionStorage.removeItem('varuna.entered')
+      localStorage.removeItem('varuna.entered')
     } catch {
       /* private mode */
     }

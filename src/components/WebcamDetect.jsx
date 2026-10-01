@@ -18,9 +18,46 @@ import { sendBigDumpEmail } from '../lib/alerts/email'
 // still contain a big dump. Prevents spamming the email channel.
 const ALERT_COOLDOWN_MS = 60000
 
-const ACCENT = '#3b41ff'
+const ACCENT = '#3b82f6'        // generic / fallback
 const HUMAN_COLOR = '#FFD60A'
 const RIVER_COLOR = '#00ffd4'
+
+// Per-class accent colours — extend freely
+const CLASS_COLOR = {
+  'plastic bottle': '#3b82f6',   // blue
+  'plastic bag':    '#a78bfa',   // violet
+  'styrofoam':      '#f472b6',   // pink
+  'can':            '#fb923c',   // orange
+  'glass':          '#34d399',   // emerald
+  'paper':          '#fbbf24',   // amber
+  'tire':           '#f87171',   // red
+  'cloth':          '#60a5fa',   // sky blue
+  'river trash':    '#00ffd4',   // cyan
+  'trash':          '#3b82f6',   // blue (generic)
+  'human':          '#FFD60A',   // yellow
+}
+function classColor(label) {
+  if (!label) return ACCENT
+  return CLASS_COLOR[label.toLowerCase()] || ACCENT
+}
+
+// Emoji icon shown inside the label pill for quick glance
+const CLASS_ICON = {
+  'plastic bottle': '🍶',
+  'plastic bag':    '🛍',
+  'styrofoam':      '☕',
+  'can':            '🥫',
+  'glass':          '🍾',
+  'paper':          '📄',
+  'tire':           '🛞',
+  'cloth':          '🧻',
+  'river trash':    '🌊',
+  'trash':          '🗑',
+  'human':          '🧍',
+}
+function classIcon(label) {
+  return CLASS_ICON[label?.toLowerCase()] || '📦'
+}
 const TILE_TTL = 1500
 const TILE_OVERLAP = 0.35
 const TILE_CONF_FACTOR = 0.6
@@ -191,25 +228,138 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
   function srcSize(el) { return [el.videoWidth||el.naturalWidth||0, el.videoHeight||el.naturalHeight||0] }
 
   function drawBoxes(ctx, cw, ch, vw, vh, ox, oy, dw, dh) {
-    ctx.font = `700 ${Math.max(13, cw/44)}px Inter, sans-serif`
-    ctx.textBaseline = 'top'
+    const fontSize = Math.max(12, Math.round(cw / 52))
+    ctx.textBaseline = 'middle'
+
     for (const b of boxesRef.current) {
-      const col=b.color||ACCENT, isHuman=b.label==='Human', isRiverTrash=b.label==='River trash'
-      const x=ox+(b.x1/vw)*dw, y=oy+(b.y1/vh)*dh, w=((b.x2-b.x1)/vw)*dw, h=((b.y2-b.y1)/vh)*dh
-      ctx.strokeStyle=isRiverTrash?RIVER_COLOR:col
-      ctx.setLineDash(isHuman?[6,4]:[])
-      // Glow = a wide faint stroke under the box (canvas shadowBlur is very slow at 60 fps)
-      ctx.globalAlpha=0.28; ctx.lineWidth=isRiverTrash?9:7; ctx.strokeRect(x,y,w,h); ctx.globalAlpha=1
-      ctx.lineWidth=isRiverTrash?3:2
-      ctx.strokeRect(x,y,w,h); ctx.setLineDash([])
-      const labelText=isHuman?'Human':`${b.label} ${Math.round(b.score*100)}%`
-      const tw=ctx.measureText(labelText).width+14, thh=Math.max(20,cw/32)
-      const lx=x, ly=Math.max(0,y-thh)
-      ctx.fillStyle=isRiverTrash?'rgba(0,255,212,0.85)':isHuman?'rgba(30,28,0,0.82)':'rgba(4,18,31,0.72)'
-      ctx.beginPath(); ctx.roundRect(lx,ly,tw,thh,5); ctx.fill()
-      ctx.strokeStyle=isRiverTrash?RIVER_COLOR:col; ctx.lineWidth=isRiverTrash?2:1; ctx.stroke()
-      ctx.fillStyle=isRiverTrash?'#000':(isHuman?HUMAN_COLOR:'#fff')
-      ctx.fillText(labelText,lx+7,ly+3)
+      const isHuman = b.label === 'Human'
+      const col = classColor(b.label)
+      const conf = Number(b.score) || 0
+
+      // Box coordinates in canvas space
+      const x = ox + (b.x1 / vw) * dw
+      const y = oy + (b.y1 / vh) * dh
+      const w = ((b.x2 - b.x1) / vw) * dw
+      const h = ((b.y2 - b.y1) / vh) * dh
+
+      // ── 1. Soft filled tint inside the box ──────────────────────────
+      ctx.save()
+      ctx.globalAlpha = 0.08
+      ctx.fillStyle = col
+      ctx.beginPath()
+      ctx.roundRect(x, y, w, h, 6)
+      ctx.fill()
+      ctx.restore()
+
+      // ── 2. Double-stroke glow (wide faint + thin sharp) ─────────────
+      // Outer glow
+      ctx.save()
+      ctx.globalAlpha = 0.22
+      ctx.strokeStyle = col
+      ctx.lineWidth = 8
+      ctx.setLineDash(isHuman ? [8, 5] : [])
+      ctx.beginPath()
+      ctx.roundRect(x, y, w, h, 6)
+      ctx.stroke()
+      ctx.restore()
+
+      // Inner crisp stroke
+      ctx.save()
+      ctx.globalAlpha = 1
+      ctx.strokeStyle = col
+      ctx.lineWidth = isHuman ? 1.5 : 2
+      ctx.setLineDash(isHuman ? [8, 5] : [])
+      ctx.beginPath()
+      ctx.roundRect(x, y, w, h, 6)
+      ctx.stroke()
+      ctx.restore()
+
+      // ── 3. Corner accent brackets ────────────────────────────────────
+      const arm = Math.min(w, h) * 0.18   // length of each bracket arm
+      const r   = 4                        // corner radius of bracket
+      ctx.save()
+      ctx.strokeStyle = col
+      ctx.lineWidth   = 3
+      ctx.lineCap     = 'round'
+      ctx.setLineDash([])
+      ctx.globalAlpha = 1
+      // top-left
+      ctx.beginPath(); ctx.moveTo(x + arm, y); ctx.lineTo(x + r, y); ctx.arcTo(x, y, x, y + r, r); ctx.lineTo(x, y + arm); ctx.stroke()
+      // top-right
+      ctx.beginPath(); ctx.moveTo(x + w - arm, y); ctx.lineTo(x + w - r, y); ctx.arcTo(x + w, y, x + w, y + r, r); ctx.lineTo(x + w, y + arm); ctx.stroke()
+      // bottom-left
+      ctx.beginPath(); ctx.moveTo(x, y + h - arm); ctx.lineTo(x, y + h - r); ctx.arcTo(x, y + h, x + r, y + h, r); ctx.lineTo(x + arm, y + h); ctx.stroke()
+      // bottom-right
+      ctx.beginPath(); ctx.moveTo(x + w - arm, y + h); ctx.lineTo(x + w - r, y + h); ctx.arcTo(x + w, y + h, x + w, y + h - r, r); ctx.lineTo(x + w, y + h - arm); ctx.stroke()
+      ctx.restore()
+
+      // ── 4. Label pill ────────────────────────────────────────────────
+      ctx.font = `600 ${fontSize}px Inter, system-ui, sans-serif`
+      const icon     = classIcon(b.label)
+      const confTxt  = isHuman ? '' : ` ${Math.round(conf * 100)}%`
+      const pillText = `${icon}  ${b.label}${confTxt}`
+
+      const textW  = ctx.measureText(pillText).width
+      const pillH  = fontSize + 10
+      const pillW  = textW + 22
+      const pillR  = pillH / 2        // fully rounded ends
+      const pillX  = x
+      const pillY  = y - pillH - 5    // float just above the box
+      const clampY = Math.max(2, pillY) // never go off the top edge
+
+      // pill background — frosted glass effect (dark fill + colored border)
+      ctx.save()
+      ctx.globalAlpha = 0.88
+      ctx.fillStyle = 'rgba(8, 14, 26, 0.82)'
+      ctx.beginPath()
+      ctx.roundRect(pillX, clampY, pillW, pillH, pillR)
+      ctx.fill()
+      ctx.restore()
+
+      // pill border in class colour
+      ctx.save()
+      ctx.strokeStyle = col
+      ctx.lineWidth   = 1.5
+      ctx.globalAlpha = 0.9
+      ctx.beginPath()
+      ctx.roundRect(pillX, clampY, pillW, pillH, pillR)
+      ctx.stroke()
+      ctx.restore()
+
+      // pill text
+      ctx.save()
+      ctx.fillStyle   = '#ffffff'
+      ctx.globalAlpha = 1
+      ctx.font        = `600 ${fontSize}px Inter, system-ui, sans-serif`
+      ctx.textBaseline = 'middle'
+      ctx.fillText(pillText, pillX + 11, clampY + pillH / 2)
+      ctx.restore()
+
+      // ── 5. Confidence bar — thin strip at the bottom of the box ─────
+      if (!isHuman && w > 40) {
+        const barH  = 3
+        const barY  = y + h - barH - 2
+        const barX  = x + 2
+        const barW  = w - 4
+
+        // track
+        ctx.save()
+        ctx.globalAlpha = 0.25
+        ctx.fillStyle   = '#ffffff'
+        ctx.beginPath()
+        ctx.roundRect(barX, barY, barW, barH, 2)
+        ctx.fill()
+        ctx.restore()
+
+        // fill
+        ctx.save()
+        ctx.globalAlpha = 0.9
+        ctx.fillStyle   = col
+        ctx.beginPath()
+        ctx.roundRect(barX, barY, barW * conf, barH, 2)
+        ctx.fill()
+        ctx.restore()
+      }
     }
   }
 
@@ -315,7 +465,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
           if(settings.enableEmailOnBigDump){sendBigDumpEmail(alert).catch(()=>{})}
         }
       }
-      const lf=humanDetectionRef.current?faceBoxes.map(b=>({...b,label:'Human',color:HUMAN_COLOR,cls:'human'})):[]
+      const lf=[] // face boxes are used for trash suppression above but never drawn � show body only
       const lp=humanDetectionRef.current?personBoxes.map(b=>({...b,label:'Human',color:HUMAN_COLOR,cls:'human'})):[]
       const topT=finalTrash.sort((a,b)=>b.score-a.score).slice(0,10)
       boxesRef.current=trackerRef.current.update([...lf,...lp,...topT],now)
@@ -425,13 +575,13 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
   function toggleAllModels(){const next=!allModelsOn;setTrashDetection(next);setHumanDetection(next)}
 
   return (
-    <div className="relative h-full w-full overflow-hidden rounded-2xl bg-[#0B1220]">
+    <div className="relative h-full w-full overflow-hidden rounded-2xl bg-gradient-to-br from-slate-50 to-blue-50">
       <video ref={videoRef} playsInline muted className="hidden" />
       <img   ref={streamImgRef} alt="" className="hidden" />
       <canvas ref={canvasRef} className="h-full w-full" />
 
       {/* status pill */}
-      <div className="absolute left-3 top-3 z-20 flex items-center gap-2 rounded-full bg-black/75 px-3 py-1.5"
+      <div className="absolute left-3 top-3 z-20 flex items-center gap-2 rounded-full bg-white/90 backdrop-blur px-3 py-1.5 shadow-lg"
         style={{border:'1px solid rgba(255,255,255,0.08)'}}>
         <StatusOrb level={status==='running'?'ok':status==='error'?'bad':'warn'} size={9} pulse={status!=='running'} />
         <span className="text-[11px] font-semibold text-white/90">

@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>VARUNA GCS — UI Mockups</title>
+<link rel="stylesheet" href="base.css"/>
+<style>
+body { display:flex; align-items:center; justify-content:center; min-height:100vh; padding:24px; }
+.hub { max-width:780px; width:100%; }
+.hub-header { text-align:center; margin-bottom:40px; }
+.hub-logo { display:inline-flex; align-items:center; gap:10px; margin-bottom:12px; }
+.hub-logo .name { font-size:28px; font-weight:800; letter-spacing:0.2em; color:var(--ink); }
+.hub-logo .ai   { font-size:28px; font-weight:800; letter-spacing:0.2em; color:var(--accent); }
+.hub-header h2 { font-size:15px; font-weight:600; color:var(--muted); letter-spacing:0.06em; }
+.hub-header p  { font-size:12px; color:var(--faint); margin-top:6px; }
+
+.tabs-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+.tab-card {
+  background:var(--panel); border:1px solid var(--line); border-radius:16px;
+  padding:22px 24px; text-decoration:none; color:inherit;
+  transition:all 0.2s; display:block; position:relative; overflow:hidden;
+}
+.tab-card:hover { border-color:rgba(59,158,255,0.4); box-shadow:0 0 0 1px rgba(59,158,255,0.12), 0 8px 32px rgba(0,0,0,0.4); transform:translateY(-2px); }
+.tab-card::before {
+  content:''; position:absolute; top:0; left:0; right:0; height:2px;
+  background:linear-gradient(90deg, var(--tab-color,var(--accent)), transparent);
+  opacity:0.6;
+}
+.tab-card:hover::before { opacity:1; }
+.tab-icon { width:44px; height:44px; border-radius:12px; display:flex; align-items:center; justify-content:center; margin-bottom:12px; font-size:22px; }
+.tab-name { font-size:17px; font-weight:700; color:var(--ink); margin-bottom:4px; }
+.tab-desc { font-size:12px; color:var(--muted); line-height:1.5; }
+.tab-features { margin-top:12px; display:flex; flex-wrap:wrap; gap:5px; }
+.feat-tag { background:var(--chip); border-radius:20px; padding:3px 9px; font-size:10px; font-weight:600; color:var(--faint); }
+
+.open-btn { display:inline-flex; align-items:center; gap:5px; margin-top:14px; font-size:12px; font-weight:700; color:var(--accent); letter-spacing:0.04em; }
+.open-btn svg { width:14px; height:14px; }
+
+.info-bar { margin-top:28px; background:var(--chip); border-radius:10px; padding:12px 16px; display:flex; align-items:center; gap:10px; font-size:12px; color:var(--muted); }
+.info-bar svg { width:16px; height:16px; color:var(--accent); flex-shrink:0; }
+
+/* Specific tab colours */
+.tab-live     { --tab-color: #3B9EFF; }
+.tab-mission  { --tab-color: #32D74B; }
+.tab-detect   { --tab-color: #FB923C; }
+.tab-replay   { --tab-color: #BF5AF2; }
+.tab-system   { --tab-color: #00E5CC; }
+</style>
+</head>
+<body>
+<div class="hub">
+  <div class="hub-header">
+    <div class="hub-logo">
+      <svg viewBox="0 0 24 24" width="32" height="32" fill="var(--accent)"><path d="M12 2l3 6 6 .8-4.5 4.2L18 20l-6-3.4L6 20l1.5-7L3 8.8 9 8l3-6z"/></svg>
+      <span class="name">VARUNA</span><span class="ai">AI</span>
+    </div>
+    <h2>GROUND CONTROL — UI REDESIGN MOCKUPS</h2>
+    <p>Click any tab below to preview the redesigned interface. All mockups are static HTML — no server needed.</p>
+  </div>
+
+  <div class="tabs-grid">
+    <!-- Live -->
+    <a href="live.html" class="tab-card tab-live">
+      <div class="tab-icon" style="background:rgba(59,158,255,0.12)">📡</div>
+      <div class="tab-name">Live</div>
+      <div class="tab-desc">Full-screen drone video feed with FPV HUD overlays, real-time telemetry panel, and one-tap flight controls.</div>
+      <div class="tab-features">
+        <span class="feat-tag">Speed/Alt tapes</span>
+        <span class="feat-tag">Heading compass</span>
+        <span class="feat-tag">Horizon line</span>
+        <span class="feat-tag">Reticle</span>
+        <span class="feat-tag">Flight commands</span>
+        <span class="feat-tag">Map PIP</span>
+        <span class="feat-tag">Snapshot strip</span>
+      </div>
+      <div class="open-btn">Open mockup <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg></div>
+    </a>
+
+    <!-- Mission -->
+    <a href="mission.html" class="tab-card tab-mission">
+      <div class="tab-icon" style="background:rgba(50,215,75,0.1)">🛰</div>
+      <div class="tab-name">Missions</div>
+      <div class="tab-desc">Full-screen satellite map planner with floating editor panel, AI draft banner, waypoint list, and Save → Upload → Start pipeline.</div>
+      <div class="tab-features">
+        <span class="feat-tag">Fullscreen map</span>
+        <span class="feat-tag">AI draft</span>
+        <span class="feat-tag">Pipeline steps</span>
+        <span class="feat-tag">Waypoints</span>
+        <span class="feat-tag">Altitude slider</span>
+        <span class="feat-tag">Drone 3D preview</span>
+        <span class="feat-tag">Saved missions</span>
+      </div>
+      <div class="open-btn">Open mockup <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg></div>
+    </a>
+
+    <!-- Detections -->
+    <a href="detections.html" class="tab-card tab-detect">
+      <div class="tab-icon" style="background:rgba(251,146,60,0.1)">🗑️</div>
+      <div class="tab-name">Detections</div>
+      <div class="tab-desc">Full detection log with class-coloured cards, confidence bars, thumbnails, live donut chart, radar map markers, and filter bar.</div>
+      <div class="tab-features">
+        <span class="feat-tag">Per-class colours</span>
+        <span class="feat-tag">Conf. bars</span>
+        <span class="feat-tag">Donut chart</span>
+        <span class="feat-tag">Radar markers</span>
+        <span class="feat-tag">Filter + search</span>
+        <span class="feat-tag">Sort control</span>
+        <span class="feat-tag">Report card</span>
+      </div>
+      <div class="open-btn">Open mockup <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg></div>
+    </a>
+
+    <!-- Replay -->
+    <a href="replay.html" class="tab-card tab-replay">
+      <div class="tab-icon" style="background:rgba(191,90,242,0.1)">⏪</div>
+      <div class="tab-name">Replay</div>
+      <div class="tab-desc">Scrub through a recorded flight on a satellite map, with synced mission video, event timeline, and live "at this moment" telemetry.</div>
+      <div class="tab-features">
+        <span class="feat-tag">Run selector</span>
+        <span class="feat-tag">Event timeline</span>
+        <span class="feat-tag">Speed controls</span>
+        <span class="feat-tag">Synced video</span>
+        <span class="feat-tag">At-this-moment</span>
+        <span class="feat-tag">Trash timeline</span>
+        <span class="feat-tag">Future dimmed</span>
+      </div>
+      <div class="open-btn">Open mockup <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg></div>
+    </a>
+
+    <!-- System (full width) -->
+    <a href="system.html" class="tab-card tab-system" style="grid-column:1/-1">
+      <div style="display:flex;align-items:flex-start;gap:16px">
+        <div class="tab-icon" style="background:rgba(0,229,204,0.1);flex-shrink:0">⚙️</div>
+        <div style="flex:1">
+          <div class="tab-name">System</div>
+          <div class="tab-desc">Full system dashboard — health lights for all hardware, Pi metrics with per-core CPU bars, connection manager, camera/AI status, live tuning sliders, offline map manager, and MAVLink link preference.</div>
+          <div class="tab-features">
+            <span class="feat-tag">Health lights</span>
+            <span class="feat-tag">Pi metrics</span>
+            <span class="feat-tag">Per-core CPU</span>
+            <span class="feat-tag">Connection test</span>
+            <span class="feat-tag">Camera status</span>
+            <span class="feat-tag">AI status</span>
+            <span class="feat-tag">Live tuning</span>
+            <span class="feat-tag">Offline maps</span>
+            <span class="feat-tag">MAVLink pref</span>
+          </div>
+        </div>
+        <div class="open-btn" style="flex-shrink:0">Open mockup <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg></div>
+      </div>
+    </a>
+  </div>
+
+  <div class="info-bar">
+    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 100 20A10 10 0 0012 2zm0 14a1 1 0 110-2 1 1 0 010 2zm1-4h-2V7h2v5z"/></svg>
+    These are static HTML mockups using <code style="font-family:var(--font-mono);color:var(--ink)">base.css</code> only. No build step, no server — open any file directly in a browser. Once approved, the designs will be ported back to the React app.
+  </div>
+</div>
+</body>
+</html>

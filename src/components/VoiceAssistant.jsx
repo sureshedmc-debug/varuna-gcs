@@ -358,7 +358,7 @@ export default function VoiceAssistant({ tab, wakeSignal, wakeWordOn, onWakeStat
           >
             <div
               className="pointer-events-auto flex w-[min(92vw,520px)] items-center gap-3 rounded-[28px] py-2 pl-2 pr-3 shadow-elev"
-              style={{ background: 'rgba(12,14,18,0.82)', border: '1px solid rgba(255,255,255,0.08)', backdropFilter: 'blur(18px)' }}
+              style={{ background: 'rgba(5,16,28,0.93)', border: '1px solid rgba(14,165,164,0.4)', backdropFilter: 'blur(20px)', boxShadow: '0 0 32px rgba(14,165,164,0.12)' }}
             >
               <button type="button" onClick={tapOrb} title="Tap to talk" className="shrink-0 rounded-full focus:outline-none">
                 <VarunaOrb mode={orbMode} levelRef={levelRef} size={mobile ? 64 : 76} />
@@ -394,7 +394,7 @@ export default function VoiceAssistant({ tab, wakeSignal, wakeWordOn, onWakeStat
                         initial={{ opacity: 0, y: 4 }}
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0 }}
-                        className="line-clamp-3 text-[13px] leading-snug text-ink"
+                        className="line-clamp-3 text-[13px] leading-snug" style={{ color: '#86efac' }}
                       >
                         {said || (phase === 'listening' ? 'Go ahead, I’m listening.' : '')}
                       </motion.div>

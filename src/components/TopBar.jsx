@@ -1,6 +1,8 @@
+import { useState } from 'react'
 import { useSystem } from './SystemContext'
 import { StatusOrb } from './ui'
 import { pick, bool, DASH } from '../lib/format'
+import { getTheme, applyTheme, THEMES } from '../lib/theme'
 
 function Stat({ label, value }) {
   return (
@@ -11,18 +13,81 @@ function Stat({ label, value }) {
   )
 }
 
-/** Top mission status bar spanning the app (matches the reference top strip). */
+// ── Theme toggle — 3-way: dark ↔ green ↔ light ────────────────────────────
+const THEME_META = {
+  dark:  { icon: '🌑', label: 'Dark',  title: 'Switch to Pastel Green theme'  },
+  green: { icon: '🌿', label: 'Green', title: 'Switch to Light theme'          },
+  light: { icon: '☀️', label: 'Light', title: 'Switch to Dark theme'           },
+}
+
+function ThemeToggle() {
+  const [theme, setTheme] = useState(getTheme)
+
+  function cycle() {
+    const idx  = THEMES.indexOf(theme)
+    const next = THEMES[(idx + 1) % THEMES.length]
+    applyTheme(next)
+    setTheme(next)
+  }
+
+  const meta = THEME_META[theme] || THEME_META.dark
+
+  return (
+    <button
+      onClick={cycle}
+      title={meta.title}
+      aria-label={`Current theme: ${meta.label}. Click to switch.`}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 5,
+        padding: '4px 10px',
+        borderRadius: 8,
+        border: '1px solid var(--line)',
+        background: 'var(--chip)',
+        cursor: 'pointer',
+        transition: 'background 0.2s, border-color 0.2s',
+        userSelect: 'none',
+      }}
+      onMouseEnter={e => { e.currentTarget.style.background = 'var(--chip2)' }}
+      onMouseLeave={e => { e.currentTarget.style.background = 'var(--chip)'  }}
+    >
+      {/* Track with 3 dots */}
+      <span style={{ display:'flex', alignItems:'center', gap:3 }}>
+        {THEMES.map(t => (
+          <span
+            key={t}
+            style={{
+              width:  t === theme ? 18 : 6,
+              height: 6,
+              borderRadius: 3,
+              background: t === theme ? 'var(--accent-hex)' : 'var(--line)',
+              transition: 'width 0.25s ease, background 0.25s ease',
+              flexShrink: 0,
+            }}
+          />
+        ))}
+      </span>
+      <span style={{ fontSize: 14, lineHeight: 1 }}>{meta.icon}</span>
+      <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--accent-hex)' }}>
+        {meta.label.toUpperCase()}
+      </span>
+    </button>
+  )
+}
+
+/** Top mission status bar spanning the app. */
 export function TopBar({ onLock, onAssistant, wakeState, onToggleWake }) {
   const { telemetry, backendReachable } = useSystem()
   const t = telemetry.data || {}
   const s = telemetry.status
   const level = backendReachable === false ? 'bad' : s === 'live' ? 'ok' : s === 'polling' ? 'warn' : 'bad'
-  const conn = backendReachable === false ? 'OFFLINE' : s === 'live' ? 'LINK LIVE' : s === 'polling' ? 'RECONNECT' : 'CONNECTING'
-  const mode = pick(t, ['flight_mode', 'mode', 'custom_mode']) || DASH
+  const conn  = backendReachable === false ? 'OFFLINE' : s === 'live' ? 'LINK LIVE' : s === 'polling' ? 'RECONNECT' : 'CONNECTING'
+  const mode  = pick(t, ['flight_mode', 'mode', 'custom_mode']) || DASH
   const armed = bool(pick(t, ['armed', 'is_armed']))
 
   return (
-    <header className="fixed inset-x-0 top-0 z-30 flex items-center justify-between border-b border-line bg-[#0B0E12]/80 px-4 py-2 md:pl-[92px]" style={{ paddingTop: 'max(8px, env(safe-area-inset-top))' }}>
+    <header className="fixed inset-x-0 top-0 z-30 flex items-center justify-between border-b border-line bg-white/95 backdrop-blur-sm px-4 py-2 md:pl-[208px]" style={{ paddingTop: 'max(8px, env(safe-area-inset-top))' }}>
       <div className="flex items-center gap-2">
         <span className="text-base font-bold tracking-[0.22em] text-ink">VARUNA</span>
         <span className="text-base font-bold tracking-[0.22em] text-accent">AI</span>
@@ -31,19 +96,26 @@ export function TopBar({ onLock, onAssistant, wakeState, onToggleWake }) {
         </span>
       </div>
 
-      <div className="flex items-center gap-5">
+      <div className="flex items-center gap-4">
         <Stat label="AIRCRAFT" value="VARUNA-01" />
-        <Stat label="MODE" value={mode} />
-        <Stat label="STATE" value={armed === undefined ? DASH : armed ? 'ARMED' : 'DISARMED'} />
+        <Stat label="MODE"     value={mode} />
+        <Stat label="STATE"    value={armed === undefined ? DASH : armed ? 'ARMED' : 'DISARMED'} />
+
+        {/* Link status pill */}
         <div className="flex items-center gap-2 rounded-lg bg-chip px-3 py-1.5">
           <StatusOrb level={level} size={9} pulse={s === 'polling' || s === 'connecting'} />
           <span className="text-[11px] font-semibold tracking-wider text-ink">{conn}</span>
         </div>
+
+        {/* Theme toggle */}
+        <ThemeToggle />
+
+        {/* Hi Varuna button */}
         {onAssistant && (
           <div className="flex items-center overflow-hidden rounded-lg" style={{ background: 'rgba(59,158,255,0.15)' }}>
             <button
               onClick={onAssistant}
-              title="Wake Varuna (or just say “Hi Varuna”)"
+              title={'Wake Varuna (or just say \u201cHi Varuna\u201d)'}
               className="flex h-9 items-center gap-1.5 px-3 text-[11px] font-bold tracking-wider"
               style={{ color: 'var(--accent-hex)' }}
             >
@@ -55,10 +127,10 @@ export function TopBar({ onLock, onAssistant, wakeState, onToggleWake }) {
                 onClick={onToggleWake}
                 title={
                   wakeState === 'listening'
-                    ? 'Listening for “Hi Varuna” — click to turn the wake word off'
+                    ? 'Listening for "Hi Varuna" — click to turn the wake word off'
                     : wakeState === 'blocked'
                       ? 'Microphone blocked — allow mic access for the wake word'
-                      : 'Wake word off — click to listen for “Hi Varuna”'
+                      : 'Wake word off — click to listen for "Hi Varuna"'
                 }
                 className="flex h-9 w-8 items-center justify-center border-l border-white/10"
                 style={{ color: wakeState === 'listening' ? '#32D74B' : wakeState === 'blocked' ? '#FF453A' : 'var(--muted)' }}
@@ -71,6 +143,8 @@ export function TopBar({ onLock, onAssistant, wakeState, onToggleWake }) {
             )}
           </div>
         )}
+
+        {/* Lock */}
         <button
           onClick={onLock}
           title="Lock app"

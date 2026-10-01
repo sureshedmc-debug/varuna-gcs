@@ -4,22 +4,20 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Theme-driven via CSS variables (see index.css). Switchable at runtime
-        // between dark (blue accent) and light (cyan/sky accent).
-        base: 'var(--base)',
-        panel: 'var(--panel)',
-        ink: 'rgb(var(--ink) / <alpha-value>)', // primary text
-        muted: 'var(--muted)', // secondary text
-        faint: 'var(--faint)', // tertiary
-        accent: 'rgb(var(--accent) / <alpha-value>)', // blue (dark) / cyan (light)
+        base:    'var(--base)',
+        panel:   'var(--panel)',
+        ink:     'rgb(var(--ink) / <alpha-value>)',
+        muted:   'var(--muted)',
+        faint:   'var(--faint)',
+        accent:  'rgb(var(--accent) / <alpha-value>)',
         accent2: 'var(--accent2)',
-        mint: '#32D74B', // status colours are fixed across themes
-        ok: '#32D74B',
-        warn: '#FF9F0A',
-        bad: '#FF453A',
-        line: 'var(--line)',
-        chip: 'var(--chip)',
-        chip2: 'var(--chip2)',
+        mint:    '#32D74B',
+        ok:      '#32D74B',
+        warn:    '#FF9F0A',
+        bad:     '#FF453A',
+        line:    'var(--line)',
+        chip:    'var(--chip)',
+        chip2:   'var(--chip2)',
       },
       fontFamily: {
         sans: ['Inter', 'system-ui', 'sans-serif'],
@@ -27,8 +25,9 @@ export default {
       },
       backdropBlur: { xs: '2px' },
       boxShadow: {
-        glow: '0 0 0 1px rgb(var(--accent) / 0.3), 0 12px 44px -10px rgb(var(--accent) / 0.35)',
-        elev: '0 18px 50px -18px rgba(0,0,0,0.5)',
+        /* gold glow shadow — used by TiltCard, CommandPanel etc */
+        glow: '0 0 0 1px rgba(212,160,23,0.35), 0 0 28px rgba(212,160,23,0.20), 0 12px 44px -10px rgba(212,160,23,0.15)',
+        elev: '0 20px 60px -20px rgba(0,0,0,0.9), inset 0 1px 0 rgba(245,200,66,0.22)',
       },
       fontFeatureSettings: { tnum: '"tnum" 1' },
     },

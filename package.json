@@ -12,6 +12,7 @@
     "preview": "vite preview",
     "check:clean": "node scripts/check-clean-build.mjs",
     "electron:dev": "node electron/launch.cjs --dev",
+    "electron:local": "node electron/launch.cjs --local",
     "electron:start": "vite build && node electron/launch.cjs",
     "electron:build": "vite build && electron-builder --win"
   },
