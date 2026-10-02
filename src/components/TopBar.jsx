@@ -69,7 +69,7 @@ function ThemeToggle() {
         ))}
       </span>
       <span style={{ fontSize: 14, lineHeight: 1 }}>{meta.icon}</span>
-      <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--accent-hex)' }}>
+      <span className="hidden xl:inline" style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--accent-hex)' }}>
         {meta.label.toUpperCase()}
       </span>
     </button>
@@ -77,7 +77,7 @@ function ThemeToggle() {
 }
 
 /** Top mission status bar spanning the app. */
-export function TopBar({ onLock, onAssistant, wakeState, onToggleWake }) {
+export function TopBar({ onLock, onMenu, navPinned, onAssistant, wakeState, onToggleWake }) {
   const { telemetry, backendReachable } = useSystem()
   const t = telemetry.data || {}
   const s = telemetry.status
@@ -85,21 +85,37 @@ export function TopBar({ onLock, onAssistant, wakeState, onToggleWake }) {
   const conn  = backendReachable === false ? 'OFFLINE' : s === 'live' ? 'LINK LIVE' : s === 'polling' ? 'RECONNECT' : 'CONNECTING'
   const mode  = pick(t, ['flight_mode', 'mode', 'custom_mode']) || DASH
   const armed = bool(pick(t, ['armed', 'is_armed']))
+  // Flight details only earn header space while there's a live link to report on
+  const showFlight = s === 'live' && backendReachable !== false
 
   return (
-    <header className="fixed inset-x-0 top-0 z-30 flex items-center justify-between border-b border-line bg-white/95 backdrop-blur-sm px-4 py-2 md:pl-[208px]" style={{ paddingTop: 'max(8px, env(safe-area-inset-top))' }}>
+    <header
+      className={`fixed inset-x-0 top-0 z-30 flex items-center justify-between border-b border-line bg-white/95 backdrop-blur-sm px-4 py-2 transition-[padding] duration-500 ease-[cubic-bezier(.16,1,.3,1)] ${navPinned ? 'md:pl-[252px]' : 'md:pl-[36px]'}`}
+      style={{ paddingTop: 'max(8px, env(safe-area-inset-top))' }}
+    >
       <div className="flex items-center gap-2">
+        {onMenu && (
+          <button
+            onClick={onMenu}
+            aria-label="Open navigation"
+            className="mr-1 flex h-9 w-9 items-center justify-center rounded-lg bg-chip text-muted md:hidden"
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+              <path d="M4 7h16M4 12h10M4 17h16" />
+            </svg>
+          </button>
+        )}
         <span className="text-base font-bold tracking-[0.22em] text-ink">VARUNA</span>
         <span className="text-base font-bold tracking-[0.22em] text-accent">AI</span>
-        <span className="ml-2 hidden rounded-md bg-chip px-2 py-0.5 text-[10px] font-semibold tracking-wider text-muted sm:inline">
-          GROUND CONTROL
-        </span>
       </div>
 
-      <div className="flex items-center gap-4">
-        <Stat label="AIRCRAFT" value="VARUNA-01" />
-        <Stat label="MODE"     value={mode} />
-        <Stat label="STATE"    value={armed === undefined ? DASH : armed ? 'ARMED' : 'DISARMED'} />
+      <div className="flex items-center gap-3 md:gap-4">
+        {showFlight && (
+          <>
+            <Stat label="MODE"  value={mode} />
+            <Stat label="STATE" value={armed === undefined ? DASH : armed ? 'ARMED' : 'DISARMED'} />
+          </>
+        )}
 
         {/* Link status pill */}
         <div className="flex items-center gap-2 rounded-lg bg-chip px-3 py-1.5">

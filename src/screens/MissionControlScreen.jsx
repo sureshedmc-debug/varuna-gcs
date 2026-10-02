@@ -1,11 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import './homeNew.css'
 import { useSystem }        from '../components/SystemContext'
 import { useTrashStats }    from '../lib/detectionStats'
 import { useTrashLog }      from '../lib/trashLog'
 import { useActiveMission } from '../lib/missionStore'
 import { useImpactStats }   from '../lib/impactStats'
-import { usePositionHistory } from '../lib/positionHistory'
 import { pick, bool, num, DASH } from '../lib/format'
 import { usePolling }       from '../hooks/usePolling'
 import { api }              from '../api/client'
@@ -71,11 +70,25 @@ function Ring({ pct=0, color='#7c3aed', val, unit, size=72 }) {
 }
 
 /* ── Sparkline — live mini trend from last 8 telemetry readings ── */
+/* Soft pink wash that fades out below a line */
+function PinkShade({ id }) {
+  return (
+    <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stopColor="#f472b6" stopOpacity="0.34"/>
+      <stop offset="60%" stopColor="#f9a8d4" stopOpacity="0.12"/>
+      <stop offset="100%" stopColor="#fbcfe8" stopOpacity="0"/>
+    </linearGradient>
+  )
+}
+
 function LiveSparkline({ readings=[], color='#a78bfa' }) {
+  const shadeId = `spk-shade-${useId().replace(/:/g, '')}`
   if (!readings.length) {
     // flat line when no data
     return (
       <svg width="64" height="28" viewBox="0 0 64 28" fill="none" className="vh-sparkline">
+        <defs><PinkShade id={shadeId}/></defs>
+        <path d="M2 20 L62 20 L62 28 L2 28 Z" fill={`url(#${shadeId})`} opacity="0.6"/>
         <path d="M2 20 L62 20" stroke={color} strokeWidth="1.5" strokeLinecap="round" opacity="0.4"/>
       </svg>
     )
@@ -91,6 +104,8 @@ function LiveSparkline({ readings=[], color='#a78bfa' }) {
   }).join(' ')
   return (
     <svg width="64" height="28" viewBox={`0 0 ${W} ${H}`} fill="none" className="vh-sparkline">
+      <defs><PinkShade id={shadeId}/></defs>
+      <polygon points={`${pad},${H} ${pts} ${W-pad},${H}`} fill={`url(#${shadeId})`}/>
       <polyline points={pts} stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
     </svg>
   )
@@ -125,18 +140,6 @@ function Pill({ status }) {
   )
 }
 
-function Battery({ pct }) {
-  const cls = pct>=70?'high':pct>=40?'medium':pct>0?'low':'dead'
-  return (
-    <div className="vh-battery-wrap">
-      <div className="vh-battery-bar">
-        <div className={`vh-battery-fill ${cls}`} style={{width:`${pct}%`}}/>
-      </div>
-      <span style={{fontSize:11.5,color:'#6d28d9',fontWeight:700,fontVariantNumeric:'tabular-nums'}}>{pct}%</span>
-    </div>
-  )
-}
-
 /* ── Live bar chart — detections per day (real data) ── */
 function BarChart({ values=[], labels=[] }) {
   const days  = labels.length ? labels : ['Mon','Tue','Wed','Thu','Fri','Sat','Sun']
@@ -145,10 +148,24 @@ function BarChart({ values=[], labels=[] }) {
   const W=380,H=160,padL=28,padR=6,padT=24,padB=30
   const chartW=W-padL-padR, chartH=H-padT-padB
   const barW=chartW/days.length*0.52, gap=chartW/days.length
-  const yTicks = [0, Math.round(maxVal/2), maxVal]
+  const yTicks = [...new Set([0, Math.round(maxVal/2), maxVal])]
+  // Smooth curve through the bar tops; the pink shade fills the area beneath it
+  const base = padT+chartH
+  const tops = vals.map((v,i)=>[padL+i*gap+gap/2, base-(v/maxVal)*chartH])
+  let curve = `M${tops[0][0]},${tops[0][1]}`
+  for (let i=1;i<tops.length;i++) {
+    const [x0,y0]=tops[i-1], [x1,y1]=tops[i], mx=(x0+x1)/2
+    curve += ` C${mx},${y0} ${mx},${y1} ${x1},${y1}`
+  }
+  const area = `${curve} L${tops[tops.length-1][0]},${base} L${tops[0][0]},${base} Z`
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="vh-barchart">
       <defs>
+        <PinkShade id="hpg-shade"/>
+        <linearGradient id="hpg-floor" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#f472b6" stopOpacity="0.16"/>
+          <stop offset="100%" stopColor="#f472b6" stopOpacity="0"/>
+        </linearGradient>
         {vals.map((_,i)=>(
           <linearGradient key={i} id={`hpg${i}`} x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="#7c3aed"/>
@@ -165,6 +182,9 @@ function BarChart({ values=[], labels=[] }) {
           </g>
         )
       })}
+      <rect x={padL} y={base-14} width={chartW} height={14} fill="url(#hpg-floor)"/>
+      <path d={area} fill="url(#hpg-shade)"/>
+      <path d={curve} fill="none" stroke="#f472b6" strokeWidth="1.5" strokeOpacity="0.55" strokeLinecap="round"/>
       {vals.map((v,i)=>{
         const barH=Math.max((v/maxVal)*chartH, v>0?4:0)
         const x=padL+i*gap+(gap-barW)/2
@@ -251,12 +271,11 @@ function StatusDot({ ok }) {
 export default function MissionControlScreen({ onNavigate }) {
 
   /* ── Live data sources ─────────────────────────────────────────────── */
-  const { telemetry, backendReachable, simulated, health, pi, armedSince } = useSystem()
+  const { telemetry, backendReachable, simulated, health, armedSince } = useSystem()
   const trashStats    = useTrashStats()           // { peak, last, updatedAt }
   const trashLog      = useTrashLog()             // array of sighting entries
   const activeMission = useActiveMission()        // { name, waypoints, altitude, speedKmh, status, target } | null
   const impact        = useImpactStats()          // { missionsCompleted, flightSeconds, itemsFound }
-  const posHistory    = usePositionHistory()      // { runs, recording }
   const missionList   = usePolling(api.missionList, 10000)  // live missions from Pi backend
   const aiStatus      = usePolling(api.aiStatus,   5000)    // { ai_enabled, ... }
   const camStatus     = usePolling(api.cameraStatus, 6000)  // { connected, ... }
@@ -286,7 +305,8 @@ export default function MissionControlScreen({ onNavigate }) {
     push(altHistory,   altN)
     push(speedHistory, speedN)
     push(satsHistory,  satsN)
-  }, [telemetry.data])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [telemetry.data, voltN, altN, speedN, satsN])
 
   /* ── Link & arm state ─────────────────────────────────────────────── */
   const linkStatus = simulated ? 'sim'
@@ -322,13 +342,6 @@ export default function MissionControlScreen({ onNavigate }) {
   /* ── Health data ────────────────────────────────────────────────────── */
   const hd = health?.data || {}
   const pixOk   = !!(hd.pixhawk_connected ?? hd.pixhawk ?? false)
-  const gpsOk   = satsN >= 6
-  const camOk   = !!(camStatus?.data?.connected ?? hd.camera_connected ?? hd.camera ?? false)
-  const aiOk    = !!(aiStatus?.data?.ai_enabled ?? aiStatus?.data?.enabled ?? hd.ai_running ?? false)
-  const piData  = pi?.data || {}
-  const cpuPct  = Number(piData.cpu_percent ?? piData.cpu ?? 0) || 0
-  const ramPct  = Number(piData.ram_percent ?? piData.memory_percent ?? 0) || 0
-  const tempC   = Number(piData.temperature ?? piData.temp ?? piData.cpu_temp ?? 0) || 0
 
   /* ── KPI: Active drone count ────────────────────────────────────────── */
   // Drone is "active" if the backend is reachable AND Pixhawk is connected
@@ -344,13 +357,15 @@ export default function MissionControlScreen({ onNavigate }) {
   const animDrones    = useCountUp(activeDrones)
   const animMissions  = useCountUp(missionsCompleted)
   const animDetected  = useCountUp(totalDetected)
-  const animPollution = useCountUp(pollutionTotal())
 
-  function pollutionTotal() {
-    let total = 0
-    trashLog.forEach(e => { total += (e.count || 1) })
-    return total
-  }
+  // pollTotal is computed below in pollutionMap � we derive it first so
+  // useCountUp can reference it without a forward call.
+  const pollRawTotal = useMemo(() => {
+    let t = 0
+    trashLog.forEach(e => { t += (e.count || 1) })
+    return t
+  }, [trashLog])
+  const animPollution = useCountUp(pollRawTotal)
 
   /* ── KPI: Pollution breakdown by class ──────────────────────────────── */
   const pollutionMap = useMemo(() => {
@@ -447,30 +462,6 @@ export default function MissionControlScreen({ onNavigate }) {
     ]
   }, [missionList?.data, recentDetections])
 
-  /* ── Drone status table from live health + telemetry ───────────────── */
-  const droneRows = useMemo(() => {
-    const rows = []
-    // Primary drone (V-01) from live telemetry
-    const droneStatus = !backendOk          ? 'Offline'
-      : !pixOk                              ? 'Maintenance'
-      : armed                               ? 'Online'
-      : telemetry.status === 'live'         ? 'Online'
-      : telemetry.status === 'polling'      ? 'Online'
-      : 'Offline'
-    const droneLoc = (t.lat && t.lng && Number(t.lat) !== 0)
-      ? `${Number(t.lat).toFixed(4)}, ${Number(t.lng).toFixed(4)}`
-      : 'Base Station'
-    rows.push({
-      id:'V-01', status:droneStatus, battery:battPct, location:droneLoc, live:true
-    })
-    // Static placeholders for fleet (no real data available yet)
-    rows.push({id:'V-02',status:'Online',     battery:72,location:'Bellandur Lake', live:false})
-    rows.push({id:'V-03',status:'Maintenance',battery:45,location:'Base Station',   live:false})
-    rows.push({id:'V-04',status:'Online',     battery:90,location:'Varthur Lake',   live:false})
-    rows.push({id:'V-05',status:'Offline',    battery:0, location:'Base Station',   live:false})
-    return rows
-  }, [backendOk, pixOk, armed, telemetry.status, battPct, t.lat, t.lng])
-
   /* ── Total flight hours ─────────────────────────────────────────────── */
   const totalFlightHours = ((impact.flightSeconds || 0) / 3600).toFixed(1)
 
@@ -479,54 +470,6 @@ export default function MissionControlScreen({ onNavigate }) {
   ════════════════════════════════════════════════════════════════════ */
   return (
     <div className="varuna-home">
-
-      {/* ── Secondary header ── */}
-      <div className="vh-header vh-animate vh-animate-1">
-        <div className="vh-search">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-          </svg>
-          <input placeholder="Search missions, drones, locations..."/>
-        </div>
-        <div className="vh-header-right">
-          {/* Weather */}
-          <div className="vh-weather">
-            <svg width="22" height="22" viewBox="0 0 40 40" fill="none">
-              <circle cx="28" cy="14" r="8" fill="#fbbf24" opacity="0.9"/>
-              <ellipse cx="16" cy="26" rx="10" ry="6" fill="#e2e8f0"/>
-              <ellipse cx="24" cy="24" rx="12" ry="7" fill="#f1f5f9"/>
-            </svg>
-            <div>
-              <div className="vh-weather-temp">28°C</div>
-              <div className="vh-weather-city">New Delhi</div>
-            </div>
-          </div>
-          <div style={{width:1,height:28,background:'#ede9fe'}}/>
-          {/* Link status badge */}
-          <div style={{display:'flex',alignItems:'center',gap:5,padding:'4px 10px',borderRadius:8,background:'#f8f7ff',border:'1.5px solid #ede9fe'}}>
-            <StatusDot ok={backendOk}/>
-            <span style={{fontSize:10.5,fontWeight:700,color:backendOk?'#6d28d9':'#dc2626'}}>
-              {linkLabel}
-            </span>
-          </div>
-          {/* Notification */}
-          <div className="vh-notif">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/>
-              <path d="M13.73 21a2 2 0 01-3.46 0"/>
-            </svg>
-            <span className="vh-notif-badge">3</span>
-          </div>
-          {/* User */}
-          <div className="vh-user">
-            <div className="vh-avatar">AS</div>
-            <span className="vh-username">Admin User</span>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="6 9 12 15 18 9"/>
-            </svg>
-          </div>
-        </div>
-      </div>
 
       {/* ── Hero ── */}
       <div className="vh-hero vh-animate vh-animate-2">
@@ -788,7 +731,7 @@ export default function MissionControlScreen({ onNavigate }) {
         </div>
 
         {/* ── Bottom row ── */}
-        <div className="vh-bottom-row vh-animate vh-animate-5">
+        <div className="vh-bottom-row vh-bottom-row--single vh-animate vh-animate-5">
 
           {/* Recent Missions — live from Pi backend → fallback to detections → fallback static */}
           <div className="vh-panel">
@@ -833,91 +776,6 @@ export default function MissionControlScreen({ onNavigate }) {
               </tbody>
             </table>
           </div>
-
-          {/* Drone Status — V-01 is 100% live, rest are fleet placeholders */}
-          <div className="vh-panel">
-            <div className="vh-table-header">
-              <span className="vh-panel-title" style={{display:'flex',alignItems:'center'}}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{marginRight:6}}>
-                  <rect x="10" y="10" width="4" height="4" rx="1" fill="#7c3aed"/>
-                  <line x1="12" y1="10" x2="9" y2="7"  stroke="#7c3aed" strokeWidth="1.5" strokeLinecap="round"/>
-                  <line x1="12" y1="10" x2="15" y2="7" stroke="#7c3aed" strokeWidth="1.5" strokeLinecap="round"/>
-                  <line x1="12" y1="14" x2="9" y2="17" stroke="#7c3aed" strokeWidth="1.5" strokeLinecap="round"/>
-                  <line x1="12" y1="14" x2="15" y2="17" stroke="#7c3aed" strokeWidth="1.5" strokeLinecap="round"/>
-                  <circle cx="7.5"  cy="5.5"  r="1.8" stroke="#7c3aed" strokeWidth="1.4" fill="none"/>
-                  <circle cx="16.5" cy="5.5"  r="1.8" stroke="#7c3aed" strokeWidth="1.4" fill="none"/>
-                  <circle cx="7.5"  cy="18.5" r="1.8" stroke="#7c3aed" strokeWidth="1.4" fill="none"/>
-                  <circle cx="16.5" cy="18.5" r="1.8" stroke="#7c3aed" strokeWidth="1.4" fill="none"/>
-                </svg>
-                Drone Status
-              </span>
-              <button className="vh-view-all" onClick={()=>onNavigate?.('live')}>View All →</button>
-            </div>
-            <table className="vh-table">
-              <thead>
-                <tr>
-                  <th>Drone ID</th>
-                  <th>Status</th>
-                  <th>Battery</th>
-                  <th>Location</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {droneRows.map(d=>(
-                  <tr key={d.id}>
-                    <td>
-                      <span style={{display:'inline-flex',alignItems:'center'}}>
-                        <span className="vh-drone-thumb">
-                          <DroneIcon size={14} color={d.live&&backendOk?'#7c3aed':'#c4b5fd'}/>
-                        </span>
-                        <span style={{fontWeight:700,color:'#1e1b4b'}}>
-                          {d.id}
-                          {d.live && <span style={{fontSize:8,color:'#a78bfa',marginLeft:3,fontWeight:600}}>LIVE</span>}
-                        </span>
-                      </span>
-                    </td>
-                    <td><Pill status={d.status}/></td>
-                    <td><Battery pct={d.battery}/></td>
-                    <td style={{color:'#475569',fontSize:11.5}}>{d.location}</td>
-                    <td><Chevron/></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {/* Pi system metrics footer */}
-            {backendOk && (cpuPct>0 || ramPct>0) && (
-              <div style={{marginTop:12,paddingTop:10,borderTop:'1px solid #f0ecff',display:'flex',gap:16}}>
-                {cpuPct>0 && (
-                  <div style={{flex:1}}>
-                    <div style={{display:'flex',justifyContent:'space-between',fontSize:9,color:'#8b5cf6',fontWeight:700,marginBottom:4}}>
-                      <span>Pi CPU</span><span>{cpuPct.toFixed(0)}%</span>
-                    </div>
-                    <div style={{height:4,background:'#ede9fe',borderRadius:2,overflow:'hidden'}}>
-                      <div style={{height:'100%',width:`${cpuPct}%`,background:'linear-gradient(90deg,#7c3aed,#a78bfa)',borderRadius:2}}/>
-                    </div>
-                  </div>
-                )}
-                {ramPct>0 && (
-                  <div style={{flex:1}}>
-                    <div style={{display:'flex',justifyContent:'space-between',fontSize:9,color:'#8b5cf6',fontWeight:700,marginBottom:4}}>
-                      <span>Pi RAM</span><span>{ramPct.toFixed(0)}%</span>
-                    </div>
-                    <div style={{height:4,background:'#ede9fe',borderRadius:2,overflow:'hidden'}}>
-                      <div style={{height:'100%',width:`${ramPct}%`,background:'linear-gradient(90deg,#6d28d9,#8b5cf6)',borderRadius:2}}/>
-                    </div>
-                  </div>
-                )}
-                {tempC>0 && (
-                  <div style={{display:'flex',alignItems:'center',gap:4,fontSize:9,color:tempC>70?'#ef4444':'#8b5cf6',fontWeight:700}}>
-                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M14 14.76V3.5a2.5 2.5 0 00-5 0v11.26a4.5 4.5 0 105 0z"/></svg>
-                    {tempC.toFixed(0)}°C
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
         </div>
       </div>
     </div>

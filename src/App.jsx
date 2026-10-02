@@ -39,6 +39,23 @@ function SystemWarnings() {
 
 function Shell({ onLock }) {
   const [tab, setTab] = useState('home')
+  // Sidebar auto-hides on desktop unless pinned; on phones it's a drawer from the hamburger.
+  const [navPinned, setNavPinned] = useState(() => {
+    try {
+      return localStorage.getItem('varuna.navPinned') === '1'
+    } catch {
+      return false
+    }
+  })
+  const [navOpen, setNavOpen] = useState(false)
+  function pinNav(next) {
+    setNavPinned(next)
+    try {
+      localStorage.setItem('varuna.navPinned', next ? '1' : '0')
+    } catch {
+      /* private mode */
+    }
+  }
   const [wakeSignal, setWakeSignal] = useState(0) // bump to wake / dismiss the voice orb
   const [wakeWordOn, setWakeWordOn] = useState(wakeWordEnabled)
   const [wakeState, setWakeState] = useState('off') // listening | off | blocked | unsupported
@@ -59,10 +76,26 @@ function Shell({ onLock }) {
   return (
     <div className="relative min-h-screen">
       {!fullBleed && <div className="ambient" />}
-      <TopBar onLock={onLock} onAssistant={() => setWakeSignal((n) => n + 1)} wakeState={wakeWordOn ? wakeState : 'off'} onToggleWake={toggleWakeWord} />
-      <Rail active={tab} onChange={setTab} onLock={onLock} />
+      <TopBar
+        onLock={onLock}
+        onMenu={() => setNavOpen(true)}
+        navPinned={navPinned}
+        onAssistant={() => setWakeSignal((n) => n + 1)}
+        wakeState={wakeWordOn ? wakeState : 'off'}
+        onToggleWake={toggleWakeWord}
+      />
+      <Rail
+        active={tab}
+        onChange={setTab}
+        pinned={navPinned}
+        onPinnedChange={pinNav}
+        mobileOpen={navOpen}
+        onMobileOpenChange={setNavOpen}
+      />
       <SystemWarnings />
-      <main className={`relative z-10 pt-[56px] ${fullBleed ? 'px-2 pb-2 md:pl-[200px] md:pr-2' : 'px-2.5 pb-24 md:pb-4 md:pl-[200px] md:pr-4'}`}>
+      <main
+        className={`relative z-10 pt-[56px] transition-[padding] duration-500 ease-[cubic-bezier(.16,1,.3,1)] ${navPinned ? 'md:pl-[244px]' : 'md:pl-[28px]'} ${fullBleed ? 'px-2 pb-2 md:pr-2' : 'px-2.5 pb-4 md:pr-4'}`}
+      >
         <AnimatePresence mode="wait">
           <motion.div
             key={tab}

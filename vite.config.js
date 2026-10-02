@@ -131,8 +131,24 @@ export default defineConfig(({ mode }) => {
       chunkSizeWarningLimit: 1000,
     },
     optimizeDeps: {
-      // Pre-bundle heavy dependencies
-      include: ['react', 'react-dom', 'framer-motion', 'three', 'leaflet', 'react-leaflet'],
+      // Pre-bundle every dependency up front. Anything left out is only discovered
+      // when a lazy screen first imports it; Vite then re-optimizes mid-session and
+      // pages already open get "504 Outdated Optimize Dep" → "Failed to fetch
+      // dynamically imported module" (this hit the Detections tab via leaflet.heat).
+      include: [
+        'react', 'react-dom', 'react-dom/client', 'framer-motion', 'leaflet', 'react-leaflet', 'leaflet.heat',
+        '@emailjs/browser',
+        '@turf/helpers', '@turf/circle', '@turf/boolean-point-in-polygon', '@turf/area',
+        '@turf/length', '@turf/intersect', '@turf/buffer', '@turf/along',
+        'three',
+        'three/addons/postprocessing/EffectComposer.js',
+        'three/addons/postprocessing/RenderPass.js',
+        'three/addons/postprocessing/ShaderPass.js',
+        'three/addons/postprocessing/UnrealBloomPass.js',
+        'three/addons/postprocessing/OutputPass.js',
+        'three/addons/environments/RoomEnvironment.js',
+        'three/addons/geometries/RoundedBoxGeometry.js',
+      ],
       // Exclude WASM/large binaries from optimization
       exclude: ['onnxruntime-web']
     },
