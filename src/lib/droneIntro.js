@@ -12,6 +12,7 @@ const TL = {
   powerOn: 0.5,
   beams: 1.05,
   settle: 2.4, // drone has flown in and is hovering
+  scan: 2.65, // one sensor-calibration sweep over the hovering drone
 }
 // Rush clock (seconds from the operator's click)
 const R = {
@@ -31,12 +32,10 @@ const smooth = (a, b, x) => {
   return t * t * (3 - 2 * t)
 }
 
-// Headlights: hard on, one quick flicker, then full. `x` = seconds since switch-on.
+// Headlights power up in stages, dim -> bright -> full. `x` = seconds since switch-on.
 function beamLevel(x) {
   if (x < 0) return 0
-  if (x < 0.045) return 0.55
-  if (x < 0.09) return 0.04
-  return Math.min(1, 0.85 + (x - 0.09) * 3)
+  return 0.22 * smooth(0, 0.06, x) + 0.5 * smooth(0.16, 0.24, x) + 0.28 * smooth(0.36, 0.5, x)
 }
 
 function canvasTex(w, h, draw, srgb = true) {
@@ -392,10 +391,10 @@ const RadialBlurShader = {
 }
 
 const FinishShader = {
-  uniforms: { tDiffuse: { value: null }, uTime: { value: 0 }, uCA: { value: 0 }, uVig: { value: 1 }, uGrain: { value: 0.035 }, uWhite: { value: 0 }, uRes: { value: new THREE.Vector2(1, 1) } },
+  uniforms: { tDiffuse: { value: null }, uTime: { value: 0 }, uCA: { value: 0 }, uVig: { value: 1 }, uGrain: { value: 0.035 }, uWhite: { value: 0 }, uScan: { value: new THREE.Vector4() }, uRes: { value: new THREE.Vector2(1, 1) } },
   vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
   fragmentShader: /* glsl */ `
-    uniform sampler2D tDiffuse; uniform float uTime, uCA, uVig, uGrain, uWhite; uniform vec2 uRes; varying vec2 vUv;
+    uniform sampler2D tDiffuse; uniform float uTime, uCA, uVig, uGrain, uWhite; uniform vec4 uScan; uniform vec2 uRes; varying vec2 vUv;
     float hash(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
     void main(){
       vec2 c = vUv - 0.5;
@@ -404,6 +403,18 @@ const FinishShader = {
       float v = smoothstep(0.92, 0.22, length(c * vec2(1.0, 0.82)));
       col *= mix(1.0, v, uVig);
       col += (hash(floor(vUv * uRes) + fract(uTime) * 91.7) - 0.5) * uGrain * (1.0 - uWhite);
+      // Sensor scan: hairline sweeping down over the drone (uScan = centre u, line v, half-width u, alpha);
+      // surfaces it has just passed pick up a faint cyan/violet wash.
+      if (uScan.w > 0.0) {
+        float sx = abs(vUv.x - uScan.x) / uScan.z;
+        float span = 1.0 - smoothstep(0.7, 1.0, sx);
+        float d = (vUv.y - uScan.y) * uRes.y;
+        float line = exp(-d * d / 1.6);
+        float wake = d > 0.0 ? exp(-d / (uRes.y * 0.035)) : 0.0;
+        float lum = dot(col, vec3(0.299, 0.587, 0.114));
+        vec3 tint = mix(vec3(0.45, 0.9, 1.0), vec3(0.62, 0.42, 1.0), clamp(sx, 0.0, 1.0));
+        col += tint * span * uScan.w * (line * 0.5 + wake * smoothstep(0.02, 0.25, lum) * 0.3);
+      }
       vec3 white = mix(vec3(1.0), vec3(0.80, 0.85, 1.0), smoothstep(0.25, 0.8, length(c)));
       gl_FragColor = vec4(mix(col, white, uWhite), 1.0);
     }`,
@@ -453,6 +464,11 @@ export function createDroneIntro(container, { onReveal, reducedMotion = false } 
   const tex = makeTextures()
   const D = buildDrone(tex, envTex)
   scene.add(D.drone)
+  D.drone.updateMatrixWorld(true)
+  const droneBox = new THREE.Box3().setFromObject(D.drone)
+  const boxCorners = Array.from({ length: 8 }, (_, i) =>
+    new THREE.Vector3(i & 1 ? droneBox.max.x : droneBox.min.x, i & 2 ? droneBox.max.y : droneBox.min.y, i & 4 ? droneBox.max.z : droneBox.min.z),
+  )
 
   // Lighting: near-black ambient, purple/cyan rim from behind, fill that blooms on with the beams
   const hemi = new THREE.HemisphereLight(0x2a3550, 0x000000, 0.08)
@@ -562,6 +578,32 @@ export function createDroneIntro(container, { onReveal, reducedMotion = false } 
   lines.frustumCulled = false
   scene.add(lines)
 
+  // Launch mist: fine droplets kicked off by the rotor wash, left hanging as the drone pulls away
+  const MIST = 90
+  const MIST_EMIT = 0.45 // seconds of emission after go()
+  const mist = new Float32Array(MIST * 8) // x, y, z, vx, vy, vz, born, life
+  const mistGeo = new THREE.BufferGeometry()
+  const mistPos = new Float32Array(MIST * 3)
+  const mistA = new Float32Array(MIST)
+  const mistSize = new Float32Array(MIST).map(() => 0.12 + Math.random() * 0.22)
+  mistGeo.setAttribute('position', new THREE.BufferAttribute(mistPos, 3))
+  mistGeo.setAttribute('aAlpha', new THREE.BufferAttribute(mistA, 1))
+  mistGeo.setAttribute('aSize', new THREE.BufferAttribute(mistSize, 1))
+  const mistMat = new THREE.ShaderMaterial({
+    uniforms: { map: { value: tex.glow }, uHalfH: { value: 1 } },
+    vertexShader: `attribute float aAlpha; attribute float aSize; uniform float uHalfH; varying float vA;
+      void main(){ vA = aAlpha; vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        gl_PointSize = aSize * projectionMatrix[1][1] * uHalfH / max(0.1, -mv.z); gl_Position = projectionMatrix * mv; }`,
+    fragmentShader: `uniform sampler2D map; varying float vA;
+      void main(){ float m = texture2D(map, gl_PointCoord).a; gl_FragColor = vec4(vec3(0.78, 0.86, 1.0) * m * vA, 1.0); }`,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  })
+  const mistPts = new THREE.Points(mistGeo, mistMat)
+  mistPts.frustumCulled = false
+  scene.add(mistPts)
+
   // Post
   const composer = new EffectComposer(renderer)
   composer.setPixelRatio(dpr)
@@ -648,6 +690,8 @@ export function createDroneIntro(container, { onReveal, reducedMotion = false } 
     const v01 = rushing ? Math.pow(smooth(R.launch + 0.1, R.arrive - 0.05, g), 1.3) : 0
     const near = smooth(8.5, 1.5, -s.z)
     const flood = rushing ? smooth(R.whiteStart, R.whitePeak, g) : 0
+    // Lights step up to full high-beam in the launch beat, before the existing acceleration
+    const hb = rushing ? 1 + 0.35 * smooth(0, R.launch, g) : 1
 
     D.drone.position.set(s.x, s.y, s.z)
     D.drone.rotation.set(s.pitch, s.yaw, s.roll, 'YXZ')
@@ -663,7 +707,7 @@ export function createDroneIntro(container, { onReveal, reducedMotion = false } 
     const seam = smooth(powerAt + 0.1, powerAt + 0.6, t)
     D.mats.accentCyan.color.setRGB(0.13 * 3.5 * seam, 0.83 * 3.5 * seam, 0.93 * 3.5 * seam)
     D.mats.accentPurple.color.setRGB(0.55 * 3 * seam, 0.36 * 3 * seam, 0.96 * 3 * seam)
-    D.mats.led.color.setScalar(0.02 + beam * 7)
+    D.mats.led.color.setScalar(0.02 + beam * 7 * hb)
     D.mats.ledBrow.color.setScalar(0.02 + Math.max(beam, seam * 0.1) * 5)
 
     // Rotors
@@ -683,7 +727,7 @@ export function createDroneIntro(container, { onReveal, reducedMotion = false } 
     rimC.intensity = 1.0 * pow + 1.4 * beam
     top.intensity = 0.6 * pow + 2.2 * beam
     bounce.intensity = beam * 3.5
-    for (const sp of spots) sp.intensity = beam * 0.6
+    for (const sp of spots) sp.intensity = beam * 0.6 * hb
 
     // Camera: soft-follow + pointer parallax while hovering, hard track + FOV punch on the rush
     const ease = 1 - Math.exp(-dt * 2.5)
@@ -710,7 +754,7 @@ export function createDroneIntro(container, { onReveal, reducedMotion = false } 
       keyFill.angle = Math.min(1.2, Math.atan(2.4 / Math.max(0.5, keyFill.position.distanceTo(dp))))
       keyFill.intensity = lerp(0.2, 0.9, pow)
     }
-    beamUniforms.uI.value = beam * 0.045 * (1 - near * 0.9)
+    beamUniforms.uI.value = beam * 0.045 * hb * (1 - near * 0.9)
     camera.fov = baseFov() + (rushing ? 17 * smooth(R.launch + 0.6, R.arrive, g) : 0)
     camera.updateProjectionMatrix()
 
@@ -722,13 +766,53 @@ export function createDroneIntro(container, { onReveal, reducedMotion = false } 
       gl.sprite.position.copy(wp)
       const gs = (dist * 0.014 + 0.08) * beam * (1 + near * 1.1)
       gl.sprite.scale.set(gs, gs, 1)
-      glowMat.color.setScalar(beam * (0.8 + near * 1.2) + flood * 6)
+      glowMat.color.setScalar(beam * hb * (0.8 + near * 1.2) + flood * 6)
       const rf = reflections[i]
       rf.position.set(wp.x, FLOOR_Y + 0.02 - (wp.y - FLOOR_Y) * 0.55, wp.z + 0.2)
       const rh = Math.max(0.01, (wp.y - FLOOR_Y) * 1.15)
       rf.scale.set(rh * 0.09 + dist * 0.004, rh, 1)
       reflMat.opacity = beam * 0.04
     }
+
+    // Launch mist + air disturbance
+    const gust = rushing ? smooth(0, 0.1, g) * (1 - smooth(0.35, 0.9, g)) : 0
+    mistMat.uniforms.uHalfH.value = renderer.domElement.height / 2
+    for (let i = 0; i < MIST; i++) {
+      const m = i * 8
+      const born = (i / MIST) * MIST_EMIT
+      if (!rushing || g < born) {
+        mistA[i] = 0
+        continue
+      }
+      if (mist[m + 7] === 0) {
+        // spawn in a ring just under the rotors, blown outward and down
+        const a = Math.random() * Math.PI * 2
+        const r = 0.35 + Math.random() * 0.9
+        mist[m] = s.x + Math.cos(a) * r
+        mist[m + 1] = s.y - 0.15 - Math.random() * 0.3
+        mist[m + 2] = s.z + Math.sin(a) * r * 0.6
+        const sp = 0.5 + Math.random() * 1.1
+        mist[m + 3] = Math.cos(a) * sp
+        mist[m + 4] = -0.5 - Math.random() * 0.8
+        mist[m + 5] = Math.sin(a) * sp * 0.6
+        mist[m + 6] = g
+        mist[m + 7] = 0.9 + Math.random() * 0.8
+      }
+      const drag = Math.exp(-dt * 2.2)
+      mist[m + 3] *= drag
+      mist[m + 4] = mist[m + 4] * drag + 0.15 * dt
+      mist[m + 5] *= drag
+      mist[m] += mist[m + 3] * dt
+      mist[m + 1] += mist[m + 4] * dt
+      mist[m + 2] += mist[m + 5] * dt
+      const age = (g - mist[m + 6]) / mist[m + 7]
+      mistA[i] = age >= 1 ? 0 : 0.07 * smooth(0, 0.12, age) * (1 - smooth(0.4, 1, age)) * (1 - flood)
+      mistPos[i * 3] = mist[m]
+      mistPos[i * 3 + 1] = mist[m + 1]
+      mistPos[i * 3 + 2] = mist[m + 2]
+    }
+    mistGeo.attributes.position.needsUpdate = true
+    mistGeo.attributes.aAlpha.needsUpdate = true
 
     // Haze drifts while hovering, stretches into speed streaks on the rush
     const flow = 0.35 + v01 * 42
@@ -740,6 +824,18 @@ export function createDroneIntro(container, { onReveal, reducedMotion = false } 
         z = pData[i * 4 + 2]
       }
       pData[i * 4 + 2] = z
+      if (gust > 0) {
+        // rotor wash shoves nearby haze aside as the drone launches
+        const dx = pData[i * 4] - s.x
+        const dy = pData[i * 4 + 1] - s.y
+        const dz = z - s.z
+        const d2 = dx * dx + dy * dy + dz * dz
+        if (d2 < 9) {
+          const f = (gust * (1 - d2 / 9) * dt * 1.6) / Math.sqrt(d2 + 0.05)
+          pData[i * 4] += dx * f
+          pData[i * 4 + 1] += dy * f - f * 0.4
+        }
+      }
       const x = pData[i * 4]
       const y = pData[i * 4 + 1]
       const k = i * 6
@@ -783,6 +879,26 @@ export function createDroneIntro(container, { onReveal, reducedMotion = false } 
     finish.uniforms.uTime.value = t
     finish.uniforms.uCA.value = 0.004 * v01 + 0.01 * near
     finish.uniforms.uVig.value = 1 - flood * 0.7
+    {
+      // Sensor scan: one quick top-to-bottom sweep across the drone's screen footprint
+      const sp = clamp((t - TL.scan) / 0.55)
+      const u = finish.uniforms.uScan.value
+      if (!rushing && sp > 0 && sp < 1) {
+        let x0 = 1
+        let x1 = 0
+        let y0 = 1
+        let y1 = 0
+        for (const c of boxCorners) {
+          tmpV.copy(c).applyMatrix4(D.drone.matrixWorld).project(camera)
+          x0 = Math.min(x0, tmpV.x * 0.5 + 0.5)
+          x1 = Math.max(x1, tmpV.x * 0.5 + 0.5)
+          y0 = Math.min(y0, tmpV.y * 0.5 + 0.5)
+          y1 = Math.max(y1, tmpV.y * 0.5 + 0.5)
+        }
+        const e = sp * sp * (3 - 2 * sp)
+        u.set((x0 + x1) / 2, lerp(y1 + 0.01, y0 - 0.01, e), ((x1 - x0) / 2) * 1.08, Math.pow(Math.sin(Math.PI * sp), 0.6))
+      } else u.w = 0
+    }
     finish.uniforms.uWhite.value = rushing ? smooth(R.whiteStart + 0.08, R.whitePeak, g) : 0
   }
 
