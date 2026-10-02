@@ -105,14 +105,16 @@ export async function groqChat({ messages, tools, key: keyOverride, temperature 
 /** Speech → text with Groq Whisper. `blob` is the browser recording (webm/ogg/wav are accepted).
  *  Pass `apiKey` explicitly (e.g. the assistant's LLM config key when it's Groq);
  *  falls back to the legacy stand-alone Groq key for backward compat. */
-export async function groqTranscribe(blob, { apiKey } = {}) {
+export async function groqTranscribe(blob, { apiKey, prompt } = {}) {
   const key = apiKey || getGroqKey()
   if (!key) throw new Error('NO_KEY')
   const ext = /ogg/.test(blob.type) ? 'ogg' : /wav/.test(blob.type) ? 'wav' : /mp4/.test(blob.type) ? 'm4a' : 'webm'
   const form = new FormData()
   form.append('file', blob, `voice.${ext}`)
   form.append('model', STT_MODEL)
-  form.append('prompt', STT_PROMPT)
+  // An empty prompt means unbiased (used for the wake word, so silence can't turn into "Varuna").
+  const p = prompt ?? STT_PROMPT
+  if (p) form.append('prompt', p)
   form.append('response_format', 'json')
   form.append('temperature', '0')
   const res = await timedFetch(`${BASE}/audio/transcriptions`, { method: 'POST', headers: { Authorization: `Bearer ${key}` }, body: form })

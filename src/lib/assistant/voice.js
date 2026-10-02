@@ -3,9 +3,9 @@
 //    once they stop talking (simple energy-based voice-activity detection);
 //    also streams the live mic level so the orb can react. The clip
 //    (webm/opus in Chrome) goes to Groq Whisper (groqClient.js).
-//  - speak(): the browser's speechSynthesis with an Indian English / Hindi
-//    voice; resolves when finished and reports word boundaries so the orb
-//    can "talk" in time with the voice.
+//  - speak(): the browser's speechSynthesis, sentence by sentence, each read by
+//    a Hindi or Indian-English voice to match its script; resolves when
+//    finished and reports word boundaries so the orb can "talk" in time.
 
 const MAX_SECONDS = 20
 
@@ -112,29 +112,124 @@ function loadVoices() {
 }
 loadVoices()
 
-// A calmer, more composed-sounding voice than the OS default, when one of
-// these happens to be installed — purely a taste preference (a measured,
-// unhurried co-pilot tone), never required; falls straight through to the
-// ordinary language-matched pick below if none of these exist on this device.
-const CALM_VOICE_NAMES = ['Microsoft Ravi', 'Microsoft Guy', 'Microsoft Mark', 'Google UK English Male', 'Daniel']
+// ── Choosing a voice ────────────────────────────────────────────────────────
+// Goal: a calm, natural voice that reads BOTH English and Hindi properly.
+//  - Each sentence is read by a voice for its own script: Devanagari → a Hindi
+//    voice, Latin → an Indian-English voice, so a reply that mixes the two never
+//    gets English words mangled by a Hindi voice or Hindi read letter-by-letter.
+//  - Voices are ranked: the operator's pick first, then neural/"Natural" voices
+//    (Edge / Windows 11 online voices), then Google's, then local ones; a calm
+//    male voice is preferred by default to match the VARUNA persona.
+const PREF_KEY = 'varuna.voice'
 
-// Devanagari → Hindi voice; otherwise Indian English (reads Hinglish well).
-function pickVoice(text) {
-  const voices = window.speechSynthesis?.getVoices?.() || []
-  const hindi = /[ऀ-ॿ]/.test(text)
-  if (!hindi) {
-    for (const name of CALM_VOICE_NAMES) {
-      const v = voices.find((x) => x.name === name)
-      if (v) return v
+function readPrefs() {
+  try {
+    return { en: '', hi: '', rate: 1, gender: 'male', ...(JSON.parse(localStorage.getItem(PREF_KEY) || '{}') || {}) }
+  } catch {
+    return { en: '', hi: '', rate: 1, gender: 'male' }
+  }
+}
+export function getVoicePrefs() {
+  return readPrefs()
+}
+export function setVoicePrefs(patch) {
+  try {
+    localStorage.setItem(PREF_KEY, JSON.stringify({ ...readPrefs(), ...patch }))
+  } catch {
+    /* private mode */
+  }
+}
+
+const MALE_NAMES = /\b(ravi|prabhat|hemant|madhur|guy|mark|david|daniel|ryan|george|rishi|male)\b/i
+const FEMALE_NAMES = /\b(neerja|swara|heera|kalpana|zira|aria|jenny|samantha|susan|hazel|female)\b/i
+const norm = (l) => String(l || '').replace('_', '-')
+
+function allVoices() {
+  return window.speechSynthesis?.getVoices?.() || []
+}
+
+/** Voices for a language ('en' | 'hi'), best first — also feeds the settings picker. */
+export function voicesFor(lang) {
+  const prefs = readPrefs()
+  const chosen = lang === 'hi' ? prefs.hi : prefs.en
+  const wantLocale = lang === 'hi' ? ['hi-IN'] : ['en-IN', 'en-GB', 'en-AU', 'en-US']
+  const scored = []
+  for (const v of allVoices()) {
+    const l = norm(v.lang)
+    if (!l.toLowerCase().startsWith(lang)) continue
+    let score = 0
+    if (v.name === chosen) score += 1000
+    const idx = wantLocale.indexOf(l)
+    score += idx >= 0 ? 60 - idx * 8 : 0
+    if (/natural|neural|online/i.test(v.name)) score += 40
+    else if (/google/i.test(v.name)) score += 18
+    if (prefs.gender === 'male' && MALE_NAMES.test(v.name)) score += 45
+    if (prefs.gender === 'female' && FEMALE_NAMES.test(v.name)) score += 45
+    if (!v.localService) score += 2
+    scored.push({ v, score })
+  }
+  return scored.sort((a, b) => b.score - a.score).map((x) => x.v)
+}
+
+// Say symbols and abbreviations the way a person would, in the sentence's language.
+function forSpeech(text, hindi) {
+  let t = text
+    .replace(/[*_`#>~|]/g, '')
+    .replace(/https?:\/\/\S+/g, '')
+    .replace(/\bRTH\b/g, 'return to home')
+    .replace(/\bUAV\b/g, 'drone')
+    .replace(/\s+/g, ' ')
+    .trim()
+  t = t
+    .replace(/(\d)\s?km\/h\b/gi, hindi ? '$1 किलोमीटर प्रति घंटा' : '$1 kilometres per hour')
+    .replace(/(\d)\s?m\/s\b/gi, hindi ? '$1 मीटर प्रति सेकंड' : '$1 metres per second')
+    .replace(/(\d)\s?°\s?C\b/g, hindi ? '$1 डिग्री सेल्सियस' : '$1 degrees Celsius')
+    .replace(/(\d)\s?%/g, hindi ? '$1 प्रतिशत' : '$1 percent')
+    .replace(/(\d)\s?m\b/g, hindi ? '$1 मीटर' : '$1 metres')
+    .replace(/(\d)\s?km\b/gi, hindi ? '$1 किलोमीटर' : '$1 kilometres')
+  return t
+}
+
+// Split a reply into chunks, each tagged with the language to read it in. Works
+// word by word inside every sentence: Devanagari words always go to the Hindi
+// voice (an English voice cannot read them); a run of 3+ Latin words becomes its
+// own English chunk; a stray English word or two ("GPS", "mission") stays inside
+// the Hindi chunk, where a Hindi voice reads it fine and the rhythm isn't broken.
+function toChunks(text) {
+  const sentences = text.split(/(?<=[.!?।])\s+|\n+/).filter((x) => x.trim())
+  const out = []
+  const push = (lang, words) => {
+    const t = words.join(' ').trim()
+    if (!t) return
+    const last = out[out.length - 1]
+    if (last && last.lang === lang && last.text.length + t.length < 220) last.text += ` ${t}`
+    else out.push({ lang, text: t })
+  }
+  for (const raw of sentences) {
+    const words = raw.trim().split(/\s+/).filter(Boolean)
+    if (!words.length) continue
+    if (!words.some((w) => /[ऀ-ॿ]/.test(w))) {
+      push('en', words)
+      continue
+    }
+    // runs of Latin words (digits and punctuation travel with their neighbour)
+    const runs = []
+    for (const w of words) {
+      const lang = /[ऀ-ॿ]/.test(w) ? 'hi' : /[A-Za-z]/.test(w) ? 'en' : null
+      const last = runs[runs.length - 1]
+      if (last && (lang === null || lang === last.lang)) last.words.push(w)
+      else if (lang === null) runs.push({ lang: 'hi', words: [w] })
+      else runs.push({ lang, words: [w] })
+    }
+    for (const r of runs) {
+      const latinWords = r.words.filter((w) => /[A-Za-z]/.test(w)).length
+      push(r.lang === 'en' && latinWords >= 3 ? 'en' : 'hi', r.words)
     }
   }
-  const want = hindi ? ['hi-IN'] : ['en-IN', 'hi-IN', 'en-GB', 'en-US']
-  for (const lang of want) {
-    const v = voices.find((x) => (x.lang || '').replace('_', '-') === lang)
-    if (v) return v
-  }
-  return null
+  return out
 }
+
+let speakGen = 0
 
 /**
  * Speak `text`. Resolves when done (or immediately if speech isn't available).
@@ -144,53 +239,121 @@ export function speak(text, { onWord } = {}) {
   return new Promise((resolve) => {
     const synth = window.speechSynthesis
     if (!synth || !text) return resolve()
-    loadVoices().then(() => speakNow(synth, text, onWord, resolve))
+    loadVoices().then(async () => {
+      try {
+        const gen = ++speakGen
+        synth.cancel()
+        noteSpokenLanguage(text)
+        for (const c of toChunks(text)) {
+          if (gen !== speakGen) break // interrupted (stopSpeaking / a newer reply)
+          const clean = forSpeech(c.text, c.lang === 'hi')
+          if (clean) await speakChunk(synth, clean, c.lang, onWord)
+        }
+      } catch {
+        /* a speech failure must never leave the assistant waiting forever */
+      } finally {
+        resolve()
+      }
+    })
   })
 }
 
-function speakNow(synth, text, onWord, resolve) {
-  synth.cancel()
-  const clean = text.replace(/[*_`#>]/g, '').replace(/https?:\/\/\S+/g, '')
-  const u = new SpeechSynthesisUtterance(clean)
-  const voice = pickVoice(clean)
-  if (voice) {
-    u.voice = voice
-    u.lang = voice.lang
-  }
-  // Slightly slower and a touch lower than the default — reads as composed
-  // and measured rather than rushed; still comfortably intelligible.
-  u.rate = 0.97
-  u.pitch = 0.92
-  let settled = false
-  let guard = 0
-  const startedAt = Date.now()
-  const end = () => {
-    if (settled) return
-    settled = true
-    clearTimeout(guard)
-    resolve()
-  }
-  // Some browsers never fire onend. Only give up once the engine has really
-  // gone quiet — resolving while it still talks would make the assistant
-  // record (and answer) its own voice. Absolute cap: 2 minutes, then cancel.
-  const check = () => {
-    if (settled) return
-    if (Date.now() - startedAt > 120000) {
-      synth.cancel()
-      return end()
+function speakChunk(synth, clean, lang, onWord) {
+  return new Promise((resolve) => {
+    const u = new SpeechSynthesisUtterance(clean)
+    const voice = voicesFor(lang)[0]
+    u.lang = lang === 'hi' ? 'hi-IN' : 'en-IN'
+    try {
+      if (voice) {
+        u.voice = voice
+        u.lang = voice.lang
+      }
+    } catch {
+      /* unusable voice object — fall back to the language default */
     }
-    if (synth.speaking || synth.pending) guard = setTimeout(check, 500)
-    else end()
-  }
-  u.onboundary = () => onWord?.()
-  u.onend = end
-  u.onerror = end
-  guard = setTimeout(check, 1500 + clean.length * 60)
-  synth.speak(u)
+    // Slightly lower than default and a touch slower: composed and clear.
+    const rate = Number(readPrefs().rate) || 1
+    u.rate = Math.min(1.4, Math.max(0.7, 0.97 * rate))
+    u.pitch = 0.94
+    let settled = false
+    let guard = 0
+    const startedAt = Date.now()
+    const end = () => {
+      if (settled) return
+      settled = true
+      clearTimeout(guard)
+      resolve()
+    }
+    // Some browsers never fire onend. Only give up once the engine has really
+    // gone quiet — resolving while it still talks would make the assistant
+    // record (and answer) its own voice. Absolute cap per chunk: 60 s.
+    const check = () => {
+      if (settled) return
+      if (Date.now() - startedAt > 60000) {
+        synth.cancel()
+        return end()
+      }
+      if (synth.speaking || synth.pending) guard = setTimeout(check, 500)
+      else end()
+    }
+    u.onboundary = () => onWord?.()
+    u.onend = end
+    u.onerror = end
+    guard = setTimeout(check, 1500 + clean.length * 70)
+    synth.speak(u)
+  })
 }
 
 export function stopSpeaking() {
+  speakGen++
   window.speechSynthesis?.cancel()
+}
+
+/** A soft two-note "I'm listening" tone (~0.3 s), played the moment Varuna wakes. */
+export function chime() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext
+    const ctx = new Ctx()
+    const t0 = ctx.currentTime + 0.01
+    ;[659.25, 987.77].forEach((f, i) => {
+      const o = ctx.createOscillator()
+      const g = ctx.createGain()
+      o.type = 'sine'
+      o.frequency.value = f
+      const t = t0 + i * 0.11
+      g.gain.setValueAtTime(0, t)
+      g.gain.linearRampToValueAtTime(0.16, t + 0.02)
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22)
+      o.connect(g).connect(ctx.destination)
+      o.start(t)
+      o.stop(t + 0.24)
+    })
+    setTimeout(() => ctx.close(), 600)
+  } catch {
+    /* no audio output — the orb still shows it's awake */
+  }
+}
+
+/** Say a short sample in both languages (for the voice settings "Test" button). */
+export async function speakSample() {
+  await speak('नमस्ते, मैं वरुण हूँ। मैं आपकी ड्रोन उड़ान में मदद करूँगा।')
+  await speak('Hello, I am Varuna, your co-pilot. Battery is at seventy percent, link is stable.')
+}
+
+// Which language the operator is using right now: lets the browser recogniser
+// listen in Hindi after a Hindi exchange (it can only listen in one at a time).
+let sttLang = 'en-IN'
+function noteSpokenLanguage(text) {
+  const dev = (text.match(/[ऀ-ॿ]/g) || []).length
+  const lat = (text.match(/[A-Za-z]/g) || []).length
+  sttLang = dev > lat * 0.25 ? 'hi-IN' : 'en-IN'
+}
+/** Tell the voice layer what the operator just said (so listening follows their language). */
+export function noteUserText(text) {
+  if (text) noteSpokenLanguage(text)
+}
+export function currentSttLang() {
+  return sttLang
 }
 
 // -------- Browser-native speech-to-text (Chrome/Edge webkitSpeechRecognition) --
@@ -207,10 +370,10 @@ export const browserSttSupported = !!Recognition
  * @param {(level:number)=>void} [o.onLevel]  mic level 0..1, ~10x/sec
  * @param {number} [o.startTimeoutMs]
  * @param {number} [o.silenceMs]
- * @param {string} [o.lang]  'en-IN' by default (Whisper's Hinglish substitute)
+ * @param {string} [o.lang]  follows the current exchange: 'hi-IN' after Hindi, else 'en-IN'
  * @returns {{ done: Promise<{text:string, seconds:number}|null>, cancel: () => void }}
  */
-export function browserListenToText({ onLevel, startTimeoutMs = 7000, silenceMs = 1300, lang = 'en-IN' } = {}) {
+export function browserListenToText({ onLevel, startTimeoutMs = 7000, silenceMs = 1300, lang = sttLang } = {}) {
   if (!Recognition) {
     return { done: Promise.resolve(null), cancel: () => {} }
   }

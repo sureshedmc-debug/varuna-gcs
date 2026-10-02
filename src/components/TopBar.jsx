@@ -131,7 +131,7 @@ export function TopBar({ onLock, onMenu, navPinned, onAssistant, wakeState, onTo
           <div className="flex items-center overflow-hidden rounded-lg" style={{ background: 'rgba(59,158,255,0.15)' }}>
             <button
               onClick={onAssistant}
-              title={'Wake Varuna (or just say \u201cHi Varuna\u201d)'}
+              title={'Wake Varuna (or just say \u201cVaruna\u201d)'}
               className="flex h-9 items-center gap-1.5 px-3 text-[11px] font-bold tracking-wider"
               style={{ color: 'var(--accent-hex)' }}
             >
@@ -143,13 +143,15 @@ export function TopBar({ onLock, onMenu, navPinned, onAssistant, wakeState, onTo
                 onClick={onToggleWake}
                 title={
                   wakeState === 'listening'
-                    ? 'Listening for "Hi Varuna" — click to turn the wake word off'
-                    : wakeState === 'blocked'
-                      ? 'Microphone blocked — allow mic access for the wake word'
-                      : 'Wake word off — click to listen for "Hi Varuna"'
+                    ? 'Listening for "Varuna" — click to turn the wake word off'
+                    : wakeState === 'needs-key'
+                      ? 'Voice wake in the desktop app needs a Groq API key — add one in the assistant settings'
+                      : wakeState === 'blocked'
+                        ? 'Microphone blocked — allow mic access for the wake word'
+                        : 'Wake word off — click to listen for "Varuna"'
                 }
                 className="flex h-9 w-8 items-center justify-center border-l border-white/10"
-                style={{ color: wakeState === 'listening' ? '#32D74B' : wakeState === 'blocked' ? '#FF453A' : 'var(--muted)' }}
+                style={{ color: wakeState === 'listening' ? '#32D74B' : wakeState === 'blocked' ? '#FF453A' : wakeState === 'needs-key' ? '#FF9F0A' : 'var(--muted)' }}
               >
                 <svg viewBox="0 0 24 24" width="15" height="15">
                   <path d="M12 14a3 3 0 003-3V5a3 3 0 10-6 0v6a3 3 0 003 3zm5-3a5 5 0 01-10 0H5a7 7 0 006 6.9V21h2v-3.1A7 7 0 0019 11h-2z" fill="currentColor" />

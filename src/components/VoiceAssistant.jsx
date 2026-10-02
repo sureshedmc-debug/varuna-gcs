@@ -8,7 +8,8 @@ import { useLivePosition, useLaptopGps, useHomePoint } from '../hooks/useLaptopG
 import { createAssistantChat } from '../lib/assistant/assistantChat'
 import { groqTranscribe } from '../lib/assistant/groqClient'
 import { getLlmConfig, isLlmConfigReady } from '../lib/assistant/llmSettings'
-import { listenUntilSilence, browserListenToText, browserSttSupported, speak, stopSpeaking } from '../lib/assistant/voice'
+import { listenUntilSilence, browserListenToText, browserSttSupported, chime, currentSttLang, noteUserText, speak, stopSpeaking } from '../lib/assistant/voice'
+import VoiceSettings from './VoiceSettings'
 import { createWakeListener, wakeWordSupported } from '../lib/assistant/wakeWord'
 
 // VARUNA voice co-pilot — a small floating orb (Copilot-style), not a window.
@@ -32,10 +33,12 @@ const BOTTOM = { home: 70, live: 232, mission: 172, detections: 24, system: 24 }
 // Note: plain "stop" is NOT here — it's the emergency-stop flight command.
 const DISMISS_RE = /^(bye|goodbye|bye bye|thank you|thanks|thank u|that'?s all|stop listening|go to sleep|sleep|bas|bas karo|ok bye|nothing|no thanks|dhanyavaad|shukriya)[.! ]*$/i
 
+// Shown under the orb right after the chime (not spoken — Varuna listens at once).
 function greeting() {
+  if (currentSttLang() === 'hi-IN') return ['हाँ, बोलिए।', 'जी, सुन रहा हूँ।', 'बताइए, क्या करना है?'][Math.floor(Math.random() * 3)]
   const h = new Date().getHours()
-  const part = h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'
-  return `${part}! I'm Varuna. What would you like to do today?`
+  const part = h < 12 ? 'Good morning.' : h < 17 ? 'Good afternoon.' : 'Good evening.'
+  return [`${part} What can I do for you?`, 'Yes? I’m listening.', 'I’m here — go ahead.', 'At your service. What do you need?'][Math.floor(Math.random() * 4)]
 }
 
 export default function VoiceAssistant({ tab, wakeSignal, wakeWordOn, onWakeState }) {
@@ -101,6 +104,7 @@ export default function VoiceAssistant({ tab, wakeSignal, wakeWordOn, onWakeStat
       return undefined
     }
     const w = createWakeListener({ onWake: ({ rest }) => wake(rest), onState: (s) => onWakeState?.(s) })
+    if (!w) onWakeState?.('unsupported')
     wakeRef.current = w
     if (awakeRef.current) w?.pause()
     return () => {
@@ -141,8 +145,10 @@ export default function VoiceAssistant({ tab, wakeSignal, wakeWordOn, onWakeStat
       setSaid('Pick an AI provider to wake me up.')
       return
     }
-    if (rest && rest.split(/\s+/).length >= 2) return handle(rest, sid) // "Hi Varuna, plan a mission for this lake"
-    await say(greeting(), sid)
+    chime() // like Copilot: a soft tone says "I heard you", then straight to listening
+    if (rest && rest.split(/\s+/).length >= 2) return handle(rest, sid) // "Varuna, plan a mission for this lake"
+    setSaid(greeting())
+    await new Promise((r) => setTimeout(r, 320)) // let the chime finish so the mic doesn't hear it
     if (sid === sessionRef.current) listen(sid, false)
   }
 
@@ -204,7 +210,7 @@ export default function VoiceAssistant({ tab, wakeSignal, wakeWordOn, onWakeStat
       }
       if (sid !== sessionRef.current) return
       if (!clip) {
-        if (!followUp) await say("I didn't catch that. Say “Hi Varuna” whenever you need me.", sid)
+        if (!followUp) await say('I didn’t catch that. Just say “Varuna” whenever you need me.', sid)
         if (sid === sessionRef.current) sleep()
         return
       }
@@ -231,7 +237,7 @@ export default function VoiceAssistant({ tab, wakeSignal, wakeWordOn, onWakeStat
       }
       if (sid !== sessionRef.current) return
       if (!result) {
-        if (!followUp) await say("I didn't catch that. Say “Hi Varuna” whenever you need me.", sid)
+        if (!followUp) await say('I didn’t catch that. Just say “Varuna” whenever you need me.', sid)
         if (sid === sessionRef.current) sleep()
         return
       }
@@ -245,6 +251,7 @@ export default function VoiceAssistant({ tab, wakeSignal, wakeWordOn, onWakeStat
     }
     if (sid !== sessionRef.current) return
     if (!text) return listen(sid, true)
+    noteUserText(text) // next listen follows the language they just used
     handle(text, sid)
   }
 
@@ -252,7 +259,7 @@ export default function VoiceAssistant({ tab, wakeSignal, wakeWordOn, onWakeStat
     if (sid !== sessionRef.current) return
     setHeard(text)
     if (DISMISS_RE.test(text.trim())) {
-      await say('Okay! Say “Hi Varuna” whenever you need me.', sid)
+      await say(/[ऀ-ॿ]/.test(text) ? 'ठीक है, ज़रूरत हो तो बस “वरुण” कहिए।' : 'Alright. Just say “Varuna” when you need me.', sid)
       if (sid === sessionRef.current) sleep()
       return
     }
@@ -368,6 +375,7 @@ export default function VoiceAssistant({ tab, wakeSignal, wakeWordOn, onWakeStat
                 {showSettings ? (
                   <div className="max-h-[52vh] overflow-y-auto pr-1">
                     {phase === 'noconfig' && <div className="mb-2 text-[11px] text-muted">{said}</div>}
+                    <VoiceSettings />
                     <LlmPicker kind="assistant" onSaved={onProviderSaved} compact />
                   </div>
                 ) : typing ? (
@@ -407,7 +415,7 @@ export default function VoiceAssistant({ tab, wakeSignal, wakeWordOn, onWakeStat
                 <button
                   type="button"
                   onClick={() => setShowSettings((v) => !v)}
-                  title={showSettings ? 'Close settings' : 'AI provider settings'}
+                  title={showSettings ? 'Close settings' : 'Voice & AI provider settings'}
                   className="flex h-7 w-7 items-center justify-center rounded-full hover:bg-white/10"
                   style={{ color: showSettings ? 'var(--accent-hex)' : 'var(--muted)' }}
                 >

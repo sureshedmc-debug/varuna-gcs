@@ -11,6 +11,12 @@ import { getLlmConfig } from './llmSettings'
 const MAX_TOOL_ROUNDS = 5
 const MAX_HISTORY = 30 // messages kept (older ones dropped to bound tokens)
 
+// Date and time for the companion ("what day is it?", "good evening").
+function nowLine() {
+  const d = new Date()
+  return d.toLocaleString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
 function parseArgs(s) {
   try {
     const v = JSON.parse(s || '{}')
@@ -51,7 +57,8 @@ export function createAssistantChat(ctx, onEvent = () => {}) {
       for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
         const json = await llmChat({
           config: getLlmConfig('assistant'),
-          messages: [{ role: 'system', content: SYSTEM_PROMPT }, ...flat(), ...turn],
+          messages: [{ role: 'system', content: `${SYSTEM_PROMPT}\n\nNOW: ${nowLine()}` }, ...flat(), ...turn],
+          temperature: 0.55, // a little livelier for conversation; tools still get exact arguments
           tools: round === MAX_TOOL_ROUNDS ? undefined : TOOLS, // last round: force a text answer
         })
         const msg = json?.choices?.[0]?.message || {}
