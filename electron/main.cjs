@@ -82,6 +82,11 @@ async function boot() {
 // listed because it's reached same-origin, through the built-in proxy.
 const CONNECT_HOSTS = [
   'https://api.groq.com', // voice assistant (Whisper + chat)
+  'https://generativelanguage.googleapis.com', // assistant: Google Gemini
+  'https://openrouter.ai', // assistant: OpenRouter
+  // assistant: "Custom (OpenAI-compatible)" — the operator types any endpoint,
+  // so it can't be listed up front. Scripts stay 'self'-only either way.
+  'https:',
   'https://detect.roboflow.com', // optional cloud detector
   'https://api.emailjs.com', // email alerts
   'https://nominatim.openstreetmap.org', // place lookup
