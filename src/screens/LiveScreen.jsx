@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { api } from '../api/client'
 import { useSystem } from '../components/SystemContext'
@@ -62,6 +62,19 @@ export default function LiveScreen() {
   const [hideWidgets, setHideWidgets] = useState(false)
   const [mainView, setMainView]       = useState('video') // 'video' | 'map' | 'webcam'
   const [conf, setConf]               = useState(0.25)
+  // Start the slider at the confidence the model's training run found best
+  // (public/models/plastic.json), snapped to the slider's 5% steps.
+  useEffect(() => {
+    let alive = true
+    fetch('/models/plastic.json')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((m) => {
+        const rec = Number(m?.recommended_conf)
+        if (alive && rec > 0) setConf(Math.min(0.9, Math.max(0.1, Math.round(rec * 20) / 20)))
+      })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [])
 
   const t         = readTelemetry(telemetry.data)
   const connected = telemetry.status === 'live' || telemetry.status === 'polling'

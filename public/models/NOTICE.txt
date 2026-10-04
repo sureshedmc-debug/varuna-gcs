@@ -7,7 +7,7 @@ YOLOv11n-face (single-class "face" detector), trained on WIDERFACE.
 Source: https://github.com/akanametov/yolo-face (ONNX export mirrored at
 https://huggingface.co/deepghs/yolo-face)
 License: AGPL-3.0 (Ultralytics/YOLO11 family — same license family as
-trash.onnx below).
+plastic.onnx below).
 
 Used locally, in-browser, purely to detect human faces so the trash-detection
 model's output can be filtered to exclude them. Face boxes are never shown or
@@ -18,7 +18,7 @@ coco-yolo.onnx
 --------------
 YOLO11n, official Ultralytics COCO-pretrained weights (80 classes).
 Source: https://huggingface.co/Ultralytics/YOLO11 (yolo11n.pt)
-License: AGPL-3.0 (same family as trash.onnx and face-yolo.onnx).
+License: AGPL-3.0 (same family as plastic.onnx and face-yolo.onnx).
 
 Exported locally to a fixed 320x320 ONNX graph (matching this app's other
 models) and used purely as a verifier: its 'bottle' class identifies plastic
@@ -26,7 +26,9 @@ bottles specifically (trash.onnx is single-class and can't tell), and a
 confident hit on any other real object suppresses an overlapping trash-model
 box the same way the face model does. Runs throttled, not every frame.
 
-trash.onnx
-----------
-Custom-trained model (YOLO11n / Ultralytics), supplied by the project owner.
-Not covered by the notice above.
+plastic.onnx (+ plastic.json)
+-----------------------------
+Custom-trained model (YOLO11s / Ultralytics, 640x640) on the TACO litter
+dataset (tacodataset.org), trained by the project owner in Colab. plastic.json lists its class
+names, which classes the app reports, and the recommended confidence.
+Replaces the earlier single-class trash.onnx. Not covered by the notices above.

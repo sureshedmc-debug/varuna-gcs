@@ -1,0 +1,59 @@
+{
+  "model": "yolo11s",
+  "imgsz": 640,
+  "names": [
+    "plastic bottle",
+    "plastic bag",
+    "plastic cup",
+    "plastic container",
+    "other plastic",
+    "other litter"
+  ],
+  "target_class_ids": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "target_names": [
+    "plastic bottle",
+    "plastic bag",
+    "plastic cup",
+    "plastic container",
+    "other plastic"
+  ],
+  "recommended_conf": 0.223,
+  "output_layout": "[1, 4+nc, N]: cx,cy,w,h then one score per class; no NMS inside",
+  "metrics": {
+    "split": "test",
+    "map50_all": 0.2933,
+    "per_class": {
+      "plastic bottle": {
+        "precision": 0.4604,
+        "recall": 0.5366,
+        "map50": 0.5283
+      },
+      "plastic bag": {
+        "precision": 0.3094,
+        "recall": 0.388,
+        "map50": 0.3155
+      },
+      "plastic cup": {
+        "precision": 0.2734,
+        "recall": 0.4545,
+        "map50": 0.3348
+      },
+      "plastic container": {
+        "precision": 0.1743,
+        "recall": 0.2857,
+        "map50": 0.12
+      },
+      "other plastic": {
+        "precision": 0.318,
+        "recall": 0.3486,
+        "map50": 0.2701
+      }
+    }
+  }
+}

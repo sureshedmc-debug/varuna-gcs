@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { createDetector, mergeBoxes, makeTileGrid, overlapRatio, suppressByPerson } from '../lib/detector'
-import { filterDetections } from '../lib/labels'
+import { createPlasticDetector, mergeBoxes, makeTileGrid, overlapRatio, suppressByPerson } from '../lib/detector'
 import { BoxTracker } from '../lib/track'
 import { api } from '../api/client'
 import { recordTrashCount } from '../lib/detectionStats'
@@ -60,7 +59,6 @@ function classIcon(label) {
 }
 const TILE_TTL = 1500
 const TILE_OVERLAP = 0.35
-const TILE_CONF_FACTOR = 0.6
 const BUDGET_MS = 80
 const MERGE_IOU = 0.4
 const FACE_SUPPRESS_IOU = 0.20
@@ -75,18 +73,14 @@ const FACE_SUPPRESS_IOU = 0.20
 // effect this has, because it runs the other way: fewer human boxes means
 // fewer trash boxes get deleted by them, so trash near a person is now MORE
 // likely to survive, not less. Whether a bag is called trash is decided by
-// TRASH_CONF_* below, not by these.
+// the detection threshold below, not by these.
 const FACE_CONF = 0.70
 const PERSON_CONF = 0.70
-// Trash is held to a LOW bar — it runs below the operator's slider value so
-// small or faint debris still registers; the slider stays the main control.
-const TRASH_CONF_FACTOR = 0.5
-const TRASH_CONF_FLOOR = 0.05
-const ADAPTIVE_CONF = {
-  gridSizeFactors: { 2: 0.85, 3: 0.75, 4: 0.65, 5: 0.55 },
-  gridSizeMinConf:  { 2: 0.08, 3: 0.06, 4: 0.04, 5: 0.03 },
-  successBoost: 0.10, failurePenalty: 0.05, maxAdaptiveConf: 0.4, minAdaptiveConf: 0.02,
-}
+// Detection (public/models/plastic.onnx) uses the operator's slider directly,
+// never below DETECT_CONF_FLOOR. Long-range tiles zoom in, so they may go a
+// little lower (TILE_CONF_FACTOR) to pick up small, distant objects.
+const DETECT_CONF_FLOOR = 0.2
+const TILE_CONF_FACTOR = 0.85
 
 // Hand the main thread back to the browser between model runs, so the UI can
 // paint and take clicks mid-frame instead of freezing while all models run.
@@ -117,7 +111,6 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
   const tileGridRef    = useRef(null)
   const tileIndexRef   = useRef(0)
   const tileBoxesRef   = useRef(new Map())
-  const tileSuccessRef = useRef(new Map())
   const activeTileRef  = useRef(null)
   const tileSkipRef    = useRef(0)
   const emaRef         = useRef(60)
@@ -191,7 +184,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
     let alive = true
     ;(async () => {
       try {
-        const d = await createDetector((m) => alive && setMsg(m))
+        const d = await createPlasticDetector((m) => alive && setMsg(m))
         if (!alive) return d.dispose()
         detRef.current = d
         try {
@@ -233,7 +226,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
 
     for (const b of boxesRef.current) {
       const isHuman = b.label === 'Human'
-      const col = classColor(b.label)
+      const col = b.color || classColor(b.label)
       const conf = Number(b.score) || 0
 
       // Box coordinates in canvas space
@@ -386,17 +379,9 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
     if(!tileGridRef.current||tileGridRef.current.size!==gridSizeRef.current){
       const size=gridSizeRef.current
       tileGridRef.current={size,tiles:makeTileGrid(size,size,TILE_OVERLAP)}
-      tileIndexRef.current=0; tileBoxesRef.current.clear(); tileSuccessRef.current.clear(); setGridSize(size)
+      tileIndexRef.current=0; tileBoxesRef.current.clear(); setGridSize(size)
     }
     return tileGridRef.current.tiles
-  }
-
-  function calcConf(baseConf,gs,tileSuccess,rect){
-    const gf=ADAPTIVE_CONF.gridSizeFactors[gs]||1.0, gmin=ADAPTIVE_CONF.gridSizeMinConf[gs]||0.05
-    let c=Math.max(gmin,Math.min(ADAPTIVE_CONF.maxAdaptiveConf,baseConf*TILE_CONF_FACTOR*gf))
-    if(tileSuccess!==undefined){ if(tileSuccess)c=Math.min(ADAPTIVE_CONF.maxAdaptiveConf,c+ADAPTIVE_CONF.successBoost); else c=Math.max(ADAPTIVE_CONF.minAdaptiveConf,c-ADAPTIVE_CONF.failurePenalty) }
-    const cx=rect.x1+(rect.x2-rect.x1)/2, cy=rect.y1+(rect.y2-rect.y1)/2
-    return Math.max(gmin, c*(1.0-Math.sqrt((cx-0.5)**2+(cy-0.5)**2)*0.3))
   }
 
   async function detectLoop() {
@@ -406,7 +391,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
       const loopFrame={} // the person filter shares one COCO model pass per loop
       let faceBoxes=[], personBoxes=[], trashBoxes=[]
       if(trashDetectionRef.current){
-        try { trashBoxes=await detRef.current.detect(srcElRef.current,{confThr:Math.max(TRASH_CONF_FLOOR,confRef.current*TRASH_CONF_FACTOR),iouThr:0.40}) }
+        try { trashBoxes=await detRef.current.detect(srcElRef.current,{confThr:Math.max(DETECT_CONF_FLOOR,confRef.current),iouThr:0.40}) }
         catch(e){ if(!taintWarned&&/tainted|cross.origin|SecurityError/i.test(e?.message??'')){taintWarned=true;setMsg('Drone stream blocked by CORS')} }
       }
       await yieldToUI()
@@ -426,7 +411,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
       if(runTile){
         const tiles=ensureTileGrid(),idx=tileIndexRef.current%tiles.length,rect=tiles[idx]
         activeTileRef.current=rect
-        try{const tc=calcConf(confRef.current,gridSizeRef.current,tileSuccessRef.current.get(idx),rect),tb=await detRef.current.detect(srcElRef.current,{confThr:tc,iouThr:0.40,rect});tileBoxesRef.current.set(idx,{boxes:tb,ts:performance.now()});tileSuccessRef.current.set(idx,tb.length>0)}catch{}
+        try{const tc=Math.max(DETECT_CONF_FLOOR,confRef.current*TILE_CONF_FACTOR),tb=await detRef.current.detect(srcElRef.current,{confThr:tc,iouThr:0.40,rect});tileBoxesRef.current.set(idx,{boxes:tb,ts:performance.now()})}catch{}
         tileIndexRef.current=idx+1
       } else { activeTileRef.current=null }
       const now=performance.now()
@@ -434,8 +419,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
       const ft=[];for(const{boxes,ts}of tileBoxesRef.current.values()){if(now-ts<=TILE_TTL)ft.push(boxes)}
       const merged=ft.length?mergeBoxes([trashBoxes,...ft],MERGE_IOU):trashBoxes
       let finalTrash=merged
-      if(humanDetectionRef.current){finalTrash=filterDetections(suppressByPerson(suppressByFace(merged,faceBoxes),personBoxes),[])}
-      else{finalTrash=filterDetections(merged,[])}
+      if(humanDetectionRef.current){finalTrash=suppressByPerson(suppressByFace(merged,faceBoxes),personBoxes)}
       recordTrashCount(finalTrash.length) // share trash-only count with the Detections tab
       // Stamp trash with the aircraft's live position (≤ 2x/sec) for the Detections tab + report,
       // and grab a photo of this frame (the boxed view, exactly what the operator saw).
@@ -449,7 +433,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
         let bestArea=(biggest.x2-biggest.x1)*(biggest.y2-biggest.y1)
         for(const b of finalTrash){const a=(b.x2-b.x1)*(b.y2-b.y1);if(a>bestArea){bestArea=a;biggest=b}}
         const size=g.alt?pixelBoxToRealSize({boxW:biggest.x2-biggest.x1,boxH:biggest.y2-biggest.y1,frameW:fw,frameH:fh,altitudeM:g.alt,fovDeg:{horizontal:getFovSettings().fovHorizontalDeg,vertical:getFovSettings().fovVerticalDeg}}):null
-        const cls=biggest.cls==='human'?'trash':(biggest.cls||'trash')
+        const cls=biggest.label||'plastic'
         recordTrashSighting({
           lat:g.pos?g.pos[0]:null, lng:g.pos?g.pos[1]:null, alt:g.alt,
           count:finalTrash.length, confidence:Math.max(...finalTrash.map(b=>Number(b.score)||0)),
@@ -684,8 +668,8 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
           <div className="flex items-center gap-3 rounded-2xl px-4 py-2.5 cursor-pointer"
             onClick={()=>setTrashDetection(v=>!v)}
             style={{background:'rgba(11,18,32,0.85)',border:'1px solid rgba(255,255,255,0.09)',boxShadow:'0 8px 24px rgba(0,0,0,0.4)',minWidth:'220px'}}>
-            <span>🗑️</span>
-            <span className="flex-1 text-[12px] font-semibold text-white/80">Trash Detect</span>
+            <span>🍶</span>
+            <span className="flex-1 text-[12px] font-semibold text-white/80">Plastic Detect</span>
             <SToggle on={trashDetection} color="#3B9EFF" />
           </div>
 

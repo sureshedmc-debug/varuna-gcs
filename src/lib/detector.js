@@ -1,7 +1,7 @@
-﻿import { filterDetections } from './labels'
-
+﻿
 const DEFAULT_IN = 640
-const CLASS_NAMES = ['Trash'] // model's single class 'item' â†’ shown as "Trash"
+// One colour per model class (by class index), used for its on-screen boxes.
+const CLASS_PALETTE = ['#22D3EE', '#a78bfa', '#FF6B6B', '#34d399', '#fbbf24', '#f472b6', '#60a5fa', '#fb923c']
 const PAD_RGB = [114, 114, 114]
 
 let ortPromise = null
@@ -152,7 +152,32 @@ export async function createSession(ort, modelUrl, onProgress) {
   return { session, ep, release }
 }
 
-export async function createDetector(onProgress, modelUrl = '/models/trash.onnx', classNames = ['Trash'], inputSize = DEFAULT_IN) {
+/**
+ * The main detection model (public/models/plastic.onnx, trained in Colab) plus
+ * its sidecar plastic.json: class names, which classes to report, and the
+ * confidence the training notebook found best. Swapping in a retrained model
+ * = replacing those two files; no code change needed.
+ */
+export async function createPlasticDetector(onProgress) {
+  const meta = await fetch('/models/plastic.json').then((r) => {
+    if (!r.ok) throw new Error(`plastic.json: HTTP ${r.status}`)
+    return r.json()
+  })
+  const names = meta.names || ['Plastic']
+  const ids = meta.target_class_ids || meta.plastic_class_ids || names.map((_, i) => i)
+  const det = await createDetector(onProgress, '/models/plastic.onnx', names, meta.imgsz || DEFAULT_IN)
+  const targets = new Set(ids)
+  return {
+    ...det,
+    /** Same as detect(), keeping only the classes the app reports. */
+    async detect(source, opts) {
+      return (await det.detect(source, opts)).filter((b) => targets.has(b.cls))
+    },
+    meta: { names, targetIds: ids, recommendedConf: Number(meta.recommended_conf) || 0.5 },
+  }
+}
+
+export async function createDetector(onProgress, modelUrl = '/models/plastic.onnx', classNames = ['Plastic'], inputSize = DEFAULT_IN) {
   const ort = await loadOrt()
   onProgress && onProgress(`Loading ${classNames[0]} modelâ€¦`)
   const { session, ep, release } = await createSession(ort, modelUrl, onProgress)
@@ -196,27 +221,32 @@ export async function createDetector(onProgress, modelUrl = '/models/trash.onnx'
     const { ratio, padX, padY, cx1, cy1, cw, ch } = meta
     const boxes = []
 
-    // Auto-detect layout from tensor shape - cast to Number for TypedArray safety
+    // Auto-detect layout from tensor shape - cast to Number for TypedArray safety.
+    // Rows = 4 box values + one score per class; the class is the best-scoring one.
     const d1 = Number(dims[1]), d2 = Number(dims[2])
     const isTransposed = d1 < d2
     const n = isTransposed ? d2 : d1
+    const rows = isTransposed ? d1 : d2
+    const nc = Math.max(1, rows - 4)
 
     for (let i = 0; i < n; i++) {
-      let cxp, cyp, wp, hp, score
+      let cxp, cyp, wp, hp
+      let score = -1, cls = 0
       if (isTransposed) {
-        // data layout: [all_cx, all_cy, all_w, all_h, all_scores]
+        // data layout: [all_cx, all_cy, all_w, all_h, all_scores_c0, all_scores_c1, ...]
         cxp   = data[i]
         cyp   = data[n + i]
         wp    = data[2 * n + i]
         hp    = data[3 * n + i]
-        score = data[4 * n + i]
+        for (let c = 0; c < nc; c++) { const s = data[(4 + c) * n + i]; if (s > score) { score = s; cls = c } }
       } else {
-        // data layout: [cx, cy, w, h, score,  cx, cy, w, h, score, ...]
-        cxp   = data[i * 5]
-        cyp   = data[i * 5 + 1]
-        wp    = data[i * 5 + 2]
-        hp    = data[i * 5 + 3]
-        score = data[i * 5 + 4]
+        // data layout: [cx, cy, w, h, score_c0, ...] per anchor
+        const o = i * rows
+        cxp   = data[o]
+        cyp   = data[o + 1]
+        wp    = data[o + 2]
+        hp    = data[o + 3]
+        for (let c = 0; c < nc; c++) { const s = data[o + 4 + c]; if (s > score) { score = s; cls = c } }
       }
 
       if (score < confThr) continue
@@ -232,7 +262,7 @@ export async function createDetector(onProgress, modelUrl = '/models/trash.onnx'
       y2 = Math.max(cy1, Math.min(cy1 + ch, y2))
 
       if (x2 <= x1 || y2 <= y1) continue
-      boxes.push({ x1, y1, x2, y2, score, cls: 0, label: classNames[0] })
+      boxes.push({ x1, y1, x2, y2, score, cls, label: classNames[cls] ?? `Class ${cls}`, color: CLASS_PALETTE[cls % CLASS_PALETTE.length] })
     }
     return nms(boxes, iouThr)
   }
@@ -258,8 +288,7 @@ export async function createDetector(onProgress, modelUrl = '/models/trash.onnx'
     const out = result[outputName]
     // getData() downloads from the GPU on WebGPU; on WASM it returns .data.
     const data = out.getData ? await out.getData() : out.data
-    // filterDetections keeps only trash / plastic-bottle boxes.
-    return filterDetections(postprocess(data, out.dims, meta, confThr, iouThr))
+    return postprocess(data, out.dims, meta, confThr, iouThr)
   }
 
   function dispose() {
@@ -268,7 +297,7 @@ export async function createDetector(onProgress, modelUrl = '/models/trash.onnx'
     release()
   }
 
-  return { detect, dispose, ep, classNames: CLASS_NAMES }
+  return { detect, dispose, ep, classNames }
 }
 
 function iou(a, b) {
@@ -355,7 +384,7 @@ export function makeTileGrid(gridX, gridY, overlap = 0.25) {
 
 /**
  * Dedicated plastic bottle specialist detector (YOLO11s).
- * Runs alongside trash.onnx for high-accuracy dual-model detection.
+ * Runs alongside plastic.onnx to filter out faces.
  */
 export async function createFaceDetector(onProgress) {
   // Face models typically use 320x320. Setting to 320 to resolve potential loading errors.
