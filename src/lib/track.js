@@ -25,7 +25,7 @@ export class BoxTracker {
     this.matchIou = matchIou
     this.smoothing = smoothing // weight given to the NEW observation each update
     this.maxAgeMs = maxAgeMs
-    this.tracks = [] // { id,x1,y1,x2,y2,score,label,color,cls,feat,rl,lastSeen }
+    this.tracks = [] // { id,x1,y1,x2,y2,score,label,color,cls,feat,fp,rl,why,lastSeen }
     this.nextId = 1
   }
 
@@ -55,7 +55,9 @@ export class BoxTracker {
         t.color = b.color
         t.cls = b.cls
         t.feat = b.feat
+        t.fp = b.fp
         t.rl = b.rl
+        t.why = b.why
         t.lastSeen = now
         used[best] = true
       } else {
@@ -66,7 +68,7 @@ export class BoxTracker {
     this.tracks = this.tracks.filter((t) => now - t.lastSeen <= this.maxAgeMs)
     // `id` stays the same while the object stays in view (the operator's ✔/✖
     // is attached to it); `cls`, `feat` and `rl` carry the self-learning data.
-    return this.tracks.map(({ id, x1, y1, x2, y2, score, label, color, cls, feat, rl }) => ({ id, x1, y1, x2, y2, score, label, color, cls, feat, rl }))
+    return this.tracks.map(({ id, x1, y1, x2, y2, score, label, color, cls, feat, fp, rl, why }) => ({ id, x1, y1, x2, y2, score, label, color, cls, feat, fp, rl, why }))
   }
 
   reset() {

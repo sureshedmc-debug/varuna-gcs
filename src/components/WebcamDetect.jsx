@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { createPlasticDetector, mergeBoxes, makeTileGrid, overlapRatio, suppressByPerson } from '../lib/detector'
 import { BoxTracker } from '../lib/track'
 import { api } from '../api/client'
@@ -13,7 +14,7 @@ import { getFovSettings, pixelBoxToRealSize } from '../lib/sizeEstimate'
 import { getAlertSettings } from '../lib/alertSettings'
 import { sendBigDumpEmail } from '../lib/alerts/email'
 import {
-  createLearner, boxFeatures, cropStats, saveFeedback, feedbackCount, clearFeedback, exportFeedback,
+  createLearner, boxFeatures, cropInfo, saveFeedback, deleteFeedback, feedbackCount, clearFeedback, exportFeedback,
   learnerEnabled, setLearnerEnabled, showFilteredEnabled, setShowFilteredEnabled,
 } from '../lib/feedbackLearner'
 
@@ -84,6 +85,9 @@ const PERSON_CONF = 0.70
 // never below DETECT_CONF_FLOOR. Long-range tiles zoom in, so they may go a
 // little lower (TILE_CONF_FACTOR) to pick up small, distant objects.
 const DETECT_CONF_FLOOR = 0.2
+// An answered object keeps its answer at its last position this long after it
+// was last seen (detections flicker, and the tracker then starts a new track).
+const ANSWER_HOLD_MS = 15000
 const TILE_CONF_FACTOR = 0.85
 
 // Hand the main thread back to the browser between model runs, so the UI can
@@ -128,6 +132,8 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
   // the canvas so a tap can be matched to a box.
   const learnerRef      = useRef(null)
   const answeredRef     = useRef(new Map())
+  const recentAnswersRef = useRef([])   // [{y, box, t}] — answers remembered by position
+  const lastAnswerRef   = useRef(null)  // for Undo
   const learnOnRef      = useRef(learnerEnabled())
   const showFilteredRef = useRef(showFilteredEnabled())
   const xformRef        = useRef(null)
@@ -151,6 +157,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
   const [learnStats,       setLearnStats]       = useState(null)
   const [savedAnswers,     setSavedAnswers]     = useState(0)
   const [learnNote,        setLearnNote]        = useState('')
+  const [canUndo,          setCanUndo]          = useState(false)
 
   // The gear slider's value. It has to be state, not a bare ref assignment:
   // `confRef.current = confThr` in the component body re-ran on EVERY render,
@@ -320,7 +327,10 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
       ctx.font = `600 ${fontSize}px Inter, system-ui, sans-serif`
       const icon     = classIcon(b.label)
       const confTxt  = isHuman ? '' : ` ${Math.round(conf * 100)}%`
-      const mark = b.answered === 1 ? '  ✔' : b.answered === 0 ? '  ✖ not plastic' : unsure ? '  ?' : filtered ? '  · filtered' : ''
+      const mark = b.answered === 1 || (b.why === 'rule' && b.rl === 'show') ? '  ✔'
+        : b.answered === 0 ? '  ✖ not plastic'
+        : unsure ? '  ?'
+        : filtered ? (b.why === 'rule' ? '  ✖ your answer' : '  · filtered') : ''
       const pillText = `${icon}  ${b.label}${confTxt}${mark}`
 
       const textW  = ctx.measureText(pillText).width
@@ -461,18 +471,31 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
       const lrn=learnerRef.current
       const scored=finalTrash.map(b=>{
         if(!lrn) return {...b,rl:'show'}
-        const feat=boxFeatures(b,fw,fh,lrn.nClasses,cropStats(el,b))
-        return {...b,feat,rl:learnOnRef.current?lrn.decide(feat).action:'show'}
+        const ci=cropInfo(el,b) // colour stats + appearance fingerprint
+        const feat=boxFeatures(b,fw,fh,lrn.nClasses,ci?.stats)
+        const fp=ci?.fp||null
+        if(!learnOnRef.current) return {...b,feat,fp,rl:'show'}
+        const d=lrn.decide(feat,fp)
+        return {...b,feat,fp,rl:d.action,why:d.reason}
       })
       const visible=scored.filter(b=>b.rl!=='hide'||showFilteredRef.current)
       const lf=[] // face boxes are used for trash suppression above but never drawn - show body only
       const lp=humanDetectionRef.current?personBoxes.map(b=>({...b,label:'Human',color:HUMAN_COLOR,cls:'human'})):[]
       const topT=visible.sort((a,b)=>b.score-a.score).slice(0,12)
-      // The operator's answer for a box overrides the learner for as long as it stays in view.
+      // The operator's answer for a box always wins: while it stays tracked, and
+      // for ANSWER_HOLD_MS after it was last seen at that spot — so an answered
+      // object that flickers out and back (a new track) keeps its answer.
       const answers=answeredRef.current
+      const nowMs=Date.now()
+      const recentAns=recentAnswersRef.current=recentAnswersRef.current.filter(r=>nowMs-r.t<ANSWER_HOLD_MS)
       const tracked=trackerRef.current.update([...lf,...lp,...topT],now).map(b=>{
-        const a=answers.get(b.id)
-        return a===undefined?b:{...b,answered:a,rl:a?'show':'rejected'}
+        if(b.cls==='human'||!learnOnRef.current) return b
+        let a=answers.get(b.id)
+        const near=recentAns.find(r=>overlapRatio(b,r.box)>=0.5&&overlapRatio(r.box,b)>=0.5)
+        if(a===undefined&&near){a=near.y;answers.set(b.id,a)}
+        if(a===undefined) return b
+        if(near){near.box={x1:b.x1,y1:b.y1,x2:b.x2,y2:b.y2};near.t=nowMs} // follow it while in view
+        return {...b,answered:a,rl:a?'show':'rejected'}
       })
       if(answers.size){const live=new Set(tracked.map(b=>b.id));for(const id of answers.keys()){if(!live.has(id))answers.delete(id)}}
       boxesRef.current=tracked.filter(b=>b.rl!=='rejected'||showFilteredRef.current)
@@ -624,30 +647,51 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
     if(!hit){setAsk(null);return}
     const cl=(v)=>Math.min(1,Math.max(0,v))
     setAsk({
-      id:hit.id, label:hit.label, score:hit.score, feat:hit.feat,
+      id:hit.id, label:hit.label, score:hit.score, feat:hit.feat, fp:hit.fp||null,
+      srcBox:{x1:hit.x1,y1:hit.y1,x2:hit.x2,y2:hit.y2},
       box:{x1:cl(hit.x1/xf.vw),y1:cl(hit.y1/xf.vh),x2:cl(hit.x2/xf.vw),y2:cl(hit.y2/xf.vh)},
       image:captureFrame(), // the frame as it was when tapped
-      x:Math.min(px,r.width-210), y:Math.min(py,r.height-110),
+      cx:e.clientX, cy:e.clientY, // screen position of the tap, for the floating question
     })
   }
+
+  const noteTimerRef = useRef(0)
+  function flashNote(text,ms=2500){clearTimeout(noteTimerRef.current);setLearnNote(text);noteTimerRef.current=setTimeout(()=>setLearnNote(''),ms)}
 
   function answer(y){
     const a=ask, lrn=learnerRef.current
     setAsk(null)
     if(!a||!lrn) return
-    lrn.update(a.feat,y)
+    lrn.update(a.feat,y,a.fp)
     answeredRef.current.set(a.id,y)
+    const rec={y,box:a.srcBox,t:Date.now()}
+    recentAnswersRef.current.push(rec)
+    const last={id:a.id,rec,savedId:null}
+    lastAnswerRef.current=last
     setLearnStats(lrn.stats())
-    setLearnNote(y?`Learned: ${a.label} ✔`:`Learned: not plastic ✖`)
-    setTimeout(()=>setLearnNote(''),1800)
+    setCanUndo(true)
+    flashNote(y?`Learned: ${a.label} ✔ — always shown`:'Learned: not plastic ✖ — hidden from now on',6000)
     saveFeedback({image:a.image,box:a.box,label:y,className:a.label,score:a.score})
-      .then(()=>feedbackCount()).then(setSavedAnswers).catch(()=>{})
+      .then(id=>{last.savedId=id;return feedbackCount()}).then(setSavedAnswers).catch(()=>{})
+  }
+
+  function undoLast(){
+    const last=lastAnswerRef.current, lrn=learnerRef.current
+    if(!last||!lrn||!lrn.undo()) return
+    lastAnswerRef.current=null
+    answeredRef.current.delete(last.id)
+    recentAnswersRef.current=recentAnswersRef.current.filter(r=>r!==last.rec)
+    setLearnStats(lrn.stats())
+    setCanUndo(false)
+    flashNote('Undone',1500)
+    const del=last.savedId?deleteFeedback(last.savedId):Promise.resolve()
+    del.then(()=>feedbackCount()).then(setSavedAnswers).catch(()=>{})
   }
 
   function resetLearning(){
     if(!learnerRef.current) return
     if(!window.confirm('Forget everything the self-learning filter has learned and delete the saved answers?')) return
-    learnerRef.current.reset(); answeredRef.current.clear()
+    learnerRef.current.reset(); answeredRef.current.clear(); recentAnswersRef.current=[]; lastAnswerRef.current=null; setCanUndo(false)
     setLearnStats(learnerRef.current.stats())
     clearFeedback().then(()=>setSavedAnswers(0))
   }
@@ -655,7 +699,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
   async function exportAnswers(){
     try{
       const n=await exportFeedback(detRef.current?.meta?.names||[])
-      setLearnNote(n?`Exported ${n} answers`:'No answers saved yet'); setTimeout(()=>setLearnNote(''),2500)
+      flashNote(n?`Exported ${n} answers`:'No answers saved yet')
     }catch(e){console.warn('[export]',e)}
   }
 
@@ -681,23 +725,36 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
       <img   ref={streamImgRef} alt="" className="hidden" />
       <canvas ref={canvasRef} className="h-full w-full" onClick={onCanvasTap} />
 
-      {/* ✔ / ✖ for the tapped box — the self-learning filter's reward */}
-      {ask&&(
-        <div className="absolute z-40 rounded-2xl p-3" style={{left:Math.max(8,ask.x),top:Math.max(8,ask.y),width:200,background:'rgba(11,18,32,0.95)',border:'1px solid rgba(255,255,255,0.15)',boxShadow:'0 10px 30px rgba(0,0,0,0.5)'}}>
+      {/* ✔ / ✖ for the tapped box — the self-learning filter's reward. Rendered
+          into <body> so no panel of the host screen (telemetry, flight
+          commands) can ever cover it. */}
+      {ask&&createPortal(
+        <div className="fixed rounded-2xl p-3" style={{zIndex:2147483000,width:210,
+          left:Math.max(8,Math.min(ask.cx+10,window.innerWidth-218)),
+          top:Math.max(8,Math.min(ask.cy+10,window.innerHeight-128)),
+          background:'rgba(11,18,32,0.97)',border:'1px solid rgba(255,255,255,0.18)',boxShadow:'0 10px 30px rgba(0,0,0,0.55)'}}>
           <div className="mb-2 text-[12px] font-semibold text-white/90">Is this {ask.label}?</div>
           <div className="flex gap-2">
             <button type="button" onClick={()=>answer(1)} className="flex-1 rounded-xl py-1.5 text-[12px] font-bold text-white active:scale-95" style={{background:'rgba(50,215,75,0.85)'}}>✔ Plastic</button>
             <button type="button" onClick={()=>answer(0)} className="flex-1 rounded-xl py-1.5 text-[12px] font-bold text-white active:scale-95" style={{background:'rgba(255,69,58,0.85)'}}>✖ Not</button>
           </div>
           <button type="button" onClick={()=>setAsk(null)} className="mt-1.5 w-full text-[10px] text-white/50">cancel</button>
-        </div>
+        </div>,
+        document.body,
       )}
 
       {/* teaching hint / last answer */}
       {status==='running'&&(learnNote||learnOn)&&(
-        <div className="pointer-events-none absolute left-3 top-12 z-20 rounded-full px-3 py-1 text-[10.5px] font-semibold text-white/85"
-          style={{background:learnNote?'rgba(50,215,75,0.35)':'rgba(11,18,32,0.7)',border:'1px solid rgba(255,255,255,0.08)'}}>
-          {learnNote||'🧠 Tap a box to teach: ✔ plastic / ✖ not'}
+        <div className="absolute left-1/2 top-3 z-20 flex -translate-x-1/2 items-center gap-2">
+          <div className="pointer-events-none rounded-full px-3 py-1 text-[10.5px] font-semibold text-white/85"
+            style={{background:learnNote?'rgba(50,215,75,0.35)':'rgba(11,18,32,0.7)',border:'1px solid rgba(255,255,255,0.08)'}}>
+            {learnNote||'🧠 Tap a box to teach: ✔ plastic / ✖ not'}
+          </div>
+          {canUndo&&(
+            <button type="button" onClick={undoLast}
+              className="rounded-full px-3 py-1 text-[10.5px] font-bold text-white active:scale-95"
+              style={{background:'rgba(255,159,10,0.85)'}}>↶ Undo last answer</button>
+          )}
         </div>
       )}
 
@@ -840,7 +897,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
             style={{background:'rgba(11,18,32,0.85)',border:'1px solid rgba(255,255,255,0.09)',boxShadow:'0 8px 24px rgba(0,0,0,0.4)',minWidth:'220px',maxWidth:'260px'}}>
             <div className="text-[11px] text-white/75">
               {learnStats?.answers
-                ? <>Learned from <b className="text-white">{learnStats.answers}</b> answers ({learnStats.plastic} ✔ · {learnStats.notPlastic} ✖)
+                ? <>Learned from <b className="text-white">{learnStats.answers}</b> answers ({learnStats.plastic} ✔ · {learnStats.notPlastic} ✖) · <b className="text-white">{learnStats.rules}</b> remembered objects
                     {learnStats.recentAccuracy!=null&&<> · predicts <b className="text-white">{Math.round(learnStats.recentAccuracy*100)}%</b> right</>}</>
                 : 'No answers yet — tap boxes on the video to teach it.'}
             </div>
