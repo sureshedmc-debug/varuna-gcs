@@ -12,6 +12,10 @@ import { StatusOrb } from './ui'
 import { getFovSettings, pixelBoxToRealSize } from '../lib/sizeEstimate'
 import { getAlertSettings } from '../lib/alertSettings'
 import { sendBigDumpEmail } from '../lib/alerts/email'
+import {
+  createLearner, boxFeatures, cropStats, saveFeedback, feedbackCount, clearFeedback, exportFeedback,
+  learnerEnabled, setLearnerEnabled, showFilteredEnabled, setShowFilteredEnabled,
+} from '../lib/feedbackLearner'
 
 // One auto-alert at most every this many seconds, no matter how many frames
 // still contain a big dump. Prevents spamming the email channel.
@@ -119,6 +123,15 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
   const gridSizeRef         = useRef(2)
   const humanDetectionRef   = useRef(true)
   const trashDetectionRef   = useRef(true)
+  // Self-learning (lib/feedbackLearner.js): the learner, the operator's answers
+  // per tracked box (id -> 1 plastic / 0 not), and where the frame is drawn on
+  // the canvas so a tap can be matched to a box.
+  const learnerRef      = useRef(null)
+  const answeredRef     = useRef(new Map())
+  const learnOnRef      = useRef(learnerEnabled())
+  const showFilteredRef = useRef(showFilteredEnabled())
+  const xformRef        = useRef(null)
+  const frameCanvasRef  = useRef(null)
 
   const [status, setStatus]               = useState('init')
   const [msg,    setMsg]                  = useState('Loading AI models...')
@@ -132,6 +145,12 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
   const [humanDetection,   setHumanDetection]   = useState(true)
   const [trashDetection,   setTrashDetection]   = useState(true)
   const [isRecording,      setIsRecording]      = useState(false)
+  const [learnOn,          setLearnOn]          = useState(learnOnRef.current)
+  const [showFiltered,     setShowFiltered]     = useState(showFilteredRef.current)
+  const [ask,              setAsk]              = useState(null)   // the box the operator tapped
+  const [learnStats,       setLearnStats]       = useState(null)
+  const [savedAnswers,     setSavedAnswers]     = useState(0)
+  const [learnNote,        setLearnNote]        = useState('')
 
   // The gear slider's value. It has to be state, not a bare ref assignment:
   // `confRef.current = confThr` in the component body re-ran on EVERY render,
@@ -174,6 +193,8 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
   useEffect(() => { longRangeRef.current        = longRange        }, [longRange])
   useEffect(() => { humanDetectionRef.current   = humanDetection   }, [humanDetection])
   useEffect(() => { trashDetectionRef.current   = trashDetection   }, [trashDetection])
+  useEffect(() => { learnOnRef.current = learnOn; setLearnerEnabled(learnOn) }, [learnOn])
+  useEffect(() => { showFilteredRef.current = showFiltered; setShowFilteredEnabled(showFiltered) }, [showFiltered])
 
   function suppressByFace(trashBoxes, faceBoxes) {
     if (!faceBoxes.length) return trashBoxes
@@ -187,6 +208,9 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
         const d = await createPlasticDetector((m) => alive && setMsg(m))
         if (!alive) return d.dispose()
         detRef.current = d
+        learnerRef.current = createLearner(d.meta.names)
+        setLearnStats(learnerRef.current.stats())
+        feedbackCount().then((n) => alive && setSavedAnswers(n))
         try {
           const { createFaceDetector } = await import('../lib/faceDetector')
           const fd = await createFaceDetector((m) => alive && setMsg(m))
@@ -226,7 +250,13 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
 
     for (const b of boxesRef.current) {
       const isHuman = b.label === 'Human'
-      const col = b.color || classColor(b.label)
+      // Self-learning state: unsure boxes are dashed with a '?', filtered ones
+      // (only drawn with 'Show filtered' on) are grey and faded.
+      const filtered = b.rl === 'hide' || b.rl === 'rejected'
+      const unsure = b.rl === 'explore'
+      const fade = filtered ? 0.45 : 1
+      const dash = isHuman ? [8, 5] : unsure || filtered ? [6, 4] : []
+      const col = filtered ? '#9ca3af' : b.color || classColor(b.label)
       const conf = Number(b.score) || 0
 
       // Box coordinates in canvas space
@@ -237,7 +267,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
 
       // ── 1. Soft filled tint inside the box ──────────────────────────
       ctx.save()
-      ctx.globalAlpha = 0.08
+      ctx.globalAlpha = 0.08 * fade
       ctx.fillStyle = col
       ctx.beginPath()
       ctx.roundRect(x, y, w, h, 6)
@@ -247,10 +277,10 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
       // ── 2. Double-stroke glow (wide faint + thin sharp) ─────────────
       // Outer glow
       ctx.save()
-      ctx.globalAlpha = 0.22
+      ctx.globalAlpha = 0.22 * fade
       ctx.strokeStyle = col
       ctx.lineWidth = 8
-      ctx.setLineDash(isHuman ? [8, 5] : [])
+      ctx.setLineDash(dash)
       ctx.beginPath()
       ctx.roundRect(x, y, w, h, 6)
       ctx.stroke()
@@ -258,10 +288,10 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
 
       // Inner crisp stroke
       ctx.save()
-      ctx.globalAlpha = 1
+      ctx.globalAlpha = 1 * fade
       ctx.strokeStyle = col
       ctx.lineWidth = isHuman ? 1.5 : 2
-      ctx.setLineDash(isHuman ? [8, 5] : [])
+      ctx.setLineDash(dash)
       ctx.beginPath()
       ctx.roundRect(x, y, w, h, 6)
       ctx.stroke()
@@ -275,7 +305,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
       ctx.lineWidth   = 3
       ctx.lineCap     = 'round'
       ctx.setLineDash([])
-      ctx.globalAlpha = 1
+      ctx.globalAlpha = 1 * fade
       // top-left
       ctx.beginPath(); ctx.moveTo(x + arm, y); ctx.lineTo(x + r, y); ctx.arcTo(x, y, x, y + r, r); ctx.lineTo(x, y + arm); ctx.stroke()
       // top-right
@@ -290,7 +320,8 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
       ctx.font = `600 ${fontSize}px Inter, system-ui, sans-serif`
       const icon     = classIcon(b.label)
       const confTxt  = isHuman ? '' : ` ${Math.round(conf * 100)}%`
-      const pillText = `${icon}  ${b.label}${confTxt}`
+      const mark = b.answered === 1 ? '  ✔' : b.answered === 0 ? '  ✖ not plastic' : unsure ? '  ?' : filtered ? '  · filtered' : ''
+      const pillText = `${icon}  ${b.label}${confTxt}${mark}`
 
       const textW  = ctx.measureText(pillText).width
       const pillH  = fontSize + 10
@@ -302,7 +333,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
 
       // pill background — frosted glass effect (dark fill + colored border)
       ctx.save()
-      ctx.globalAlpha = 0.88
+      ctx.globalAlpha = 0.88 * fade
       ctx.fillStyle = 'rgba(8, 14, 26, 0.82)'
       ctx.beginPath()
       ctx.roundRect(pillX, clampY, pillW, pillH, pillR)
@@ -313,7 +344,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
       ctx.save()
       ctx.strokeStyle = col
       ctx.lineWidth   = 1.5
-      ctx.globalAlpha = 0.9
+      ctx.globalAlpha = 0.9 * fade
       ctx.beginPath()
       ctx.roundRect(pillX, clampY, pillW, pillH, pillR)
       ctx.stroke()
@@ -322,7 +353,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
       // pill text
       ctx.save()
       ctx.fillStyle   = '#ffffff'
-      ctx.globalAlpha = 1
+      ctx.globalAlpha = 1 * fade
       ctx.font        = `600 ${fontSize}px Inter, system-ui, sans-serif`
       ctx.textBaseline = 'middle'
       ctx.fillText(pillText, pillX + 11, clampY + pillH / 2)
@@ -337,7 +368,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
 
         // track
         ctx.save()
-        ctx.globalAlpha = 0.25
+        ctx.globalAlpha = 0.25 * fade
         ctx.fillStyle   = '#ffffff'
         ctx.beginPath()
         ctx.roundRect(barX, barY, barW, barH, 2)
@@ -346,7 +377,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
 
         // fill
         ctx.save()
-        ctx.globalAlpha = 0.9
+        ctx.globalAlpha = 0.9 * fade
         ctx.fillStyle   = col
         ctx.beginPath()
         ctx.roundRect(barX, barY, barW * conf, barH, 2)
@@ -365,6 +396,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
     if(vw&&vh){
       const scale=Math.min(cw/vw,ch/vh), dw=vw*scale, dh=vh*scale, ox=(cw-dw)/2, oy=(ch-dh)/2
       ctx.drawImage(el,ox,oy,dw,dh)
+      xformRef.current={ox,oy,dw,dh,vw,vh}
       if(longRangeRef.current&&activeTileRef.current&&runningRef.current){
         const t=activeTileRef.current; ctx.save(); ctx.setLineDash([5,5]); ctx.lineWidth=1.5
         ctx.strokeStyle='rgba(255,255,255,0.35)'
@@ -420,40 +452,60 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
       const merged=ft.length?mergeBoxes([trashBoxes,...ft],MERGE_IOU):trashBoxes
       let finalTrash=merged
       if(humanDetectionRef.current){finalTrash=suppressByPerson(suppressByFace(merged,faceBoxes),personBoxes)}
-      recordTrashCount(finalTrash.length) // share trash-only count with the Detections tab
-      // Stamp trash with the aircraft's live position (≤ 2x/sec) for the Detections tab + report,
+      // Self-learning: score every box. 'show' = counted as before, 'explore' =
+      // drawn with a '?' for the operator to answer (not counted), 'hide' = a
+      // learned false alarm. Features are computed even with learning off, so
+      // the operator can still teach it.
+      const el=srcElRef.current
+      const [fw,fh]=el?srcSize(el):[0,0]
+      const lrn=learnerRef.current
+      const scored=finalTrash.map(b=>{
+        if(!lrn) return {...b,rl:'show'}
+        const feat=boxFeatures(b,fw,fh,lrn.nClasses,cropStats(el,b))
+        return {...b,feat,rl:learnOnRef.current?lrn.decide(feat).action:'show'}
+      })
+      const visible=scored.filter(b=>b.rl!=='hide'||showFilteredRef.current)
+      const lf=[] // face boxes are used for trash suppression above but never drawn - show body only
+      const lp=humanDetectionRef.current?personBoxes.map(b=>({...b,label:'Human',color:HUMAN_COLOR,cls:'human'})):[]
+      const topT=visible.sort((a,b)=>b.score-a.score).slice(0,12)
+      // The operator's answer for a box overrides the learner for as long as it stays in view.
+      const answers=answeredRef.current
+      const tracked=trackerRef.current.update([...lf,...lp,...topT],now).map(b=>{
+        const a=answers.get(b.id)
+        return a===undefined?b:{...b,answered:a,rl:a?'show':'rejected'}
+      })
+      if(answers.size){const live=new Set(tracked.map(b=>b.id));for(const id of answers.keys()){if(!live.has(id))answers.delete(id)}}
+      boxesRef.current=tracked.filter(b=>b.rl!=='rejected'||showFilteredRef.current)
+      const counted=tracked.filter(b=>b.cls!=='human'&&b.rl==='show')
+      recordTrashCount(counted.length) // share plastic-only count with the Detections tab
+      // Stamp plastic with the aircraft's live position (≤ 2x/sec) for the Detections tab + report,
       // and grab a photo of this frame (the boxed view, exactly what the operator saw).
-      if(finalTrash.length>0&&now-lastGeoTagRef.current>=500){
+      if(counted.length>0&&now-lastGeoTagRef.current>=500){
         lastGeoTagRef.current=now
         const g=geoRef.current
         // Rough real-world size of the biggest box for this frame.
-        const el=srcElRef.current
-        const [fw,fh]=el?srcSize(el):[0,0]
-        let biggest=finalTrash[0]
+        let biggest=counted[0]
         let bestArea=(biggest.x2-biggest.x1)*(biggest.y2-biggest.y1)
-        for(const b of finalTrash){const a=(b.x2-b.x1)*(b.y2-b.y1);if(a>bestArea){bestArea=a;biggest=b}}
+        for(const b of counted){const a=(b.x2-b.x1)*(b.y2-b.y1);if(a>bestArea){bestArea=a;biggest=b}}
         const size=g.alt?pixelBoxToRealSize({boxW:biggest.x2-biggest.x1,boxH:biggest.y2-biggest.y1,frameW:fw,frameH:fh,altitudeM:g.alt,fovDeg:{horizontal:getFovSettings().fovHorizontalDeg,vertical:getFovSettings().fovVerticalDeg}}):null
         const cls=biggest.label||'plastic'
         recordTrashSighting({
           lat:g.pos?g.pos[0]:null, lng:g.pos?g.pos[1]:null, alt:g.alt,
-          count:finalTrash.length, confidence:Math.max(...finalTrash.map(b=>Number(b.score)||0)),
+          count:counted.length, confidence:Math.max(...counted.map(b=>Number(b.score)||0)),
           source:sourceRef.current, posSource:g.posSource, accuracy:g.accuracy,
           photo:capturePhoto(),
           className:cls, estWidthM:size?.widthM??null, estHeightM:size?.heightM??null,
         })
         // Big-dump auto alerts. Guarded by cooldown and per-channel toggles.
         const settings=getAlertSettings()
-        if(finalTrash.length>=Math.max(1,Number(settings.bigDumpThreshold)||8)&&Date.now()-lastAlertAtRef.current>ALERT_COOLDOWN_MS){
+        if(counted.length>=Math.max(1,Number(settings.bigDumpThreshold)||8)&&Date.now()-lastAlertAtRef.current>ALERT_COOLDOWN_MS){
           lastAlertAtRef.current=Date.now()
-          const alert={itemCount:finalTrash.length,cls,lat:g.pos?g.pos[0]:null,lng:g.pos?g.pos[1]:null,source:sourceRef.current}
+          const alert={itemCount:counted.length,cls,lat:g.pos?g.pos[0]:null,lng:g.pos?g.pos[1]:null,source:sourceRef.current}
           if(settings.enableEmailOnBigDump){sendBigDumpEmail(alert).catch(()=>{})}
         }
       }
-      const lf=[] // face boxes are used for trash suppression above but never drawn � show body only
-      const lp=humanDetectionRef.current?personBoxes.map(b=>({...b,label:'Human',color:HUMAN_COLOR,cls:'human'})):[]
-      const topT=finalTrash.sort((a,b)=>b.score-a.score).slice(0,10)
-      boxesRef.current=trackerRef.current.update([...lf,...lp,...topT],now)
-      setCount(boxesRef.current.length); onCount?.(boxesRef.current.length)
+      const shownCount=boxesRef.current.filter(b=>b.rl!=='hide'&&b.rl!=='rejected').length
+      setCount(shownCount); onCount?.(shownCount)
       frames++
       if(now-t0>600){setFps(Math.round(frames*1000/(now-t0)));frames=0;t0=now}
       await new Promise(r=>requestAnimationFrame(r))
@@ -494,6 +546,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
     if(streamImgRef.current)streamImgRef.current.src=''
     srcElRef.current=null; boxesRef.current=[]; tileBoxesRef.current.clear()
     tileGridRef.current=null; activeTileRef.current=null; trackerRef.current.reset()
+    answeredRef.current.clear(); xformRef.current=null; setAsk(null)
     emaRef.current=60; gridSizeRef.current=2; setStatus(s=>s==='running'?'ready':s)
   }
   async function switchSource(next){if(next===source)return;const was=runningRef.current;stop();setSource(next);if(was)await start(next)}
@@ -542,6 +595,70 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
     try{return pc.toDataURL('image/jpeg',0.6)}catch{return null}
   }
 
+  // ── Self-learning: tap a box, answer ✔ / ✖ ─────────────────────────────
+  // The clean camera frame (no boxes drawn) as a JPEG, saved with each answer
+  // so the answers can later be exported as a training dataset.
+  function captureFrame(){
+    const el=srcElRef.current; if(!el) return null
+    const [vw,vh]=srcSize(el); if(!vw||!vh) return null
+    if(!frameCanvasRef.current) frameCanvasRef.current=document.createElement('canvas')
+    const fc=frameCanvasRef.current, scale=Math.min(1,640/Math.max(vw,vh))
+    fc.width=Math.round(vw*scale); fc.height=Math.round(vh*scale)
+    const ctx=fc.getContext('2d'); if(!ctx) return null
+    ctx.drawImage(el,0,0,fc.width,fc.height)
+    try{return fc.toDataURL('image/jpeg',0.85)}catch{return null}
+  }
+
+  function onCanvasTap(e){
+    const cv=canvasRef.current, xf=xformRef.current
+    if(!cv||!xf||!runningRef.current||!learnerRef.current){setAsk(null);return}
+    const r=cv.getBoundingClientRect(), px=e.clientX-r.left, py=e.clientY-r.top
+    const PAD=12 // small boxes are hard to hit — accept taps just outside them
+    let hit=null, hitArea=Infinity
+    for(const b of boxesRef.current){
+      if(b.cls==='human'||!b.feat) continue
+      const x=xf.ox+(b.x1/xf.vw)*xf.dw, y=xf.oy+(b.y1/xf.vh)*xf.dh
+      const w=((b.x2-b.x1)/xf.vw)*xf.dw, h=((b.y2-b.y1)/xf.vh)*xf.dh
+      if(px>=x-PAD&&px<=x+w+PAD&&py>=y-PAD&&py<=y+h+PAD&&w*h<hitArea){hit=b;hitArea=w*h}
+    }
+    if(!hit){setAsk(null);return}
+    const cl=(v)=>Math.min(1,Math.max(0,v))
+    setAsk({
+      id:hit.id, label:hit.label, score:hit.score, feat:hit.feat,
+      box:{x1:cl(hit.x1/xf.vw),y1:cl(hit.y1/xf.vh),x2:cl(hit.x2/xf.vw),y2:cl(hit.y2/xf.vh)},
+      image:captureFrame(), // the frame as it was when tapped
+      x:Math.min(px,r.width-210), y:Math.min(py,r.height-110),
+    })
+  }
+
+  function answer(y){
+    const a=ask, lrn=learnerRef.current
+    setAsk(null)
+    if(!a||!lrn) return
+    lrn.update(a.feat,y)
+    answeredRef.current.set(a.id,y)
+    setLearnStats(lrn.stats())
+    setLearnNote(y?`Learned: ${a.label} ✔`:`Learned: not plastic ✖`)
+    setTimeout(()=>setLearnNote(''),1800)
+    saveFeedback({image:a.image,box:a.box,label:y,className:a.label,score:a.score})
+      .then(()=>feedbackCount()).then(setSavedAnswers).catch(()=>{})
+  }
+
+  function resetLearning(){
+    if(!learnerRef.current) return
+    if(!window.confirm('Forget everything the self-learning filter has learned and delete the saved answers?')) return
+    learnerRef.current.reset(); answeredRef.current.clear()
+    setLearnStats(learnerRef.current.stats())
+    clearFeedback().then(()=>setSavedAnswers(0))
+  }
+
+  async function exportAnswers(){
+    try{
+      const n=await exportFeedback(detRef.current?.meta?.names||[])
+      setLearnNote(n?`Exported ${n} answers`:'No answers saved yet'); setTimeout(()=>setLearnNote(''),2500)
+    }catch(e){console.warn('[export]',e)}
+  }
+
   async function takeSnapshot(){
     const cv=canvasRef.current,el=srcElRef.current; if(!cv||!el)return
     const [vw,vh]=srcSize(el); if(!vw||!vh)return
@@ -562,7 +679,27 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
     <div className="relative h-full w-full overflow-hidden rounded-2xl bg-gradient-to-br from-slate-50 to-blue-50">
       <video ref={videoRef} playsInline muted className="hidden" />
       <img   ref={streamImgRef} alt="" className="hidden" />
-      <canvas ref={canvasRef} className="h-full w-full" />
+      <canvas ref={canvasRef} className="h-full w-full" onClick={onCanvasTap} />
+
+      {/* ✔ / ✖ for the tapped box — the self-learning filter's reward */}
+      {ask&&(
+        <div className="absolute z-40 rounded-2xl p-3" style={{left:Math.max(8,ask.x),top:Math.max(8,ask.y),width:200,background:'rgba(11,18,32,0.95)',border:'1px solid rgba(255,255,255,0.15)',boxShadow:'0 10px 30px rgba(0,0,0,0.5)'}}>
+          <div className="mb-2 text-[12px] font-semibold text-white/90">Is this {ask.label}?</div>
+          <div className="flex gap-2">
+            <button type="button" onClick={()=>answer(1)} className="flex-1 rounded-xl py-1.5 text-[12px] font-bold text-white active:scale-95" style={{background:'rgba(50,215,75,0.85)'}}>✔ Plastic</button>
+            <button type="button" onClick={()=>answer(0)} className="flex-1 rounded-xl py-1.5 text-[12px] font-bold text-white active:scale-95" style={{background:'rgba(255,69,58,0.85)'}}>✖ Not</button>
+          </div>
+          <button type="button" onClick={()=>setAsk(null)} className="mt-1.5 w-full text-[10px] text-white/50">cancel</button>
+        </div>
+      )}
+
+      {/* teaching hint / last answer */}
+      {status==='running'&&(learnNote||learnOn)&&(
+        <div className="pointer-events-none absolute left-3 top-12 z-20 rounded-full px-3 py-1 text-[10.5px] font-semibold text-white/85"
+          style={{background:learnNote?'rgba(50,215,75,0.35)':'rgba(11,18,32,0.7)',border:'1px solid rgba(255,255,255,0.08)'}}>
+          {learnNote||'🧠 Tap a box to teach: ✔ plastic / ✖ not'}
+        </div>
+      )}
 
       {/* status pill */}
       <div className="absolute left-3 top-3 z-20 flex items-center gap-2 rounded-full bg-white/90 backdrop-blur px-3 py-1.5 shadow-lg"
@@ -680,6 +817,45 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
             <span>🧑</span>
             <span className="flex-1 text-[12px] font-semibold text-white/80">Human Detect</span>
             <SToggle on={humanDetection} color="#FF6B6B" />
+          </div>
+
+          {/* Self-learning (reinforcement learning from the operator's ✔ / ✖) */}
+          <div className="flex items-center gap-3 rounded-2xl px-4 py-2.5 cursor-pointer"
+            onClick={()=>setLearnOn(v=>!v)}
+            title="Learns from your ✔ / ✖ taps which detections are false alarms, and hides them"
+            style={{background:'rgba(11,18,32,0.85)',border:'1px solid rgba(255,255,255,0.09)',boxShadow:'0 8px 24px rgba(0,0,0,0.4)',minWidth:'220px'}}>
+            <span>🧠</span>
+            <span className="flex-1 text-[12px] font-semibold text-white/80">Self-learning</span>
+            <SToggle on={learnOn} color="#32D74B" />
+          </div>
+          <div className="flex items-center gap-3 rounded-2xl px-4 py-2.5 cursor-pointer"
+            onClick={()=>setShowFiltered(v=>!v)}
+            title="Also draw (faded) the boxes the self-learning filter hides"
+            style={{background:'rgba(11,18,32,0.85)',border:'1px solid rgba(255,255,255,0.09)',boxShadow:'0 8px 24px rgba(0,0,0,0.4)',minWidth:'220px'}}>
+            <span>👁️</span>
+            <span className="flex-1 text-[12px] font-semibold text-white/80">Show filtered</span>
+            <SToggle on={showFiltered} color="#9ca3af" />
+          </div>
+          <div className="rounded-2xl px-4 py-2.5"
+            style={{background:'rgba(11,18,32,0.85)',border:'1px solid rgba(255,255,255,0.09)',boxShadow:'0 8px 24px rgba(0,0,0,0.4)',minWidth:'220px',maxWidth:'260px'}}>
+            <div className="text-[11px] text-white/75">
+              {learnStats?.answers
+                ? <>Learned from <b className="text-white">{learnStats.answers}</b> answers ({learnStats.plastic} ✔ · {learnStats.notPlastic} ✖)
+                    {learnStats.recentAccuracy!=null&&<> · predicts <b className="text-white">{Math.round(learnStats.recentAccuracy*100)}%</b> right</>}</>
+                : 'No answers yet — tap boxes on the video to teach it.'}
+            </div>
+            <div className="mt-2 flex gap-2">
+              <button type="button" onClick={exportAnswers} disabled={!savedAnswers}
+                className="flex-1 rounded-lg py-1 text-[11px] font-bold text-white disabled:opacity-40"
+                style={{background:'rgba(59,158,255,0.35)',border:'1px solid rgba(59,158,255,0.5)'}}>
+                Export ({savedAnswers})
+              </button>
+              <button type="button" onClick={resetLearning}
+                className="flex-1 rounded-lg py-1 text-[11px] font-semibold text-white/80"
+                style={{background:'rgba(255,69,58,0.18)',border:'1px solid rgba(255,69,58,0.4)'}}>
+                Reset
+              </button>
+            </div>
           </div>
 
         </div>
