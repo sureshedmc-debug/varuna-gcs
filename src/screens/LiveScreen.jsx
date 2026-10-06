@@ -10,6 +10,7 @@ import VideoHUD from '../components/VideoHUD'
 import MapCanvas from '../components/MapCanvas'
 import { pick, num, bool, fmtCoord, DASH } from '../lib/format'
 import { cmd } from '../lib/commands'
+import { getDetectModel } from '../lib/detector'
 
 const WebcamDetect = lazy(() => import('../components/WebcamDetect'))
 const AI_CAM = <path d="M4 7h3l1.5-2h7L17 7h3a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V8a1 1 0 011-1zm8 3a3.5 3.5 0 100 7 3.5 3.5 0 000-7z" fill="currentColor" />
@@ -63,10 +64,10 @@ export default function LiveScreen() {
   const [mainView, setMainView]       = useState('video') // 'video' | 'map' | 'webcam'
   const [conf, setConf]               = useState(0.25)
   // Start the slider at the confidence the model's training run found best
-  // (public/models/plastic.json), snapped to the slider's 5% steps.
+  // (public/models/<selected model>.json), snapped to the slider's 5% steps.
   useEffect(() => {
     let alive = true
-    fetch('/models/plastic.json')
+    fetch(`/models/${getDetectModel()}.json`)
       .then((r) => (r.ok ? r.json() : null))
       .then((m) => {
         const rec = Number(m?.recommended_conf)

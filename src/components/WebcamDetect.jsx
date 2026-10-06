@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { createPlasticDetector, mergeBoxes, makeTileGrid, overlapRatio, suppressByPerson } from '../lib/detector'
+import {
+  createPlasticDetector, mergeBoxes, makeTileGrid, overlapRatio, suppressByPerson,
+  DETECT_MODELS, DEFAULT_DETECT_MODEL, getDetectModel, setDetectModel,
+} from '../lib/detector'
 import { BoxTracker } from '../lib/track'
 import { api } from '../api/client'
 import { recordTrashCount } from '../lib/detectionStats'
@@ -158,6 +161,8 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
   const [savedAnswers,     setSavedAnswers]     = useState(0)
   const [learnNote,        setLearnNote]        = useState('')
   const [canUndo,          setCanUndo]          = useState(false)
+  const [modelKey,         setModelKey]         = useState(getDetectModel)  // which detection model is loaded
+  const [modelBusy,        setModelBusy]        = useState(false)
 
   // The gear slider's value. It has to be state, not a bare ref assignment:
   // `confRef.current = confThr` in the component body re-ran on EVERY render,
@@ -212,9 +217,19 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
     let alive = true
     ;(async () => {
       try {
-        const d = await createPlasticDetector((m) => alive && setMsg(m))
+        let d
+        try {
+          d = await createPlasticDetector((m) => alive && setMsg(m), getDetectModel())
+        } catch (me) {
+          // A test model that won't load must never leave the operator without detection.
+          if (getDetectModel() === DEFAULT_DETECT_MODEL) throw me
+          console.warn('[model] test model failed, using the default:', me)
+          setDetectModel(DEFAULT_DETECT_MODEL)
+          d = await createPlasticDetector((m) => alive && setMsg(m), DEFAULT_DETECT_MODEL)
+        }
         if (!alive) return d.dispose()
         detRef.current = d
+        setModelKey(d.meta.key)
         learnerRef.current = createLearner(d.meta.names)
         setLearnStats(learnerRef.current.stats())
         feedbackCount().then((n) => alive && setSavedAnswers(n))
@@ -688,6 +703,35 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
     del.then(()=>feedbackCount()).then(setSavedAnswers).catch(()=>{})
   }
 
+  // Swap the detection model. Detection is paused while the new model loads
+  // (two models must not run at the same time on the shared AI runtime), and
+  // it restarts by itself if it was running.
+  async function switchModel(key){
+    if(key===modelKey||modelBusy||!detRef.current) return
+    setModelBusy(true)
+    const wasRunning=runningRef.current
+    stop()
+    await new Promise(r=>setTimeout(r,400)) // let an in-flight detection finish
+    try{
+      const d=await createPlasticDetector((m)=>setMsg(m),key)
+      const old=detRef.current
+      detRef.current=d
+      old?.dispose()
+      learnerRef.current=createLearner(d.meta.names) // each model has its own memory
+      setLearnStats(learnerRef.current.stats())
+      recentAnswersRef.current=[]; lastAnswerRef.current=null; setCanUndo(false)
+      setDetectModel(key); setModelKey(key)
+      setConf(Math.min(0.9,Math.max(0.1,Math.round(d.meta.recommendedConf*20)/20)))
+      flashNote(`Model: ${DETECT_MODELS.find(m=>m.key===key)?.label||key}${d.meta.test?' (test)':''}`)
+    }catch(e){
+      console.warn('[model] switch failed:',e)
+      flashNote('Could not load that model — kept the current one',4000)
+    }finally{
+      setModelBusy(false)
+      if(wasRunning) start()
+    }
+  }
+
   function resetLearning(){
     if(!learnerRef.current) return
     if(!window.confirm('Forget everything the self-learning filter has learned and delete the saved answers?')) return
@@ -767,6 +811,13 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
         </span>
       </div>
 
+      {DETECT_MODELS.find(m=>m.key===modelKey)?.test&&(
+        <div className="pointer-events-none absolute bottom-3 left-3 z-20 rounded-full px-3 py-1 text-[10.5px] font-extrabold tracking-wider text-white"
+          style={{background:'rgba(255,159,10,0.9)'}}>
+          TEST MODEL · {DETECT_MODELS.find(m=>m.key===modelKey)?.label}
+        </div>
+      )}
+
       {/* source toggle */}
       <div className="absolute right-3 top-3 z-20 flex gap-1 rounded-xl p-0.5"
         style={{background:'rgba(11,18,32,0.88)',border:'1px solid rgba(255,255,255,0.08)'}}>
@@ -837,6 +888,22 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
           opacity-0 translate-y-3 scale-95
           group-hover:pointer-events-auto group-hover:opacity-100 group-hover:translate-y-0 group-hover:scale-100"
           style={{transition:'opacity 0.25s ease,transform 0.25s cubic-bezier(.34,1.56,.64,1)',transformOrigin:'bottom right'}}>
+
+          {/* Detection model (the test one is marked) */}
+          <div className="flex items-center gap-2 rounded-2xl px-4 py-2.5"
+            style={{background:'rgba(11,18,32,0.85)',border:'1px solid rgba(255,255,255,0.09)',boxShadow:'0 8px 24px rgba(0,0,0,0.4)',minWidth:'220px'}}>
+            <span>🤖</span>
+            <span className="text-[12px] font-semibold text-white/80">Model</span>
+            <div className="ml-auto flex gap-1">
+              {DETECT_MODELS.map(m=>(
+                <button key={m.key} type="button" disabled={modelBusy} onClick={()=>switchModel(m.key)}
+                  className="rounded-lg px-2 py-1 text-[10.5px] font-bold disabled:opacity-50"
+                  style={{background:modelKey===m.key?(m.test?'#FF9F0A':'#3B9EFF'):'rgba(255,255,255,0.08)',color:modelKey===m.key?'#fff':'rgba(255,255,255,0.6)'}}>
+                  {m.label}{m.test?' · test':''}
+                </button>
+              ))}
+            </div>
+          </div>
 
           {/* Confidence */}
           <div className="flex items-center gap-3 rounded-2xl px-4 py-2.5"

@@ -265,7 +265,15 @@ export function createLearner(names) {
   } catch {
     /* ignore */
   }
-  let st = readJson(STATE_KEY)
+  // One memory per model (keyed by its class names), so trying another model
+  // never wipes what was taught to this one. Falls back to the original
+  // unkeyed slot, used before models could be switched.
+  const stateKey = `${STATE_KEY}|${signature}`
+  let st = readJson(stateKey)
+  if (!st) {
+    const legacy = readJson(STATE_KEY)
+    if (legacy?.signature === signature) st = legacy
+  }
   const valid =
     st && st.signature === signature && st.m?.length === dim && st.q?.length === dim && Array.isArray(st.rules)
   if (!valid) st = freshState(signature, dim)
@@ -274,10 +282,10 @@ export function createLearner(names) {
 
   const save = () => {
     st.rules = rules.map((r) => ({ y: r.y, fp: packFp(r.fp) }))
-    if (!writeJson(STATE_KEY, st) && rules.length > 50) {
+    if (!writeJson(stateKey, st) && rules.length > 50) {
       rules = rules.slice(-Math.floor(rules.length / 2)) // over quota: keep the newer half
       st.rules = rules.map((r) => ({ y: r.y, fp: packFp(r.fp) }))
-      writeJson(STATE_KEY, st)
+      writeJson(stateKey, st)
     }
   }
 

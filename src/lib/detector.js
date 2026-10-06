@@ -153,19 +153,42 @@ export async function createSession(ort, modelUrl, onProgress) {
 }
 
 /**
- * The main detection model (public/models/plastic.onnx, trained in Colab) plus
- * its sidecar plastic.json: class names, which classes to report, and the
- * confidence the training notebook found best. Swapping in a retrained model
- * = replacing those two files; no code change needed.
+ * Detection models the operator can pick on the Live view. Each is a pair of
+ * files in public/models: <key>.onnx and its sidecar <key>.json (class names,
+ * which classes to report, recommended confidence). Swapping in a retrained
+ * model = replacing those two files; no code change needed.
  */
-export async function createPlasticDetector(onProgress) {
-  const meta = await fetch('/models/plastic.json').then((r) => {
-    if (!r.ok) throw new Error(`plastic.json: HTTP ${r.status}`)
+export const DETECT_MODELS = [
+  { key: 'plastic', label: 'TACO groups', test: false }, // default: trained on TACO in Colab
+  { key: 'plastic_detection', label: 'Plastic v2', test: true }, // single-class model, under test
+]
+export const DEFAULT_DETECT_MODEL = 'plastic'
+const MODEL_PREF_KEY = 'varuna.detectModel'
+
+export function getDetectModel() {
+  try {
+    const k = localStorage.getItem(MODEL_PREF_KEY)
+    return DETECT_MODELS.some((m) => m.key === k) ? k : DEFAULT_DETECT_MODEL
+  } catch {
+    return DEFAULT_DETECT_MODEL
+  }
+}
+export function setDetectModel(key) {
+  try {
+    localStorage.setItem(MODEL_PREF_KEY, key)
+  } catch {
+    /* private mode */
+  }
+}
+
+export async function createPlasticDetector(onProgress, key = getDetectModel()) {
+  const meta = await fetch(`/models/${key}.json`).then((r) => {
+    if (!r.ok) throw new Error(`${key}.json: HTTP ${r.status}`)
     return r.json()
   })
   const names = meta.names || ['Plastic']
   const ids = meta.target_class_ids || meta.plastic_class_ids || names.map((_, i) => i)
-  const det = await createDetector(onProgress, '/models/plastic.onnx', names, meta.imgsz || DEFAULT_IN)
+  const det = await createDetector(onProgress, `/models/${key}.onnx`, names, meta.imgsz || DEFAULT_IN)
   const targets = new Set(ids)
   return {
     ...det,
@@ -173,7 +196,10 @@ export async function createPlasticDetector(onProgress) {
     async detect(source, opts) {
       return (await det.detect(source, opts)).filter((b) => targets.has(b.cls))
     },
-    meta: { names, targetIds: ids, recommendedConf: Number(meta.recommended_conf) || 0.5 },
+    meta: {
+      key, names, targetIds: ids, recommendedConf: Number(meta.recommended_conf) || 0.5,
+      test: !!DETECT_MODELS.find((m) => m.key === key)?.test,
+    },
   }
 }
 

@@ -32,3 +32,10 @@ Custom-trained model (YOLO11s / Ultralytics, 640x640) on the TACO litter
 dataset (tacodataset.org), trained by the project owner in Colab. plastic.json lists its class
 names, which classes the app reports, and the recommended confidence.
 Replaces the earlier single-class trash.onnx. Not covered by the notices above.
+
+plastic_detection.onnx (+ plastic_detection.json)
+--------------------------------------------------
+Single-class "plastic" model (Ultralytics YOLO, 640x640), supplied by the
+project owner. TEST ONLY: selectable on the Live view (gear -> Model), never
+the default. No evaluation metrics were supplied; the recommended confidence
+in its JSON is the Ultralytics default (0.25).

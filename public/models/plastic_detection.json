@@ -1,0 +1,10 @@
+{
+  "model": "Ultralytics YOLO (single class), exported 2026-10-06",
+  "status": "testing",
+  "imgsz": 640,
+  "names": ["plastic"],
+  "target_class_ids": [0],
+  "recommended_conf": 0.25,
+  "output_layout": "[1, 5, 8400]: cx,cy,w,h,score; no NMS inside",
+  "note": "Test model. recommended_conf is the Ultralytics default (no evaluation metrics were supplied)."
+}
