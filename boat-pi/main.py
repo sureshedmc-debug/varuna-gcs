@@ -437,7 +437,7 @@ def mission_upload(body: MissionUploadRequest):
     except Exception as exc:
         log.exception("Upload failed")
         return fail(f"Unexpected error: {exc}")
-    return ok(f"Mission '{plan['name']}' uploaded to the Pixhawk — {len(plan['waypoints'])} items to collect.",
+    return ok(f"Mission '{plan['name']}' uploaded to the Pixhawk and checked — {len(plan['waypoints'])} items to collect.",
               mission=missions.status())
 
 

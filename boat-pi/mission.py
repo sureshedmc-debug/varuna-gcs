@@ -83,7 +83,9 @@ class MissionManager:
         for wp in waypoints:
             seq_map[len(items)] = wp["id"]
             own_hold = wp.get("hold_s")
-            items.append({"command": nav, "param1": hold_s if own_hold is None else float(own_hold),
+            # ArduRover stores the hold as whole seconds; round rather than let it truncate.
+            hold = round(max(0.0, min(120.0, float(hold_s if own_hold is None else own_hold))))
+            items.append({"command": nav, "param1": hold,
                           "lat": wp["lat"], "lng": wp["lng"], "alt": 0})
         if servo:
             items.append({"command": mavlink.MAV_CMD_DO_SET_SERVO, "frame": mavlink.MAV_FRAME_MISSION,

@@ -148,6 +148,9 @@ class SimBoat:
                 return
             if t == "MISSION_ITEM":
                 msg.x, msg.y = int(msg.x * 1e7), int(msg.y * 1e7)
+            if msg.command == mavlink.MAV_CMD_NAV_WAYPOINT:
+                # ArduRover keeps a waypoint's hold time as whole seconds (uint16).
+                msg.param1 = float(max(0, min(65535, int(msg.param1))))
             self.upload["items"][msg.seq] = msg
             self.upload["next"] = msg.seq + 1
             self.upload["last"] = time.time()
@@ -163,6 +166,8 @@ class SimBoat:
                 self._request_item(self.upload["next"])
         elif t == "MISSION_REQUEST_LIST":
             self.m.mav.mission_count_send(msg.get_srcSystem(), msg.get_srcComponent(), len(self.mission))
+        elif t in ("MISSION_REQUEST_INT", "MISSION_REQUEST") and not self.upload:
+            self._send_item(msg)
         elif t == "MISSION_SET_CURRENT":
             if 0 <= msg.seq < len(self.mission):
                 self.cur = msg.seq
@@ -174,6 +179,20 @@ class SimBoat:
         elif t == "MISSION_CLEAR_ALL":
             self.mission, self.cur = [], 0
             self.m.mav.mission_ack_send(msg.get_srcSystem(), msg.get_srcComponent(), mavlink.MAV_MISSION_ACCEPTED)
+
+    def _send_item(self, req):
+        """Mission download: one stored item, as ArduPilot sends it (item 0 is home)."""
+        src = (req.get_srcSystem(), req.get_srcComponent())
+        if not 0 <= req.seq < len(self.mission):
+            self.m.mav.mission_ack_send(src[0], src[1], mavlink.MAV_MISSION_INVALID_SEQUENCE)
+            return
+        it = self.mission[req.seq]
+        x, y = it.x, it.y
+        if req.seq == 0:
+            x, y = int(self.home[0] * 1e7), int(self.home[1] * 1e7)
+        self.m.mav.mission_item_int_send(src[0], src[1], req.seq, it.frame, it.command, 0, it.autocontinue,
+                                         it.param1, it.param2, it.param3, it.param4, x, y, it.z,
+                                         mavlink.MAV_MISSION_TYPE_MISSION)
 
     def _request_item(self, seq):
         src = self.upload["src"]

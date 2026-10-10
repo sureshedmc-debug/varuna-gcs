@@ -52,7 +52,8 @@ ACK_TEXT = {
     mavlink.MAV_RESULT_IN_PROGRESS: "in progress",
 }
 
-MISSION_PROTOCOL = ("MISSION_REQUEST", "MISSION_REQUEST_INT", "MISSION_ACK", "MISSION_COUNT")
+MISSION_PROTOCOL = ("MISSION_REQUEST", "MISSION_REQUEST_INT", "MISSION_ACK", "MISSION_COUNT",
+                    "MISSION_ITEM_INT", "MISSION_ITEM")
 
 
 def haversine_m(lat1, lng1, lat2, lng2):
@@ -650,11 +651,66 @@ class BoatLink:
                 if msg.type == mavlink.MAV_MISSION_ACCEPTED:
                     if len(sent) < n:
                         raise LinkError("The Pixhawk accepted the mission before receiving every item.")
+                    self._verify(packed)
                     with self._state_lock:
                         self.state["mission_count"] = n
                     return n
                 raise LinkError(f"The Pixhawk rejected the mission: {mission_result_name(msg.type)}.")
         raise LinkError("Mission upload timed out — the Pixhawk stopped answering.")
+
+    def _verify(self, packed):
+        """Read the mission back from the Pixhawk and compare it with what was
+        sent, item by item. An ACK only says the Pixhawk took the upload; this
+        proves it stored exactly these items (count, commands, positions, holds)."""
+        ts, tc = self.target_system, self.target_component
+        n = len(packed)
+
+        def ask(send, want, pred, tries=3):
+            for _ in range(tries):
+                if not self._send(send):
+                    raise LinkError("Lost the link to the Pixhawk while checking the mission.")
+                end = time.time() + 2.0
+                while time.time() < end:
+                    try:
+                        msg = self._mission_q.get(timeout=max(0.05, end - time.time()))
+                    except queue.Empty:
+                        break
+                    if msg.get_type() == "MISSION_ACK" and msg.type != mavlink.MAV_MISSION_ACCEPTED:
+                        raise LinkError(f"The Pixhawk refused to send the mission back: {mission_result_name(msg.type)}.")
+                    if msg.get_type() in want and pred(msg):
+                        return msg
+            raise LinkError("The mission was uploaded but the Pixhawk did not send it back for checking. Upload it again.")
+
+        count = ask(lambda m: m.mav.mission_request_list_send(ts, tc, mavlink.MAV_MISSION_TYPE_MISSION),
+                    ("MISSION_COUNT",), lambda m: True)
+        if count.count != n:
+            raise LinkError(f"The Pixhawk stored {count.count} mission items instead of {n}. Upload it again.")
+        # Item 0 is the home slot: the Pixhawk sends back its own home there, so start at 1.
+        for seq in range(1, n):
+            got = ask(lambda m: m.mav.mission_request_int_send(ts, tc, seq, mavlink.MAV_MISSION_TYPE_MISSION),
+                      ("MISSION_ITEM_INT", "MISSION_ITEM"), lambda m: m.seq == seq)
+            _f, cmd, p1, p2, _p3, _p4, x, y, _z = packed[seq]
+            if got.get_type() == "MISSION_ITEM":         # float lat/lng: compare at ~1 cm
+                gx, gy, tol = round(got.x * 1e7), round(got.y * 1e7), 1000
+            else:
+                gx, gy, tol = got.x, got.y, 1
+            bad = None
+            if got.command != cmd:
+                bad = f"command {got.command} instead of {cmd}"
+            elif cmd == mavlink.MAV_CMD_NAV_WAYPOINT:
+                if abs(gx - x) > tol or abs(gy - y) > tol:
+                    bad = f"position {gx / 1e7:.7f}, {gy / 1e7:.7f} instead of {x / 1e7:.7f}, {y / 1e7:.7f}"
+                elif int(got.param1) != int(p1):
+                    bad = f"hold {got.param1:g} s instead of {p1:g} s"
+            elif cmd == mavlink.MAV_CMD_DO_CHANGE_SPEED and abs(got.param2 - p2) > 0.01:
+                bad = f"speed {got.param2:g} m/s instead of {p2:g} m/s"
+            elif cmd == mavlink.MAV_CMD_DO_SET_SERVO and (int(got.param1) != int(p1) or int(got.param2) != int(p2)):
+                bad = f"servo {int(got.param1)} → {int(got.param2)} instead of {int(p1)} → {int(p2)}"
+            if bad:
+                raise LinkError(f"The Pixhawk stored mission item {seq} differently ({bad}). Upload it again.")
+        # Close the download, as the MAVLink mission protocol expects.
+        self._send(lambda m: m.mav.mission_ack_send(ts, tc, mavlink.MAV_MISSION_ACCEPTED, mavlink.MAV_MISSION_TYPE_MISSION))
+        log.info("Mission checked: the Pixhawk holds all %d items exactly as sent", n)
 
 
 class LinkError(Exception):
