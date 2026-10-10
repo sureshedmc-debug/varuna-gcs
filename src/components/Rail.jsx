@@ -27,6 +27,38 @@ const NAV_ITEMS = [
     ),
   },
   {
+    id: 'boat', label: 'Boat', tabId: 'boat',
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 15h18l-2.5 5h-13z"/><path d="M11 3v12"/><path d="M11 4l6 9h-6"/><path d="M11 7l-5 6h5"/>
+      </svg>
+    ),
+  },
+  {
+    id: 'collect', label: 'Collect', tabId: 'collect',
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 21s-7-7.6-7-12a7 7 0 0114 0c0 4.4-7 12-7 12z"/><path d="M9.5 9l1.8 1.8L15 7.2"/>
+      </svg>
+    ),
+  },
+  {
+    id: 'vision', label: 'Boat Vision', tabId: 'vision',
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 7V5a2 2 0 012-2h2M17 3h2a2 2 0 012 2v2M21 17v2a2 2 0 01-2 2h-2M7 21H5a2 2 0 01-2-2v-2"/><path d="M6 15h12l-1.6 3H7.6z"/><circle cx="12" cy="10" r="2.5"/>
+      </svg>
+    ),
+  },
+  {
+    id: 'water', label: 'Water Lab', tabId: 'water',
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 2.7s-6.5 7-6.5 11.6a6.5 6.5 0 0013 0C18.5 9.7 12 2.7 12 2.7z"/><path d="M8.8 14.5a3.3 3.3 0 003.2 3"/>
+      </svg>
+    ),
+  },
+  {
     id: 'detections', label: 'Detections', tabId: 'detections',
     icon: (
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

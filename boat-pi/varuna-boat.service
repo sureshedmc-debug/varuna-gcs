@@ -1,0 +1,15 @@
+[Unit]
+Description=VARUNA boat backend (FastAPI + pymavlink)
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+User=pi
+WorkingDirectory=/home/pi/varuna-boat
+ExecStart=/home/pi/varuna-boat/venv/bin/python main.py
+Restart=always
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

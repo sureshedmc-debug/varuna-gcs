@@ -1,5 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import './homeNew.css'
+import HomeBoatRow from '../components/HomeBoatRow'
 import { useSystem }        from '../components/SystemContext'
 import { useTrashStats }    from '../lib/detectionStats'
 import { useTrashLog }      from '../lib/trashLog'
@@ -639,6 +640,9 @@ export default function MissionControlScreen({ onNavigate }) {
             </div>
           </div>
         </div>
+
+        {/* ── Boat: camera + water features (only while the boat is online) ── */}
+        <HomeBoatRow onNavigate={onNavigate} />
 
         {/* ── Mid row: bar chart + donut + active mission ── */}
         <div className="vh-mid-row vh-animate vh-animate-4">

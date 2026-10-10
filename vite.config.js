@@ -16,6 +16,10 @@ import react from '@vitejs/plugin-react'
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const target = env.VITE_DEV_API_TARGET || 'http://localhost:8000'
+  // The boat's own Pi (second vehicle). The app calls it under /boat/*; the
+  // prefix is stripped here. Default = the boat backend's simulator running on
+  // this laptop:  cd boat-pi && python main.py --sim --port 8001
+  const boatTarget = env.VITE_DEV_BOAT_TARGET || 'http://localhost:8001'
 
   // Everything the frontend calls at runtime lives under these prefixes.
   const proxyPaths = ['/api', '/video_feed', '/stream', '/tune']
@@ -29,15 +33,20 @@ export default defineConfig(({ mode }) => {
   function onProxyError(err, req, res) {
     const code = err?.code || 'PROXY_ERROR'
     const now = Date.now()
-    if (now - (lastLogged.get(code) || 0) > 15000) {
-      lastLogged.set(code, now)
+    const boat = String(req?.url || '').startsWith('/boat') || req?.__varunaBoat
+    const key = (boat ? 'boat:' : 'pi:') + code
+    if (now - (lastLogged.get(key) || 0) > 15000) {
+      lastLogged.set(key, now)
       const hint =
         code === 'ENOTFOUND'
           ? `cannot resolve it — is Netbird connected? (\`netbird status\`)`
           : code === 'ECONNREFUSED'
             ? 'nothing is listening there — is the Pi backend running?'
             : err?.message || code
-      console.warn(`
+      console.warn(boat ? `
+  [boat] ${boatTarget} unreachable: ${hint}
+  The boat tabs show "offline"; set VITE_DEV_BOAT_TARGET in .env.local, or start the simulator (boat-pi: python main.py --sim --port 8001).
+` : `
   [pi] ${target} unreachable: ${hint}
   The UI still works; set VITE_DEV_API_TARGET in .env.local to change the target.
 `)
@@ -47,7 +56,7 @@ export default defineConfig(({ mode }) => {
     try {
       if (res && typeof res.writeHead === 'function') {
         if (!res.headersSent) res.writeHead(502, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify({ success: false, message: `Backend unreachable (${code})` }))
+        res.end(JSON.stringify({ success: false, message: `${boat ? 'Boat' : 'Backend'} unreachable (${code})` }))
       } else if (res && typeof res.end === 'function') {
         res.end()
       }
@@ -56,32 +65,42 @@ export default defineConfig(({ mode }) => {
     }
   }
 
+  // Vite registers its OWN 'error' listener immediately after `configure`
+  // returns - one full stack trace per failed request. It cannot be removed
+  // from in here because it does not exist yet, so drop it on the next tick,
+  // by which time it is registered. Doing it this way rather than through a
+  // customLogger matters: a customLogger built with createLogger() hardcodes
+  // level 'info', which silently overrode --logLevel and clearScreen for
+  // builds too.
+  const quietErrors = (px) => {
+    px.on('error', onProxyError)
+    setTimeout(() => {
+      for (const l of px.listeners('error')) {
+        if (l !== onProxyError) px.removeListener('error', l)
+      }
+    }, 0)
+  }
+
   const proxy = Object.fromEntries(
     proxyPaths.map((p) => [
       p,
-      {
-        target,
-        changeOrigin: true,
-        ws: true,
-        secure: false,
-        configure: (px) => {
-          px.on('error', onProxyError)
-          // Vite registers its OWN 'error' listener immediately after this
-          // hook returns - one full stack trace per failed request. It cannot
-          // be removed from in here because it does not exist yet, so drop it
-          // on the next tick, by which time it is registered. Doing it this
-          // way rather than through a customLogger matters: a customLogger
-          // built with createLogger() hardcodes level 'info', which silently
-          // overrode --logLevel and clearScreen for builds too.
-          setTimeout(() => {
-            for (const l of px.listeners('error')) {
-              if (l !== onProxyError) px.removeListener('error', l)
-            }
-          }, 0)
-        },
-      },
+      { target, changeOrigin: true, ws: true, secure: false, configure: quietErrors },
     ])
   )
+  // Keyed as a regex so it matches /boat and /boat/... only (not /boatsomething).
+  proxy['^/boat(/|$)'] = {
+    target: boatTarget,
+    changeOrigin: true,
+    ws: true,
+    secure: false,
+    rewrite: (p) => p.replace(/^\/boat/, '') || '/',
+    configure: (px) => {
+      quietErrors(px)
+      // The rewrite has already dropped /boat by the time an error fires.
+      px.on('proxyReq', (_pr, req) => { req.__varunaBoat = true })
+      px.on('proxyReqWs', (_pr, req) => { req.__varunaBoat = true })
+    },
+  }
 
   return {
     plugins: [react(), watcherResilience()],

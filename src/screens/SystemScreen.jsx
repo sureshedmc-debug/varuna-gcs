@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { api, getApiBase, setApiBase, testConnection, DEFAULT_API_BASE } from '../api/client'
+import { getBoatBase, setBoatBase, testBoatConnection, BOAT_PROXY_BASE } from '../api/boatClient'
 import { useSystem } from '../components/SystemContext'
+import { useBoat } from '../components/BoatContext'
 import { usePolling } from '../hooks/usePolling'
 import { useToast } from '../components/Toast'
 import { Btn, StaleBadge, StatusOrb, TiltCard, Field, Spinner } from '../components/ui'
@@ -114,6 +116,85 @@ function ConnectionSection() {
   return (
     <Section title="Connection" right={<span className="max-w-[220px] truncate font-mono text-[11px] text-accent">{label}</span>}>
       <ConnectionPanel shell={shell} />
+    </Section>
+  )
+}
+
+// ── Boat connection (the boat's own Pi — same flow as the drone's) ──────────────
+function BoatConnectionPanel({ shell }) {
+  const desktop = shell.kind === 'desktop'
+  const initial = desktop ? shell.config.boatAddress || '' : (getBoatBase() === BOAT_PROXY_BASE ? '' : getBoatBase())
+  const [val,     setVal]     = useState(initial)
+  const [saved]               = useState(initial)
+  const [testing, setTesting] = useState(false)
+  const [saving,  setSaving]  = useState(false)
+  const [result,  setResult]  = useState(null)
+  const changed = val.trim().replace(/\/+$/, '') !== saved.replace(/\/+$/, '')
+
+  async function apply() {
+    if (desktop) {
+      setSaving(true)
+      const r = await window.varuna.setBoatAddress(val)
+      setSaving(false)
+      if (!r?.ok) return setResult({ ok: false, title: 'Invalid address', detail: r?.error || '' })
+      setBoatBase('')
+    } else { setBoatBase(val) }
+    window.location.reload()
+  }
+  async function test() {
+    setTesting(true); setResult(null)
+    try { setResult(desktop ? await window.varuna.testBoatAddress(val) : await testBoatConnection(val)) }
+    finally { setTesting(false) }
+  }
+
+  return (
+    <div>
+      <p className="mb-3 text-xs text-muted">
+        {desktop
+          ? "Enter the boat Pi's Netbird address — a separate device from the drone's Pi. The desktop app forwards to it, so no CORS is needed. Saved on this PC."
+          : <>Leave <strong className="text-ink">blank</strong> to go through the Vite proxy (VITE_DEV_BOAT_TARGET), or enter the boat Pi's Netbird address to call it directly.</>}
+      </p>
+      <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted">
+        {desktop ? 'Boat Pi address (Netbird)' : 'Boat base URL'}
+      </label>
+      <input
+        value={val} onChange={(e) => setVal(e.target.value)}
+        placeholder={desktop ? 'http://varuna-boat.netbird.cloud:8000' : 'blank = via Vite proxy   ·   or http://varuna-boat.netbird.cloud:8000'}
+        className="inp mb-3 w-full px-3 py-2 font-mono text-sm"
+        spellCheck={false} autoCapitalize="off" autoCorrect="off"
+      />
+      <div className="flex flex-wrap items-center gap-2">
+        <Btn disabled={!changed || saving} onClick={apply}>
+          {saving ? <Spinner /> : desktop ? 'Save & reconnect' : 'Apply & reconnect'}
+        </Btn>
+        <Btn variant="secondary" onClick={test} disabled={testing}>
+          {testing ? <Spinner /> : 'Test connection'}
+        </Btn>
+        {!desktop && <Btn variant="ghost" onClick={() => setVal('')}>Via proxy</Btn>}
+      </div>
+      <ConnectionResult result={result} />
+      <p className="mt-2 text-[11px] text-faint">
+        The address must answer as the VARUNA boat backend (boat-pi) — boat commands stay locked otherwise, so they can never reach the drone.
+        No boat yet? Run the simulator on this laptop: <span className="font-mono">cd boat-pi &amp;&amp; python main.py --sim --port 8001</span>{desktop ? " and enter this PC's own address with port 8001 (its loopback or Netbird IP)" : ''}.
+      </p>
+    </div>
+  )
+}
+
+function BoatConnectionSection() {
+  const shell = useShell()
+  const boat = useBoat()
+  if (shell.kind === 'loading') return <Section title="Boat connection"><Spinner label="Reading connection settings" /></Section>
+  const addr = shell.kind === 'desktop' ? shell.config.boatAddress || 'Boat address not set' : getBoatBase() === BOAT_PROXY_BASE ? 'via Vite proxy' : getBoatBase()
+  const level = boat.reachable === true ? 'ok' : boat.reachable === false ? 'bad' : 'idle'
+  return (
+    <Section title="Boat connection" right={
+      <span className="flex items-center gap-2">
+        <span className="max-w-[200px] truncate font-mono text-[11px] text-accent">{addr}</span>
+        <StatusOrb level={level} size={10} />
+      </span>
+    }>
+      <BoatConnectionPanel shell={shell} />
     </Section>
   )
 }
@@ -383,6 +464,7 @@ function Section({ title, children, right }) {
 // ── Main screen ───────────────────────────────────────────────────────────────
 export default function SystemScreen() {
   const { pi, health } = useSystem()
+  const boat = useBoat()
   const cam = usePolling(api.cameraStatus, 6000)
   const ai  = usePolling(api.aiStatus,     6000)
   const [showAdvanced, setShowAdvanced] = useState(false)
@@ -402,10 +484,15 @@ export default function SystemScreen() {
       <div className="grid gap-3 sm:grid-cols-2">
         <HealthLight label="Pixhawk (flight controller)" ok={pixhawk} icon="🧭" />
         <HealthLight label="Camera (USB webcam)"         ok={camOk}   icon="📷" />
+        <HealthLight label="Boat Pi (link)"              ok={boat.reachable} icon="🚤" />
+        <HealthLight label="Boat Pixhawk"                ok={boat.reachable === true ? boat.fcConnected : boat.reachable === false ? false : undefined} icon="⚓" />
       </div>
 
       {/* ── Connection ── */}
       <ConnectionSection />
+
+      {/* ── Boat connection ── */}
+      <BoatConnectionSection />
 
       {/* ── Raspberry Pi metrics ── */}
       <Section title="Raspberry Pi" right={<StaleBadge lastUpdate={pi.lastUpdate} connected={!pi.error} />}>

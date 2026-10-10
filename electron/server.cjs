@@ -18,6 +18,9 @@ const httpProxy = require('http-proxy')
 
 // Same prefixes vite.config.js proxies.
 const PROXY_PREFIXES = ['/api', '/video_feed', '/stream', '/tune']
+// The boat is a second vehicle with its own Pi: /boat/<path> goes to the boat's
+// address with the prefix stripped (/boat/api/ping → <boat>/api/ping).
+const BOAT_PREFIX = '/boat'
 
 // .wasm MUST be application/wasm or ONNX Runtime refuses to instantiate it.
 const MIME = {
@@ -46,6 +49,16 @@ const MIME = {
 
 function isProxied(pathname) {
   return PROXY_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + '/'))
+}
+
+function isBoat(pathname) {
+  return pathname === BOAT_PREFIX || pathname.startsWith(BOAT_PREFIX + '/')
+}
+
+/** Strip the /boat prefix from a request before it is forwarded. */
+function toBoatUrl(req) {
+  req.url = req.url.slice(BOAT_PREFIX.length) || '/'
+  if (!req.url.startsWith('/')) req.url = '/' + req.url
 }
 
 function pathOf(url) {
@@ -159,9 +172,10 @@ function serveStatic(root, req, res) {
  * @param {number} o.preferredPort
  * @param {() => string} o.getTarget  current Pi base URL ('' = not configured);
  *   read per request so a new address applies without restarting.
+ * @param {() => string} [o.getBoatTarget]  current boat Pi base URL ('' = not configured).
  * @returns {Promise<{server: import('http').Server, port: number}>}
  */
-function startServer({ root, preferredPort, getTarget }) {
+function startServer({ root, preferredPort, getTarget, getBoatTarget = () => '' }) {
   root = path.resolve(root)
   const proxy = httpProxy.createProxyServer({ changeOrigin: true, ws: true })
   let ownOrigins = { hosts: new Set(), origins: new Set() }
@@ -179,6 +193,14 @@ function startServer({ root, preferredPort, getTarget }) {
     if (!ownOrigins.hosts.has(String(req.headers.host || '').toLowerCase())) {
       return sendText(res, 403, 'Forbidden')
     }
+    if (isBoat(pathname)) {
+      if (!allowedCaller(req, ownOrigins)) return sendText(res, 403, 'Forbidden')
+      const target = getBoatTarget()
+      if (!target) return sendText(res, 503, 'Boat address not set (System → Boat connection)')
+      toBoatUrl(req)
+      if (!isProxied(pathOf(req.url))) return sendText(res, 404, 'Not found')
+      return proxy.web(req, res, { target })
+    }
     if (isProxied(pathname)) {
       if (!allowedCaller(req, ownOrigins)) return sendText(res, 403, 'Forbidden')
       const target = getTarget()
@@ -188,9 +210,11 @@ function startServer({ root, preferredPort, getTarget }) {
     serveStatic(root, req, res)
   })
 
-  // The telemetry WebSocket (/api/ws).
+  // The telemetry WebSockets (/api/ws for the drone, /boat/api/ws for the boat).
   server.on('upgrade', (req, socket, head) => {
-    const target = getTarget()
+    const boat = isBoat(pathOf(req.url))
+    const target = boat ? getBoatTarget() : getTarget()
+    if (boat) toBoatUrl(req)
     if (!isProxied(pathOf(req.url)) || !target || !allowedUpgrade(req, ownOrigins)) {
       return socket.destroy()
     }

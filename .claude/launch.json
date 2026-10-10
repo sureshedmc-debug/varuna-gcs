@@ -9,6 +9,17 @@
         "dev"
       ],
       "port": 5173
+    },
+    {
+      "name": "boat-sim",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "boat-pi/main.py",
+        "--sim",
+        "--port",
+        "8001"
+      ],
+      "port": 8001
     }
   ]
 }

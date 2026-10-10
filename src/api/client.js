@@ -65,7 +65,12 @@ function url(path) {
  * Note: the backend returns HTTP 200 with {success:false, message} on logical
  * failure for mutating calls — callers MUST inspect `success`, not HTTP status.
  */
-async function request(path, { method = 'GET', body, signal, timeout = 12000 } = {}) {
+async function request(path, opts) {
+  return requestUrl(url(path), opts)
+}
+
+/** Same as request(), for a full URL — the boat client (boatClient.js) uses it. */
+export async function requestUrl(fullUrl, { method = 'GET', body, signal, timeout = 12000 } = {}) {
   const ctrl = new AbortController()
   const t = setTimeout(() => ctrl.abort(), timeout)
   const onAbort = () => ctrl.abort()
@@ -75,7 +80,7 @@ async function request(path, { method = 'GET', body, signal, timeout = 12000 } =
     // (OPTIONS) before every single request. Content-Type on a body is enough.
     const headers = {}
     if (body) headers['Content-Type'] = 'application/json'
-    const res = await fetch(url(path), {
+    const res = await fetch(fullUrl, {
       method,
       headers,
       body: body ? JSON.stringify(body) : undefined,

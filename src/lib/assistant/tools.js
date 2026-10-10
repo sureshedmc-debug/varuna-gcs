@@ -9,6 +9,7 @@ import { cmd } from '../commands'
 import { commandTarget } from '../connectionState'
 import { getActiveMission, missionFor } from '../missionStore'
 import { getTrashLog } from '../trashLog'
+import { boatApi } from '../../api/boatClient'
 import { getMissionRecording } from '../missionRecording'
 import { findWaterByName, findWaterNear, circleArea } from '../waterBody'
 import { buildPlan, clipToWorkArea, distanceM, WORK_RADIUS_M, LONG_FLIGHT_MIN } from '../missionPatterns'
@@ -17,7 +18,7 @@ import { buildHotspotPlan, clusterHotspots } from '../hotspots'
 import { getImpactStats } from '../impactStats'
 import { resolvePeriod, filterByDateRange, summarizeSightings } from '../trashQuery'
 
-const TABS = ['home', 'live', 'mission', 'detections', 'replay', 'system']
+const TABS = ['home', 'live', 'mission', 'boat', 'collect', 'vision', 'water', 'detections', 'replay', 'system']
 const ASSIST_MAX_TAKEOFF = 30 // m
 const S = { OBJECT: 'object', STRING: 'string', NUMBER: 'number' }
 
@@ -33,9 +34,15 @@ const DECLARATIONS = [
     description: 'Switch the app to a tab.',
     parameters: {
       type: S.OBJECT,
-      properties: { tab: { type: S.STRING, enum: TABS, description: 'home = Home dashboard, live = Live camera, mission = Missions planner, detections, replay = mission replay, system' } },
+      properties: { tab: { type: S.STRING, enum: TABS, description: 'home = Home dashboard, live = Live camera, mission = Missions planner, boat = Boat control (the collection boat), collect = plan the boat plastic collection, vision = Boat Vision (boat camera AI: homing, wildlife pauses, catch counter), water = Water Lab (turbidity map and readings), detections, replay = mission replay, system' } },
       required: ['tab'],
     },
+  },
+  {
+    name: 'get_boat_vision_summary',
+    description:
+      "The boat camera's work: items the catch counter counted today by type (bottle, bag…), bin fill, camera homing results (collected / missed), wildlife pauses and sightings, and water turbidity (live NTU and saved readings). Call this for questions about what the boat collected, the bin, animals, or water quality.",
+    parameters: { type: S.OBJECT, properties: {} },
   },
   {
     name: 'get_detections_summary',
@@ -347,6 +354,28 @@ async function flightCommand(args, ctx) {
   }
 }
 
+async function boatVisionSummary() {
+  const ok = (r) => (r && !r._httpError ? r : null)
+  const [catchS, wild, water, readings, vision] = await Promise.all([
+    boatApi.catchSummary(0).then(ok).catch(() => null),
+    boatApi.wildlife(5).then(ok).catch(() => null),
+    boatApi.waterStatus().then(ok).catch(() => null),
+    boatApi.waterReadings(10).then(ok).catch(() => null),
+    boatApi.visionStatus().then(ok).catch(() => null),
+  ])
+  if (!catchS && !water && !vision) return { ok: false, error: 'The boat is not reachable (System → Boat connection).' }
+  return {
+    catch_today: catchS?.today || null,
+    bin: catchS?.bin || null,
+    catch_all_time: catchS?.all_time?.total ?? null,
+    homing: vision?.homing ? { collected: vision.homing.collected, missed: vision.homing.missed, attempts: vision.homing.attempts, state: vision.homing.state } : null,
+    camera_ai_reaching_boat: vision?.link?.alive ?? null,
+    wildlife: wild ? { state: wild.state, pauses_today: wild.pauses_today, waited_s_today: wild.paused_s_today, recent: (wild.sightings || []).map((x) => ({ label: x.label, at: new Date(x.t * 1000).toLocaleTimeString() })) } : null,
+    water_now: water ? { ntu: water.ntu, quality: water.quality, sensor_connected: water.connected, calibrated: water.calibrated } : null,
+    water_readings: Array.isArray(readings) ? readings.map((r) => ({ ntu: r.ntu, quality: r.quality, lat: r.lat, lng: r.lng, at: new Date(r.t * 1000).toLocaleString() })) : null,
+  }
+}
+
 function detectionsSummary() {
   const log = getTrashLog()
   const rec = getMissionRecording()
@@ -391,6 +420,8 @@ export async function runTool(name, args, ctx) {
         return { ok: navigateTo(args.tab), tab: args.tab }
       case 'get_detections_summary':
         return detectionsSummary()
+      case 'get_boat_vision_summary':
+        return await boatVisionSummary()
       case 'plan_mission':
         return await planMission(args || {}, ctx)
       case 'plan_hotspot_mission':

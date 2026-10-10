@@ -59,6 +59,7 @@ async function boot() {
       root: distRoot(),
       preferredPort: s.port,
       getTarget: () => settings.load().piAddress,
+      getBoatTarget: () => settings.load().boatAddress,
     })
     if (port !== s.port) {
       // The app's settings, saved Groq key and detection log live in
@@ -243,6 +244,40 @@ function explainError(err, ms) {
   return { ok: false, ms, title: 'Could not reach the Pi', detail: `${code || (err && err.message) || 'Unknown error'}` }
 }
 
+/** Like testPi, then also checks the address really is the boat (not the drone's Pi). */
+async function testBoat(base) {
+  if (!base) {
+    return { ok: false, title: 'No address entered', detail: "Enter the boat Pi's Netbird address, e.g. http://100.92.14.8:8000" }
+  }
+  const r = await testPi(base)
+  if (!r.ok) return r
+  const body = await new Promise((resolve) => {
+    const u = new URL('/api/ping', base)
+    const req = (u.protocol === 'https:' ? https : http).get(u, (res) => {
+      let text = ''
+      res.setEncoding('utf8')
+      res.on('data', (c) => { if (text.length < 4096) text += c })
+      res.on('end', () => resolve(text))
+    })
+    req.on('error', () => resolve(''))
+    req.setTimeout(8000, () => { req.destroy(); resolve('') })
+  })
+  let vehicle = null
+  try {
+    vehicle = JSON.parse(body).vehicle
+  } catch {
+    /* not JSON */
+  }
+  if (vehicle !== 'boat') {
+    return {
+      ok: false, ms: r.ms,
+      title: 'That address is not the boat',
+      detail: "A backend answered, but it is not the VARUNA boat backend (it may be the drone's Pi). Enter the boat Pi's Netbird address.",
+    }
+  }
+  return { ...r, detail: `The boat answered /api/ping in ${r.ms} ms.` }
+}
+
 function testPi(base) {
   return new Promise((resolve) => {
     if (!base) {
@@ -299,6 +334,7 @@ function setupIpc() {
     if (!fromApp(event)) throw new Error('forbidden')
     return {
       piAddress: settings.load().piAddress,
+      boatAddress: settings.load().boatAddress,
       // In dev the page comes from Vite, whose proxy (VITE_DEV_API_TARGET) is in
       // charge, so the renderer should keep its normal browser behaviour.
       usesBuiltInProxy: !DEV_URL,
@@ -321,6 +357,23 @@ function setupIpc() {
       return { ok: false, title: 'Invalid address', detail: 'Enter an http:// address, e.g. http://100.92.14.7:8000' }
     }
     return testPi(clean)
+  })
+
+  ipcMain.handle('varuna:setBoatAddress', (event, raw) => {
+    if (!fromApp(event)) throw new Error('forbidden')
+    const clean = normalizeAddress(raw)
+    if (clean === null) return { ok: false, error: 'Enter an http:// address, e.g. http://100.92.14.8:8000' }
+    settings.save({ boatAddress: clean })
+    return { ok: true, boatAddress: clean }
+  })
+
+  ipcMain.handle('varuna:testBoatAddress', (event, raw) => {
+    if (!fromApp(event)) throw new Error('forbidden')
+    const clean = normalizeAddress(raw)
+    if (clean === null) {
+      return { ok: false, title: 'Invalid address', detail: 'Enter an http:// address, e.g. http://100.92.14.8:8000' }
+    }
+    return testBoat(clean)
   })
 }
 

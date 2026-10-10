@@ -8,7 +8,8 @@ const { app } = require('electron')
 // its Groq keys, detection log, mission and settings in localStorage, which is
 // scoped to the origin (http://127.0.0.1:<port>). A new port = a new origin =
 // all of that appears wiped.
-const DEFAULTS = { piAddress: '', port: 47621, windowBounds: null }
+// boatAddress: the boat's own Pi (a second vehicle), proxied under /boat.
+const DEFAULTS = { piAddress: '', boatAddress: '', port: 47621, windowBounds: null }
 
 let cache = null
 

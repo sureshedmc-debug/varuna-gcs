@@ -2,6 +2,8 @@ import { useEffect, useState, lazy, Suspense } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { ToastProvider } from './components/Toast'
 import { SystemProvider, useSystem } from './components/SystemContext'
+import { BoatProvider } from './components/BoatContext'
+import { BoatVisionProvider } from './components/BoatVisionContext'
 import { WarningBanner, deriveWarnings } from './components/WarningBanner'
 import { Rail } from './components/Rail'
 import { TopBar } from './components/TopBar'
@@ -20,11 +22,19 @@ const LiveScreen = lazy(() => import('./screens/LiveScreen'))
 const MissionScreen = lazy(() => import('./screens/MissionScreen'))
 const DetectionsScreen = lazy(() => import('./screens/DetectionsScreen'))
 const ReplayScreen = lazy(() => import('./screens/ReplayScreen'))
+const BoatScreen = lazy(() => import('./screens/BoatScreen'))
+const CollectScreen = lazy(() => import('./screens/CollectScreen'))
+const BoatVisionScreen = lazy(() => import('./screens/BoatVisionScreen'))
+const WaterLabScreen = lazy(() => import('./screens/WaterLabScreen'))
 
 const SCREENS = {
   home: MissionControlScreen,
   live: LiveScreen,
   mission: MissionScreen,
+  boat: BoatScreen,
+  collect: CollectScreen,
+  vision: BoatVisionScreen,
+  water: WaterLabScreen,
   detections: DetectionsScreen,
   replay: ReplayScreen,
   system: SystemScreen,
@@ -71,7 +81,7 @@ function Shell({ onLock }) {
   // Lets the AI assistant switch tabs (e.g. open Missions after planning).
   useEffect(() => registerNavigator(setTab), [])
   const Screen = SCREENS[tab]
-  const fullBleed = tab === 'live' || tab === 'mission'
+  const fullBleed = tab === 'live' || tab === 'mission' || tab === 'boat' || tab === 'collect' || tab === 'vision' || tab === 'water'
 
   return (
     <div className="relative min-h-screen">
@@ -165,7 +175,11 @@ export default function App() {
   return (
     <ToastProvider>
       <SystemProvider>
-        <Shell onLock={lock} />
+        <BoatProvider>
+          <BoatVisionProvider>
+            <Shell onLock={lock} />
+          </BoatVisionProvider>
+        </BoatProvider>
       </SystemProvider>
     </ToastProvider>
   )

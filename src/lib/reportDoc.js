@@ -201,6 +201,8 @@ function metricsTable(data) {
     ['Live-camera last reading', data.liveCamera.lastTrash],
     ['Estimated total weight (rough)', s.totalEstWeightG >= 1000 ? `~${(s.totalEstWeightG / 1000).toFixed(1)} kg` : `~${s.totalEstWeightG || 0} g`],
     ['Camera FOV assumption', s.fovAssumption || '—'],
+    ...(data.boat?.catch?.total ? [['Items collected by the boat (counted)', data.boat.catch.total]] : []),
+    ...(data.boat?.water?.avgNtu != null ? [['Average water turbidity', `${data.boat.water.avgNtu} NTU`]] : []),
   ]
   return `<table class="tbl"><tr><th>Metric</th><th>Value</th></tr>${rows
     .map((r, i) => `<tr${zebra(i)}><td>${esc(r[0])}</td><td class="num">${fmtNum(r[1])}</td></tr>`)
@@ -214,6 +216,41 @@ function byClassTable(data) {
   return `<h2>Breakdown by Type</h2><table class="tbl"><tr><th>Type</th><th>Count</th></tr>${entries
     .map(([k, v], i) => `<tr${zebra(i)}><td>${esc(k)}</td><td class="num">${fmtNum(v)}</td></tr>`)
     .join('')}</table>`
+}
+
+// The boat's own records: items its ramp camera counted one by one, water
+// turbidity readings, wildlife pauses (data.boat, see boatReport.js).
+function boatBlock(data) {
+  const b = data.boat
+  if (!b) return ''
+  const parts = []
+  if (b.catch && b.catch.total > 0) {
+    const rows = Object.entries(b.catch.byLabel).sort((x, y) => y[1] - x[1])
+      .map(([k, v], i) => `<tr${zebra(i)}><td>${esc(k)}</td><td class="num">${fmtNum(v)}</td></tr>`).join('')
+    const kg = b.catch.estWeightG >= 1000 ? `~${(b.catch.estWeightG / 1000).toFixed(1)} kg` : `~${b.catch.estWeightG} g`
+    parts.push(`<h2>Collected by the Boat (counted)</h2>
+      <p>The boat&rsquo;s ramp camera counted <b>${fmtNum(b.catch.total)}</b> item${b.catch.total === 1 ? '' : 's'} as they came on board (${fmtNum(b.catch.today)} today), about <b>${esc(kg)}</b> by the average weight per type. These are items actually removed from the water, counted one by one.</p>
+      <table class="tbl"><tr><th>Type</th><th>Items collected</th></tr>${rows}</table>`)
+  }
+  const w = b.water
+  if (w && (w.readings.length || w.now)) {
+    const rows = w.readings.slice(0, 40).map((r, i) => `<tr${zebra(i)}><td>${fmtTime(r.t)}</td><td class="num">${fmtNum(r.ntu)}</td><td>${esc(r.quality || '')}</td><td>${
+      Number.isFinite(Number(r.lat)) ? `<a href="${esc(mapsUrl(r.lat, r.lng))}">${Number(r.lat).toFixed(5)}, ${Number(r.lng).toFixed(5)}</a>` : '—'
+    }</td></tr>`).join('')
+    parts.push(`<h2>Water Quality (Turbidity)</h2>
+      <p>${w.readings.length ? `${w.readings.length} reading${w.readings.length === 1 ? '' : 's'} taken by the boat: average <b>${fmtNum(w.avgNtu)} NTU</b> (lowest ${fmtNum(w.minNtu)}, highest ${fmtNum(w.maxNtu)}). ` : ''}${
+      w.now ? `Latest live value: ${fmtNum(w.now.ntu)} NTU (${esc(w.now.quality || '')}). ` : ''
+    }Lower NTU is clearer water: under 10 looks clear, 10&ndash;50 slightly cloudy, 50&ndash;150 cloudy, over 150 murky.${w.calibrated ? '' : ' <i>The sensor was not calibrated in clear water, so values follow the sensor maker&rsquo;s curve and are approximate.</i>'}</p>
+      ${rows ? `<table class="tbl"><tr><th>Time</th><th>NTU</th><th>Clarity</th><th>Location</th></tr>${rows}</table>` : ''}`)
+  }
+  const wl = b.wildlife
+  if (wl && wl.sightings.length) {
+    const counts = {}
+    for (const s of wl.sightings) counts[s.label] = (counts[s.label] || 0) + 1
+    parts.push(`<h2>Wildlife Encounters</h2>
+      <p>The boat stopped for animals or people in its path ${fmtNum(wl.sightings.length)} time${wl.sightings.length === 1 ? '' : 's'} in the records (${Object.entries(counts).map(([k, v]) => `${v} &times; ${esc(k)}`).join(', ')}). Today it paused ${fmtNum(wl.pausesToday)} time${wl.pausesToday === 1 ? '' : 's'}, ${fmtNum(wl.waitedSToday)} s in total. Each time it held position until the way was clear, or until the operator chose to move on.</p>`)
+  }
+  return parts.join('')
 }
 
 function byOriginTable(data) {
@@ -451,6 +488,7 @@ function buildHtml({ data, narrative, charts }) {
     ${byClassTable(data)}
     ${byOriginTable(data)}
     ${areaBlock(data)}
+    ${boatBlock(data)}
     ${section('Detection Type Analysis', n.classAnalysis)}
     ${section('Spatial Analysis', n.spatialAnalysis)}
     ${section('Temporal Analysis', n.temporalAnalysis)}
@@ -572,6 +610,8 @@ export function fallbackNarrative(data) {
       `Total detections: ${s.total}`,
       classes ? `Composition: ${classes}` : 'No per-type breakdown available',
       `Geolocated: ${s.located} / ${s.total}`,
+      ...(data.boat?.catch?.total ? [`The boat collected ${data.boat.catch.total} item(s), counted one by one on board`] : []),
+      ...(data.boat?.water?.avgNtu != null ? [`Water turbidity averaged ${data.boat.water.avgNtu} NTU over ${data.boat.water.readings.length} reading(s)`] : []),
       ...(data.area ? [`Survey area centre: ${data.area.centre.lat}, ${data.area.centre.lng} (span ~${data.area.spanMeters} m)`] : []),
       `Live-camera peak trash: ${data.liveCamera.peakTrash}`,
     ],

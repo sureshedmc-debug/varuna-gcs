@@ -19,6 +19,7 @@ import LlmPicker from '../components/LlmPicker'
 import { renderReportCharts } from '../lib/reportChart'
 import { buildTrashDataset, downloadWordReport, fallbackNarrative } from '../lib/reportDoc'
 import { estimateWeightG, fmtWeight, getFovSettings } from '../lib/sizeEstimate'
+import { fetchBoatReportData } from '../lib/boatReport'
 import { heatPoints, buildHotspotPlan } from '../lib/hotspots'
 import { googleMapsMultiStopUrl } from '../lib/collectionRoute'
 import { setPlanDraft, navigateTo } from '../lib/planDraftStore'
@@ -470,7 +471,9 @@ export default function DetectionsScreen() {
       const withPhotos = [...getTrashLog().map(fromSighting), ...(backend || []).map(fromBackend)]
         .sort((a, b) => (b.time || 0) - (a.time || 0))
       const data   = buildTrashDataset(withPhotos, trashStats)
-      if (data.summary.total === 0 && !trashStats.peak && !clips.length) {
+      data.boat    = await fetchBoatReportData().catch(() => null)
+      const boatHasData = !!(data.boat?.catch?.total || data.boat?.water?.readings?.length || data.boat?.wildlife?.sightings?.length)
+      if (data.summary.total === 0 && !trashStats.peak && !clips.length && !boatHasData) {
         toast.push({ level: 'warn', title: 'No detection data yet', msg: 'Run the AI camera or wait for detections first.' }); return
       }
       const charts = renderReportCharts(data)
