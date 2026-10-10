@@ -37,6 +37,12 @@ def offset(lat, lng, north_m, east_m):
             lng + math.degrees(east_m / (6371000.0 * math.cos(math.radians(lat)))))
 
 
+def dist_m(lat1, lng1, lat2, lng2):
+    north = math.radians(lat2 - lat1) * 6371000.0
+    east = math.radians(lng2 - lng1) * 6371000.0 * math.cos(math.radians(lat1))
+    return math.hypot(north, east)
+
+
 def check(cond, what):
     print(("  PASS  " if cond else "  FAIL  ") + what, flush=True)
     if not cond:
@@ -219,25 +225,10 @@ def main():
         wait_for(lambda: c.get("/api/telemetry").json()["flight_mode"] in ("AUTO", "GUIDED"), 15, "resumed")
         check(not c.get("/api/telemetry").json()["vision"]["operator_paused"], "Resume hands control back to the automation")
 
-        # Vision link lost while driving between items.
-        wait_for(lambda: (lambda t: t["flight_mode"] == "AUTO" and t["vision"]["phase"] is None)(
-            c.get("/api/telemetry").json()), 60, "an AUTO leg")
-        eyes.running.clear()
-        lost = wait_for(lambda: (lambda v: v if v["lost_action"] else None)(c.get("/api/telemetry").json()["vision"]),
-                        15, "vision-lost reaction")
-        check(lost["lost_action"] == "slow", "app vision stopped → boat slows down")
-        time.sleep(2.0)
-        gs = c.get("/api/telemetry").json()["groundspeed"]
-        check(0.2 <= gs <= 0.45, f"…to {gs:.2f} m/s (still moving)")
-        eyes.running.set()
-        wait_for(lambda: c.get("/api/telemetry").json()["vision"]["lost_action"] is None, 15, "vision back")
-        fast = wait_for(lambda: (lambda t: t if t["groundspeed"] >= 1.25 or t["vision"]["phase"] else None)(
-            c.get("/api/telemetry").json()), 10, "speed restored")
-        check(fast["groundspeed"] >= 1.25 or fast["vision"]["phase"] == "homing",
-              f"vision back → mission speed restored ({fast['groundspeed']:.2f} m/s)")
-
         # Wildlife while homing: after the pause, homing must carry on with the item.
-        wait_for(lambda: c.get("/api/telemetry").json()["vision"]["homing"]["state"] == "track", 90, "homing on the last item")
+        # Wait for item 3 by number: item 2 may still be ahead (or skipped by the operator HOLD).
+        wait_for(lambda: (lambda hm: hm["state"] == "track" and hm["item"] == 3)(
+            c.get("/api/telemetry").json()["vision"]["homing"]), 90, "homing on the last item")
         c.post("/api/sim/duck", params={"ahead_m": 3})
         wait_for(lambda: c.get("/api/telemetry").json()["vision"]["wildlife"]["state"] != "clear", 20, "wildlife pause during homing")
         wait_for(lambda: c.get("/api/telemetry").json()["flight_mode"] == "HOLD", 8, "HOLD (homing)")
@@ -249,10 +240,13 @@ def main():
               f"…then homing carries on with the item ({t['flight_mode']}, {t['vision']['homing']['state']})")
 
         # A duck on the way home, after the last item: the hold must not end the mission
-        # (a finished mission disarms the boat — not on the water).
+        # (a finished mission disarms the boat — not on the water). Placed only once the
+        # boat has turned round at the last item and is driving straight home (full speed
+        # = no longer turning): a duck dropped mid-turn ends up beside or behind it.
         wait_for(lambda: c.get("/api/mission/status").json()["state"] == "returning"
-                 and c.get("/api/telemetry").json()["flight_mode"] == "AUTO", 120, "returning home")
-        c.post("/api/sim/duck", params={"ahead_m": 3})
+                 and (lambda t: t["flight_mode"] == "AUTO" and t["vision"]["phase"] is None
+                      and t["groundspeed"] >= 1.25)(c.get("/api/telemetry").json()), 120, "driving home")
+        c.post("/api/sim/duck", params={"ahead_m": 9})
         wait_for(lambda: c.get("/api/telemetry").json()["vision"]["wildlife"]["state"] != "clear", 20, "duck on the way home")
         ok_states = []
         for _ in range(8):
@@ -262,14 +256,41 @@ def main():
         check(all(ok_states), "wildlife hold on the way home: still armed, mission not ended early")
         wait_for(lambda: c.get("/api/telemetry").json()["vision"]["wildlife"]["state"] == "clear", 60, "duck gone (home leg)")
 
-        done = wait_for(lambda: (lambda m: m if m["state"] == "completed" else None)(c.get("/api/mission/status").json()),
+        # Vision link lost on the long leg home, well clear of any item: no homing take-over
+        # and no waypoint stop can coincide with the slow-down. At 3x the boat covers
+        # ~13 m before the 3 s vision timeout fires, then crawls; leave room for both.
+        far = wait_for(lambda: (lambda t: t if t["flight_mode"] == "AUTO" and t["vision"]["phase"] is None
+                                and t["mission"]["state"] == "returning"
+                                and dist_m(t["lat"], t["lng"], *HOME) > 25 else None)(
+            c.get("/api/telemetry").json()), 30, "an AUTO leg far from any item")
+        eyes.running.clear()
+        lost = wait_for(lambda: (lambda v: v if v["lost_action"] else None)(c.get("/api/telemetry").json()["vision"]),
+                        15, "vision-lost reaction")
+        check(lost["lost_action"] == "slow", "app vision stopped → boat slows down "
+              f"(cut {dist_m(far['lat'], far['lng'], *HOME):.0f} m from home)")
+        slow = wait_for(lambda: (lambda t: t if 0.2 <= t["groundspeed"] <= 0.45 else None)(
+            c.get("/api/telemetry").json()), 5, "slowed down")
+        speeds = []
+        for _ in range(6):                   # and it stays slow (not a passing sample)
+            time.sleep(0.25)
+            t = c.get("/api/telemetry").json()
+            speeds.append(t["groundspeed"])
+        check(all(0.2 <= s <= 0.45 for s in speeds) and t["flight_mode"] == "AUTO",
+              f"…to {slow['groundspeed']:.2f} m/s (still moving, {dist_m(t['lat'], t['lng'], *HOME):.0f} m from home)")
+        eyes.running.set()
+        wait_for(lambda: c.get("/api/telemetry").json()["vision"]["lost_action"] is None, 15, "vision back")
+        fast = wait_for(lambda: (lambda t: t if t["groundspeed"] >= 1.25 else None)(
+            c.get("/api/telemetry").json()), 10, "speed restored")
+        check(True, f"vision back → mission speed restored ({fast['groundspeed']:.2f} m/s)")
+
+        done =wait_for(lambda: (lambda m: m if m["state"] == "completed" else None)(c.get("/api/mission/status").json()),
                         240, "mission completed")
         catch = c.get("/api/catch?limit=10").json()
         how = done["how"]
         cam = sorted(k for k, v in how.items() if v == "camera")
         check(len(done["reached"]) == 3, f"all 3 items collected ({how})")
         check(len(cam) >= 2 and "p3" in cam, f"collected by camera homing: {cam} (p3 despite the wildlife pause)")
-        # Items picked up while the app's vision was cut off aren't counted (nobody watched the ramp).
+        # Only items the app saw ride up the ramp are counted (GPS-only items may not be).
         check(catch["bin"]["count"] == eyes.catch_posts == catch["today"]["total"] >= len(cam),
               f"catch counter: {catch['today']['total']} items {catch['today']['by_label']}, bin {catch['bin']['pct']}%")
         h = c.get("/api/vision/status").json()["homing"]

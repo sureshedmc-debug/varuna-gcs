@@ -62,7 +62,8 @@ class SimWorld:
         with self.lock:
             self._seq += 1
             self.ducks.append({"id": f"d{self._seq}", "lat": lat, "lng": lng,
-                               "heading": (b.heading + 90) % 360, "speed": 0.12, "until": time.time() + 40})
+                               "heading": (b.heading + 90) % 360, "speed": 0.12,
+                               "until": time.time() + 40 / b.rate})   # 40 s of sim time, like its swim speed
         return ahead_m
 
     def step(self, dt):
