@@ -13,7 +13,8 @@ import { useSystem } from './SystemContext'
 import { useLivePosition, useLaptopGps } from '../hooks/useLaptopGps'
 import { pick } from '../lib/format'
 import { StatusOrb } from './ui'
-import { getFovSettings, pixelBoxToRealSize } from '../lib/sizeEstimate'
+import { fmtLength, getFovSettings, metersPerPixel, pixelBoxToRealSize, summarizeSizes } from '../lib/sizeEstimate'
+import { projectBoxes } from '../lib/geoProject'
 import { getAlertSettings } from '../lib/alertSettings'
 import { sendBigDumpEmail } from '../lib/alerts/email'
 import {
@@ -140,6 +141,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
   const learnOnRef      = useRef(learnerEnabled())
   const showFilteredRef = useRef(showFilteredEnabled())
   const xformRef        = useRef(null)
+  const mppRef          = useRef(null)   // metres per pixel of the drone frame (null = no usable altitude)
   const frameCanvasRef  = useRef(null)
 
   const [status, setStatus]               = useState('init')
@@ -197,6 +199,10 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
           posSource: live.source === 'drone' && simulated ? 'sim' : live.source,
           alt: live.source === 'drone' ? Number(pick(telemetry.data, ['altitude', 'alt', 'relative_alt'])) : null,
           accuracy: live.accuracy ?? null,
+          // Attitude, to place each item on the water from where it is in the picture.
+          heading: live.source === 'drone' ? pick(telemetry.data, ['heading', 'yaw']) : null,
+          roll: live.source === 'drone' ? pick(telemetry.data, ['roll']) : null,
+          pitch: live.source === 'drone' ? pick(telemetry.data, ['pitch']) : null,
         }
   const sourceRef = useRef(source)
   sourceRef.current = source
@@ -346,7 +352,10 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
         : b.answered === 0 ? '  ✖ not plastic'
         : unsure ? '  ?'
         : filtered ? (b.why === 'rule' ? '  ✖ your answer' : '  · filtered') : ''
-      const pillText = `${icon}  ${b.label}${confTxt}${mark}`
+      // Real-world size from the drone's altitude ("≈30 cm"), plastic only.
+      const mpp = mppRef.current
+      const sizeTxt = mpp && !isHuman && !filtered ? `  ${fmtLength(Math.max(b.x2 - b.x1, b.y2 - b.y1) * mpp)}` : ''
+      const pillText = `${icon}  ${b.label}${confTxt}${sizeTxt}${mark}`
 
       const textW  = ctx.measureText(pillText).width
       const pillH  = fontSize + 10
@@ -518,22 +527,40 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
       recordTrashCount(counted.length) // share plastic-only count with the Detections tab
       // Stamp plastic with the aircraft's live position (≤ 2x/sec) for the Detections tab + report,
       // and grab a photo of this frame (the boxed view, exactly what the operator saw).
+      // Real-world scale of this frame (drone feed with a known altitude only):
+      // the boxes are drawn with their size, and the sighting records it.
+      const fovH=getFovSettings().fovHorizontalDeg
+      mppRef.current=sourceRef.current!=='webcam'?metersPerPixel({frameW:fw,altitudeM:geoRef.current.alt,fovHDeg:fovH}):null
       if(counted.length>0&&now-lastGeoTagRef.current>=500){
         lastGeoTagRef.current=now
         const g=geoRef.current
-        // Rough real-world size of the biggest box for this frame.
-        let biggest=counted[0]
-        let bestArea=(biggest.x2-biggest.x1)*(biggest.y2-biggest.y1)
-        for(const b of counted){const a=(b.x2-b.x1)*(b.y2-b.y1);if(a>bestArea){bestArea=a;biggest=b}}
-        const size=g.alt?pixelBoxToRealSize({boxW:biggest.x2-biggest.x1,boxH:biggest.y2-biggest.y1,frameW:fw,frameH:fh,altitudeM:g.alt,fovDeg:{horizontal:getFovSettings().fovHorizontalDeg,vertical:getFovSettings().fovVerticalDeg}}):null
+        const biggestOf=(bs)=>bs.reduce((m,b)=>((b.x2-b.x1)*(b.y2-b.y1)>(m.x2-m.x1)*(m.y2-m.y1)?b:m))
+        const biggest=biggestOf(counted)
         const cls=biggest.label||'plastic'
-        recordTrashSighting({
-          lat:g.pos?g.pos[0]:null, lng:g.pos?g.pos[1]:null, alt:g.alt,
-          count:counted.length, confidence:Math.max(...counted.map(b=>Number(b.score)||0)),
-          source:sourceRef.current, posSource:g.posSource, accuracy:g.accuracy,
-          photo:capturePhoto(),
-          className:cls, estWidthM:size?.widthM??null, estHeightM:size?.heightM??null,
-        })
+        const photo=capturePhoto()
+        // Drone feed with a GPS fix, altitude and heading: place each item where it
+        // is on the water (from where it sits in the straight-down picture), one
+        // sighting per group of items within 5 m, so the boat goes to the plastic
+        // itself rather than to the point under the drone. Otherwise: the camera's position.
+        const cam=getFovSettings()
+        const groups=sourceRef.current!=='webcam'&&g.posSource!=='laptop'&&g.pos?projectBoxes(counted,{
+          frameW:fw,frameH:fh,lat:g.pos[0],lng:g.pos[1],altitudeM:g.alt,headingDeg:g.heading,rollDeg:g.roll,pitchDeg:g.pitch,
+          fovHDeg:fovH,rotationDeg:cam.cameraRotationDeg,levelled:cam.cameraGimbal,
+        }):null
+        const record=(bs,lat,lng,where)=>{
+          const big=biggestOf(bs)
+          const size=mppRef.current?pixelBoxToRealSize({boxW:big.x2-big.x1,boxH:big.y2-big.y1,frameW:fw,altitudeM:g.alt,fovDeg:{horizontal:fovH}}):null
+          recordTrashSighting({
+            lat, lng, alt:g.alt,
+            count:bs.length, confidence:Math.max(...bs.map(b=>Number(b.score)||0)),
+            source:sourceRef.current, posSource:g.posSource, posMethod:where, accuracy:g.accuracy,
+            photo,
+            className:big.label||cls, estWidthM:size?.widthM??null, estHeightM:size?.heightM??null,
+            sizes:mppRef.current?summarizeSizes(bs,{frameW:fw,altitudeM:g.alt,fovHDeg:fovH}):null,
+          })
+        }
+        if(groups) for(const grp of groups) record(grp.boxes,grp.lat,grp.lng,'picture')
+        else record(counted,g.pos?g.pos[0]:null,g.pos?g.pos[1]:null,g.pos?'camera':null)
         // Big-dump auto alerts. Guarded by cooldown and per-channel toggles.
         const settings=getAlertSettings()
         if(counted.length>=Math.max(1,Number(settings.bigDumpThreshold)||8)&&Date.now()-lastAlertAtRef.current>ALERT_COOLDOWN_MS){
@@ -584,7 +611,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
     if(streamImgRef.current)streamImgRef.current.src=''
     srcElRef.current=null; boxesRef.current=[]; tileBoxesRef.current.clear()
     tileGridRef.current=null; activeTileRef.current=null; trackerRef.current.reset()
-    answeredRef.current.clear(); xformRef.current=null; setAsk(null)
+    answeredRef.current.clear(); xformRef.current=null; mppRef.current=null; setAsk(null)
     emaRef.current=60; gridSizeRef.current=2; setStatus(s=>s==='running'?'ready':s)
   }
   async function switchSource(next){if(next===source)return;const was=runningRef.current;stop();setSource(next);if(was)await start(next)}

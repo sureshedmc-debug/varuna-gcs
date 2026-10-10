@@ -18,8 +18,8 @@ import { getLlmConfig, isLlmConfigReady } from '../lib/assistant/llmSettings'
 import LlmPicker from '../components/LlmPicker'
 import { renderReportCharts } from '../lib/reportChart'
 import { buildTrashDataset, downloadWordReport, fallbackNarrative } from '../lib/reportDoc'
-import { estimateWeightG, fmtWeight, getFovSettings } from '../lib/sizeEstimate'
 import { fetchBoatReportData } from '../lib/boatReport'
+import { describeSighting, estimateWeightG, fmtLength, fmtWeight, getFovSettings, sizeClassOf, SIZE_LABEL } from '../lib/sizeEstimate'
 import { heatPoints, buildHotspotPlan } from '../lib/hotspots'
 import { googleMapsMultiStopUrl } from '../lib/collectionRoute'
 import { setPlanDraft, navigateTo } from '../lib/planDraftStore'
@@ -100,6 +100,8 @@ function fromSighting(s) {
     posSource: s.posSource, accuracy: s.accuracy,
     photo: s.photo || null, hasPhoto: !!(s.photo || s.hasPhoto),
     estWidthM: s.estWidthM ?? null, estHeightM: s.estHeightM ?? null,
+    largestM: s.largestM ?? null, largeCount: s.largeCount ?? 0, totalAreaM2: s.totalAreaM2 ?? null,
+    spanM: s.spanM ?? null, cluster: !!s.cluster, sizeCounts: s.sizeCounts || null,
     estWeightG: estimateWeightG(s.class || 'trash', s.count, getFovSettings().avgWeightG),
     time: s.firstSeen, lastSeen: s.lastSeen,
   }
@@ -258,6 +260,13 @@ const DetectionRow = memo(function DetectionRow({ d, n, expanded, onToggle, onWh
             )}
             <span className="rounded-full px-1.5 py-0.5 text-[9px] font-bold"
               style={{ background: `${o.color}18`, color: o.color }}>{o.label}</span>
+            {d.largestM > 0 && (
+              <span className="rounded-full px-1.5 py-0.5 text-[9px] font-bold"
+                title={describeSighting(d) || ''}
+                style={{ background: d.largeCount > 0 ? 'rgba(255,159,10,0.16)' : 'rgba(255,255,255,0.07)', color: d.largeCount > 0 ? '#FF9F0A' : 'var(--muted)' }}>
+                {d.cluster ? 'Cluster · ' : ''}{SIZE_LABEL[sizeClassOf(d.largestM)]} {fmtLength(d.largestM)}
+              </span>
+            )}
           </div>
 
           {/* Coords */}
@@ -308,7 +317,9 @@ const DetectionRow = memo(function DetectionRow({ d, n, expanded, onToggle, onWh
                 <Detail k="Detected by"   v={o.label} />
                 <Detail k="First seen"    v={fmtClock(d.time)} />
                 <Detail k="Last seen"     v={d.lastSeen ? fmtClock(d.lastSeen) : '—'} />
-                {d.estWidthM  != null && <Detail k="Est. size"   v={`${d.estWidthM.toFixed(2)} × ${d.estHeightM.toFixed(2)} m`} />}
+                {d.estWidthM  != null && <Detail k="Largest item" v={`${d.estWidthM.toFixed(2)} × ${d.estHeightM.toFixed(2)} m`} />}
+                {d.largestM   >  0    && <Detail k="Size class"   v={`${SIZE_LABEL[sizeClassOf(d.largestM)]} (${fmtLength(d.largestM)})`} level={d.largeCount > 0 ? 'warn' : undefined} />}
+                {d.totalAreaM2 > 0    && <Detail k="Debris area"  v={`≈${d.totalAreaM2 < 1 ? d.totalAreaM2.toFixed(2) : d.totalAreaM2.toFixed(1)} m²`} />}
                 {d.estWeightG != null && <Detail k="Est. weight" v={d.estWeightG >= 1000 ? `~${(d.estWeightG / 1000).toFixed(1)} kg` : `~${d.estWeightG} g`} />}
               </div>
             </div>

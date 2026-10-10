@@ -9,7 +9,7 @@ import { useToast } from '../components/Toast'
 import { Btn, StaleBadge, StatusOrb, TiltCard, Field, Spinner } from '../components/ui'
 import { num, bool, pick } from '../lib/format'
 import { setAlertSettings, useAlertSettings } from '../lib/alertSettings'
-import { getFovSettings, setFovSettings, useFovSettings, DEFAULT_AVG_WEIGHT_G } from '../lib/sizeEstimate'
+import { getFovSettings, setFovSettings, useFovSettings, metersPerPixel, DEFAULT_AVG_WEIGHT_G } from '../lib/sizeEstimate'
 import { sendReportReadyEmail } from '../lib/alerts/email'
 import { openWhatsApp } from '../lib/alerts/whatsapp'
 import { buildAlertText } from '../lib/alerts/format'
@@ -415,6 +415,20 @@ function AlertsPanel() {
 }
 
 // ── FOV panel (logic unchanged) ───────────────────────────────────────────────
+// Horizontal field of view of common drone cameras (at 16:9 video).
+const CAMERA_PRESETS = [
+  { label: 'Pi Camera v2', fov: 62 },
+  { label: 'Pi Camera 3', fov: 66 },
+  { label: 'Pi Camera 3 Wide', fov: 102 },
+  { label: 'USB webcam', fov: 60 },
+]
+// Which way the top of the straight-down picture faces (geoProject.js rotationDeg).
+const CAMERA_ROTATIONS = [
+  { deg: 0, label: 'Front (usual)' },
+  { deg: 90, label: 'Right side' },
+  { deg: 180, label: 'Back' },
+  { deg: 270, label: 'Left side' },
+]
 function FovPanel() {
   const s = useFovSettings()
   const cardStyle = { background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 12, padding: 12 }
@@ -422,13 +436,48 @@ function FovPanel() {
     <div className="grid gap-3 sm:grid-cols-2">
       <div style={cardStyle} className="flex flex-col gap-2">
         <div className="text-xs font-semibold text-ink">Camera field of view</div>
-        <div className="text-[11px] text-muted">Converts a detection's pixel size into real-world size using drone altitude. Default is a Pi Camera Module.</div>
-        <label className="text-[11px] text-muted">Horizontal ({s.fovHorizontalDeg}°)</label>
+        <div className="text-[11px] text-muted">Turns a detection's size in pixels into a real size (&quot;≈30 cm&quot;) from the drone&apos;s altitude. Assumes the camera points straight down.</div>
+        <div className="flex flex-wrap gap-1">
+          {CAMERA_PRESETS.map((p) => (
+            <button key={p.label} type="button" onClick={() => setFovSettings({ fovHorizontalDeg: p.fov })}
+              className="rounded-lg px-2 py-1 text-[10.5px] font-semibold transition-all"
+              style={s.fovHorizontalDeg === p.fov
+                ? { background: 'rgba(59,158,255,0.18)', color: 'var(--accent-hex, #3B9EFF)', border: '1px solid rgba(59,158,255,0.4)' }
+                : { background: 'rgba(255,255,255,0.05)', color: 'var(--muted)', border: '1px solid rgba(255,255,255,0.08)' }}>
+              {p.label} · {p.fov}°
+            </button>
+          ))}
+        </div>
+        <label className="text-[11px] text-muted">Horizontal field of view ({s.fovHorizontalDeg}°)</label>
         <input type="range" min={30} max={120} step={1} value={s.fovHorizontalDeg}
           onChange={(e) => setFovSettings({ fovHorizontalDeg: Number(e.target.value) })} className="w-full accent-accent" />
-        <label className="text-[11px] text-muted">Vertical ({s.fovVerticalDeg}°)</label>
-        <input type="range" min={20} max={100} step={1} value={s.fovVerticalDeg}
-          onChange={(e) => setFovSettings({ fovVerticalDeg: Number(e.target.value) })} className="w-full accent-accent" />
+        <div className="text-[11px] text-muted">
+          At 20 m the 1280×720 picture covers ≈{(1280 * metersPerPixel({ frameW: 1280, altitudeM: 20, fovHDeg: s.fovHorizontalDeg })).toFixed(1)} m
+          × {(720 * metersPerPixel({ frameW: 1280, altitudeM: 20, fovHDeg: s.fovHorizontalDeg })).toFixed(1)} m — one pixel ≈ {(100 * metersPerPixel({ frameW: 1280, altitudeM: 20, fovHDeg: s.fovHorizontalDeg })).toFixed(1)} cm.
+        </div>
+        <div className="mt-1 text-xs font-semibold text-ink">Camera mounting</div>
+        <div className="text-[11px] text-muted">Each item is placed on the map where it is in the picture (not under the drone), so the boat drives to the item itself. For that the app needs to know which way the camera faces.</div>
+        <label className="text-[11px] text-muted">Top of the picture faces the drone&apos;s</label>
+        <div className="flex flex-wrap gap-1">
+          {CAMERA_ROTATIONS.map((r) => (
+            <button key={r.deg} type="button" onClick={() => setFovSettings({ cameraRotationDeg: r.deg })}
+              className="rounded-lg px-2 py-1 text-[10.5px] font-semibold transition-all"
+              style={s.cameraRotationDeg === r.deg
+                ? { background: 'rgba(59,158,255,0.18)', color: 'var(--accent-hex, #3B9EFF)', border: '1px solid rgba(59,158,255,0.4)' }
+                : { background: 'rgba(255,255,255,0.05)', color: 'var(--muted)', border: '1px solid rgba(255,255,255,0.08)' }}>
+              {r.label}
+            </button>
+          ))}
+        </div>
+        <label className="flex items-center gap-2 text-[11px] text-muted">
+          <input type="checkbox" className="accent-accent" checked={!!s.cameraGimbal}
+            onChange={(e) => setFovSettings({ cameraGimbal: e.target.checked })} />
+          Camera is on a stabilising gimbal (stays level when the drone tilts)
+        </label>
+        <div className="text-[11px] text-faint">
+          Quick check: fly slowly forward — things on the water should slide toward the bottom of the picture.
+          If they slide sideways or upward, change &quot;Top of the picture faces&quot;.
+        </div>
       </div>
       <div style={cardStyle} className="flex flex-col gap-2">
         <div className="text-xs font-semibold text-ink">Average item weight (grams)</div>

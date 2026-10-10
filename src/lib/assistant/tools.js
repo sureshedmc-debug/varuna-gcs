@@ -10,6 +10,7 @@ import { commandTarget } from '../connectionState'
 import { getActiveMission, missionFor } from '../missionStore'
 import { getTrashLog } from '../trashLog'
 import { boatApi } from '../../api/boatClient'
+import { describeSighting, fmtLength } from '../sizeEstimate'
 import { getMissionRecording } from '../missionRecording'
 import { findWaterByName, findWaterNear, circleArea } from '../waterBody'
 import { buildPlan, clipToWorkArea, distanceM, WORK_RADIUS_M, LONG_FLIGHT_MIN } from '../missionPatterns'
@@ -388,6 +389,14 @@ function detectionsSummary() {
     from_webcam: log.filter((e) => e.source === 'webcam').length,
     from_drone_feed: log.filter((e) => e.source === 'stream').length,
     last_detection: log[0] ? new Date(log[0].lastSeen).toLocaleTimeString() : null,
+    // Rough real-world sizes (drone feed with a known altitude only).
+    sized_locations: log.filter((e) => e.largestM > 0).length,
+    large_items_50cm_plus: log.reduce((a, e) => a + (e.largeCount || 0), 0),
+    largest_object: (() => {
+      const b = log.reduce((m, e) => (e.largestM > (m?.largestM || 0) ? e : m), null)
+      return b ? fmtLength(b.largestM) : null
+    })(),
+    clusters: log.filter((e) => e.cluster).map((e) => describeSighting(e)).slice(0, 5),
     mission_video_clips: rec.clips.length,
     recording_now: rec.recording,
   }

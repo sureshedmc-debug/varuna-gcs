@@ -393,8 +393,14 @@ export default function CollectScreen({ onNavigate }) {
                     <span className="block truncate text-[12px] font-semibold capitalize text-ink">
                       {i.e.class || 'plastic'}{i.e.count > 1 ? ` ×${i.e.count}` : ''}
                     </span>
-                    <span className="block font-mono text-[10px] tnum text-muted">
+                    <span className="block font-mono text-[10px] tnum text-muted"
+                      title={i.e.posMethod === 'picture'
+                        ? "Placed on the item itself: worked out from where it was in the drone's picture."
+                        : i.e.posSource === 'drone' || i.e.posSource === 'sim'
+                          ? 'Where the drone was when it saw the item: the item can be several metres away.'
+                          : undefined}>
                       {i.dist != null ? `${fmtDist(i.dist)} · ` : ''}{i.e.confidence != null ? `${Math.round(i.e.confidence * 100)}% · ` : ''}{relTime(i.e.lastSeen)}
+                      {i.e.posMethod === 'picture' ? ' · on item' : i.e.posSource === 'drone' || i.e.posSource === 'sim' ? ' · under drone' : ''}
                     </span>
                   </span>
                   {i.far ? (
