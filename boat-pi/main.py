@@ -208,7 +208,7 @@ async def broadcast_loop():
                     dead.append(ws)
             for ws in dead:
                 ws_clients.discard(ws)
-        await asyncio.sleep(0.25)
+        await asyncio.sleep(1.0 / cfg["telemetry_hz"])   # 4 Hz; 2 Hz on a Pi Zero
 
 
 async def operator_watchdog():
@@ -243,6 +243,9 @@ async def lifespan(app):
     vision.start()
     tasks = [asyncio.create_task(broadcast_loop()), asyncio.create_task(operator_watchdog())]
     log.info("VARUNA boat backend %s ready on port %s (Pixhawk: %s)", VERSION, cfg["http_port"], cfg["mav_connection"])
+    if cfg["lite"]:
+        log.info("Pi Zero lite mode: camera %s fps, quality %s, telemetry %g/s",
+                 cfg["camera_fps"], cfg["camera_quality"], cfg["telemetry_hz"])
     yield
     for t in tasks:
         t.cancel()
@@ -329,7 +332,8 @@ def system_pi(processes: bool = Query(default=False)):
     ram = psutil.virtual_memory()
     disk = psutil.disk_usage("/")
     return {
-        "cpu_per_core": [{"percent": p} for p in psutil.cpu_percent(percpu=True, interval=0.2)],
+        # Non-blocking: CPU use since the previous call (the app polls this every few seconds).
+        "cpu_per_core": [{"percent": p} for p in psutil.cpu_percent(percpu=True, interval=None)],
         "ram_percent": ram.percent,
         "disk_percent": disk.percent,
         "temperature": round(temp, 1),
@@ -682,7 +686,9 @@ def main():
     port = args.port or cfg["http_port"]
     os.environ["BOAT_CLI_PORT"] = str(port)
     import uvicorn
-    uvicorn.run("main:app", host=args.host, port=port, log_level="info")
+    # No access log: the app makes several requests a second (vision, telemetry),
+    # and logging each one costs a Pi Zero CPU time and wears its SD card.
+    uvicorn.run("main:app", host=args.host, port=port, log_level="info", access_log=False)
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")

@@ -52,6 +52,20 @@ ACK_TEXT = {
     mavlink.MAV_RESULT_IN_PROGRESS: "in progress",
 }
 
+# What the boat reads, per ArduPilot stream group (everything else stays off):
+#   POSITION        GLOBAL_POSITION_INT: position + heading, also matched to camera frames
+#   EXTRA1          ATTITUDE
+#   EXTRA2          VFR_HUD: ground speed, throttle
+#   EXTENDED_STATUS SYS_STATUS (battery), GPS_RAW_INT, MISSION_CURRENT
+# HEARTBEAT, STATUSTEXT, MISSION_ITEM_REACHED and command / mission replies
+# always come, whatever the stream rates.
+STREAM_RATES = (
+    (mavlink.MAV_DATA_STREAM_POSITION, 5),
+    (mavlink.MAV_DATA_STREAM_EXTRA1, 2),
+    (mavlink.MAV_DATA_STREAM_EXTRA2, 2),
+    (mavlink.MAV_DATA_STREAM_EXTENDED_STATUS, 1),
+)
+
 MISSION_PROTOCOL = ("MISSION_REQUEST", "MISSION_REQUEST_INT", "MISSION_ACK", "MISSION_COUNT",
                     "MISSION_ITEM_INT", "MISSION_ITEM")
 
@@ -362,8 +376,14 @@ class BoatLink:
             return False
 
     def _request_streams(self):
-        self._send(lambda m: m.mav.request_data_stream_send(
-            self.target_system, self.target_component, mavlink.MAV_DATA_STREAM_ALL, 4, 1))
+        """Ask for only the messages the boat uses. "Everything at 4 Hz" is ~90
+        messages a second from ArduRover — over half of a 57600-baud link, with
+        commands and mission uploads queuing behind sensor data nobody reads, and
+        every message decoded in Python on a Pi Zero. This is ~20 a second."""
+        ts, tc = self.target_system, self.target_component
+        self._send(lambda m: m.mav.request_data_stream_send(ts, tc, mavlink.MAV_DATA_STREAM_ALL, 0, 0))
+        for stream, hz in STREAM_RATES:
+            self._send(lambda m, s=stream, r=hz: m.mav.request_data_stream_send(ts, tc, s, r, 1))
 
     # ------------------------------------------------------------------ incoming
     def _handle(self, msg):

@@ -52,6 +52,10 @@ DEFAULTS = {
     "camera_quality": 75,
     "stream_fps": 15,
     "ffmpeg_path": "ffmpeg",
+    "telemetry_hz": 4.0,              # live telemetry pushes to the app per second
+    # Pi Zero: lighter defaults (LITE_PROFILE) so a single slow core keeps up.
+    # auto = on a Pi Zero only; on / off to force it. Values set in the file still win.
+    "lite_mode": "auto",
     # Where the camera sits: used to turn a spot in the picture into a spot on the water.
     "camera_height_m": 0.6,           # lens height above the water
     "camera_tilt_deg": 15,            # below the horizon: 15° sees from the ramp (~1.2 m) out to ~20 m
@@ -111,7 +115,21 @@ _FLOAT_KEYS = {"default_hold_s", "default_speed_mps", "max_distance_m", "sim_hom
                "homing_capture_m", "homing_drive_through_m", "homing_confirm_s",
                "wildlife_clear_s", "wildlife_alert_s", "vision_timeout_s", "vision_lost_speed_mps",
                "motion_sensitivity", "turb_divider", "turb_clear_volts", "turb_ref_volts", "turb_ref_ntu",
-               "turb_log_every_s", "measure_s"}
+               "turb_log_every_s", "measure_s", "telemetry_hz"}
+
+# Pi Zero defaults: the camera's JPEG encoding is done in software, on one slow
+# core, and the video goes over NetBird; 10 fps at quality 70 is about half the
+# CPU and bandwidth of 15 fps at 75, and still plenty for the app's AI (it checks
+# for plastic 3x a second) and the catch counter (an item rides the ramp ~16 frames).
+LITE_PROFILE = {"camera_fps": 10, "stream_fps": 10, "camera_quality": 70, "telemetry_hz": 2.0}
+
+
+def pi_model():
+    """'Raspberry Pi Zero W Rev 1.1' etc., or '' when not on a Raspberry Pi."""
+    try:
+        return Path("/proc/device-tree/model").read_bytes().decode("utf-8", "replace").strip("\x00 \n")
+    except OSError:
+        return ""
 
 # Settings the app can change live (Boat Vision → Settings, Water Lab →
 # Calibrate). Each: (type, min, max) or a tuple of allowed strings.
@@ -173,11 +191,13 @@ def _coerce(key, value):
 
 def load_config():
     cfg = dict(DEFAULTS)
+    chosen = set()                     # keys set on purpose (env or file): the lite profile leaves them alone
     for key in DEFAULTS:
         env = os.environ.get("BOAT_" + key.upper())
         if env not in (None, ""):
             try:
                 cfg[key] = _coerce(key, env)
+                chosen.add(key)
             except ValueError:
                 pass
     if CONFIG_PATH.exists():
@@ -192,12 +212,20 @@ def load_config():
                 # backend from starting: keep the default for that key only.
                 try:
                     cfg[key] = _coerce(key, value)
+                    chosen.add(key)
                 except (ValueError, TypeError) as exc:
                     print(f"[config] ignoring {key}={value!r}: {exc}")
     if cfg["operator_lost_action"] not in ("none", "hold", "rtl"):
         cfg["operator_lost_action"] = "none"
     if cfg["on_vision_lost"] not in ("continue", "slow", "hold"):
         cfg["on_vision_lost"] = "slow"
+    mode = str(cfg["lite_mode"]).lower()
+    cfg["lite"] = mode == "on" or (mode == "auto" and "Pi Zero" in pi_model())
+    if cfg["lite"]:
+        for key, value in LITE_PROFILE.items():
+            if key not in chosen:
+                cfg[key] = value
+    cfg["telemetry_hz"] = max(0.5, min(10.0, float(cfg["telemetry_hz"])))
     return cfg
 
 

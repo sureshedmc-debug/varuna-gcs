@@ -45,7 +45,7 @@ from pathlib import Path
 
 import paramiko
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 APP_DIR_NAME = "varuna-boat"
 SERVICE = "varuna-boat"
 HTTP_PORT = 8000
@@ -600,6 +600,8 @@ ExecStart={ctx['app']}/venv/bin/python main.py
 Restart=always
 RestartSec=3
 Environment=PYTHONUNBUFFERED=1
+# On a Pi Zero the boat must win the single CPU core over background jobs.
+Nice=-5
 
 [Install]
 WantedBy=multi-user.target
@@ -618,6 +620,28 @@ systemctl restart {SERVICE}
     if "enabled" not in state.split():
         raise InstallError(f"The boat service was installed but could not be enabled for boot (systemctl says: {state.strip() or 'nothing'}).")
     ok("Boat service installed and enabled — it starts automatically every time the Pi boots")
+
+
+def step_lite(pi, ctx):
+    """Pi Zero: the boat runs its lighter settings by itself (camera 10 fps,
+    telemetry 2x a second); a desktop is the one thing that would still make it
+    lag, so offer to boot to the console instead."""
+    if "Pi Zero" not in ctx.get("model", ""):
+        ok("Not a Pi Zero — full camera and telemetry rates")
+        return
+    ok("Pi Zero: the boat uses its lite settings (camera 10 fps, quality 70, telemetry 2x/s)")
+    _, target = pi.run("systemctl get-default 2>/dev/null || true", check=False)
+    if "graphical" not in target:
+        ok("No desktop running — all of the Pi Zero is free for the boat")
+        return
+    warn("This Pi Zero starts a desktop. It takes a large share of the CPU and memory, and makes the boat lag.")
+    if ask_yes("Switch to console boot (no desktop)? It takes effect after a reboot", True):
+        pi.run("systemctl set-default multi-user.target", sudo=True, timeout=60)
+        ctx["reboot"] = True
+        ok("The Pi will boot without the desktop from the next reboot")
+    else:
+        warn("Desktop kept. For a lag-free boat, use Raspberry Pi OS Lite or switch later with: "
+             "sudo systemctl set-default multi-user.target")
 
 
 def step_netbird(pi, ctx):
@@ -866,6 +890,7 @@ def action_setup(pi, ctx):
         ("Setting up the serial port for the Pixhawk", lambda: step_uart(pi, ctx)),
         ("Setting up the camera and the turbidity sensor", lambda: step_camera_sensor(pi, ctx)),
         ("Installing the boat service", lambda: step_service(pi, ctx)),
+        ("Pi Zero tune-up", lambda: step_lite(pi, ctx)),
         ("NetBird", lambda: step_netbird(pi, ctx)),
         ("Checking everything works", lambda: step_verify(pi, ctx)),
         ("Finishing", lambda: step_reboot(pi, ctx)),
@@ -907,15 +932,12 @@ def action_update(pi, ctx):
             raise InstallError("The backend cannot use its libraries:\n" + out[-600:])
         ok("Libraries up to date")
 
-    def restart():
-        pi.run(f"systemctl restart {SERVICE}", sudo=True, timeout=120)
-        ok("Boat service restarted")
-
     run_steps(pi, [
         ("Copying the latest boat backend", lambda: step_copy(pi, ctx)),
         ("Checking the Python libraries", libs),
         ("Camera and turbidity sensor", lambda: step_camera_sensor(pi, ctx)),
-        ("Restarting the boat service", restart),
+        ("Updating and restarting the boat service", lambda: step_service(pi, ctx)),
+        ("Pi Zero tune-up", lambda: step_lite(pi, ctx)),
         ("Checking it works", lambda: step_verify(pi, ctx)),
         ("Finishing", lambda: step_reboot(pi, ctx)),
     ])

@@ -15,7 +15,6 @@
   "camera_source": "auto",
   "camera_width": 640,
   "camera_height": 360,
-  "camera_fps": 15,
   "camera_height_m": 0.6,
   "camera_tilt_deg": 15,
   "camera_hfov_deg": 66,
