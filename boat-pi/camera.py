@@ -1,20 +1,20 @@
 """
-Boat camera (Pi Camera 3 over the intake ramp), served to the app as MJPEG.
+Boat camera (a USB webcam over the intake ramp), served to the app as MJPEG.
 
 Shared with the drone backend (drone-pi/camera.py), with two boat changes:
 every frame keeps the time it was captured (the app returns it with its
 detections, so the Pi can look up where the boat was at that moment), and
-"auto" tries the camera module before a USB webcam.
+"auto" tries a camera module before a USB webcam.
 
-One capture process feeds every viewer. It is the lightest way to get 720p30
-out of a Raspberry Pi 3:
+One capture process feeds every viewer, at the configured size and rate
+(640x360; 15 fps, 10 on a Pi Zero):
 
-  * USB webcam  → ffmpeg asks the camera for its own MJPEG at 1280x720/30 and
-    copies the frames through untouched (no decoding or re-encoding on the Pi).
-    If the camera can't do MJPEG at that size, it falls back to raw YUYV that
-    ffmpeg encodes (heavier), then to 640x480.
+  * USB webcam  → ffmpeg asks the camera for its own MJPEG and copies the
+    frames through untouched — no decoding or re-encoding on the Pi, the
+    lightest option for a Pi Zero. If the camera can't do MJPEG at that size,
+    it falls back to raw YUYV that ffmpeg encodes (heavier), then to 640x480.
   * Pi camera module (CSI) → rpicam-vid (or libcamera-vid on older OS) encodes
-    MJPEG at 1280x720/30.
+    MJPEG in software.
   * test → a generated test picture (laptop testing / no camera).
 
 The process's output is a stream of JPEGs; each frame is cut out at its start
@@ -212,10 +212,13 @@ class CameraManager:
             ("USB camera raw → MJPEG", f"{w}x{h}",
              v4l + ["-input_format", "yuyv422", "-video_size", f"{w}x{h}", "-framerate", str(fps), "-i", dev,
                     "-c:v", "mjpeg", "-q:v", qv] + out),
+            # Most webcams that don't offer 640x360 do offer 640x480. Ask for the frame
+            # rate here too: left alone, many run at 30 fps — three times the data.
             ("USB camera MJPEG (pass-through)", "640x480",
-             v4l + ["-input_format", "mjpeg", "-video_size", "640x480", "-i", dev, "-c:v", "copy"] + out),
+             v4l + ["-input_format", "mjpeg", "-video_size", "640x480", "-framerate", str(fps), "-i", dev,
+                    "-c:v", "copy"] + out),
             ("USB camera raw → MJPEG", "640x480",
-             v4l + ["-video_size", "640x480", "-i", dev, "-c:v", "mjpeg", "-q:v", qv] + out),
+             v4l + ["-video_size", "640x480", "-framerate", str(fps), "-i", dev, "-c:v", "mjpeg", "-q:v", qv] + out),
         ]
 
     def _run(self):
@@ -226,9 +229,11 @@ class CameraManager:
             if not attempts:
                 self.status_text = "NO CAMERA"
                 self.last_error = {
-                    "none": "No camera found. Check the Pi Camera ribbon (on a Pi Zero it needs the narrow Zero cable), then reboot.",
+                    "none": "No camera found. Plug the USB camera into the Pi (on a Pi Zero: the micro-USB port marked USB, "
+                            "not PWR, through an OTG adapter).",
                     "csi": "rpicam-vid / libcamera-vid is not installed, or no camera module is connected.",
-                    "usb": "No USB camera found.",
+                    "usb": "No USB camera found. Plug it into the Pi (on a Pi Zero: the micro-USB port marked USB, "
+                           "not PWR, through an OTG adapter).",
                 }.get(source, "No camera found.")
                 self._stop.wait(5)
                 continue

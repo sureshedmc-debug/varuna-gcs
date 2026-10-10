@@ -23,7 +23,7 @@ Double-click **VARUNA Boat Pi Tool.exe**. Build it with `boat-installer\build.ba
 - installs the packages and libraries
 - copies this backend
 - sets up the Pixhawk serial port
-- turns on the Pi Camera and I2C (turbidity sensor)
+- sets up the USB camera (ffmpeg) and I2C (turbidity sensor)
 - installs the auto-start service
 - optionally joins NetBird
 
@@ -190,7 +190,7 @@ also be set as an environment variable `BOAT_<KEY>`, e.g. `BOAT_MAV_CONNECTION=/
 
 | Part | How it's fitted |
 |---|---|
-| **Pi Camera 3** | Above the intake ramp, pointing forward and about **15° down**. The ramp fills the bottom ~20 % of the picture; the horizon sits near the top. On a Pi Zero use the narrow Zero ribbon cable. |
+| **USB webcam** (one that outputs MJPEG) | Above the intake ramp, pointing forward and about **15° down**. The ramp fills the bottom ~20 % of the picture; the horizon sits near the top. On a Pi Zero plug it into the micro-USB port marked **USB** (not PWR) through an OTG adapter. Set its horizontal field of view (`camera_hfov_deg`, from the spec sheet) in Boat Vision → Settings. |
 | **Turbidity sensor** (analog module, e.g. DFRobot SEN0189) | Probe below the waterline; its board in the dry. |
 | **ADS1115 ADC** (the Pi has no analog input) | VDD → 3.3 V (pin 1), GND → pin 6, SDA → pin 3, SCL → pin 5. Sensor VCC → 5 V, signal → 10 kΩ → A0, A0 → 20 kΩ → GND (keeps A0 under 3.3 V; `turb_divider` 1.5 undoes it). |
 
@@ -199,7 +199,7 @@ also be set as an environment variable `BOAT_<KEY>`, e.g. `BOAT_MAV_CONNECTION=/
 A Pi Zero is far too slow for the AI models, so **the app sees and the boat decides**:
 
 ```
- Pi Camera ─MJPEG + capture time─▶ VARUNA app (laptop)          boat Pi (this service)
+ USB camera ─MJPEG + capture time─▶ VARUNA app (laptop)         boat Pi (this service)
                                     plastic model ──┐
                                     animal model  ──┼─ /api/vision/observe (5×/s) ─▶ homing · wildlife hold
                                     ramp motion   ──┘─ /api/catch/item ───────────▶ catch log · bin count

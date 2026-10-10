@@ -4,7 +4,7 @@ VARUNA Boat Pi Tool: a terminal app for the boat's Raspberry Pi, over SSH.
 Run it on the Windows laptop. It asks for the boat Pi's address and password
 once, then offers:
   1. Full setup (first time): system packages, the boat backend (bundled in
-     this app), Python libraries, Pixhawk link, serial port, the Pi Camera and
+     this app), Python libraries, Pixhawk link, serial port, the USB camera and
      the turbidity sensor (I2C), auto-start service, optional NetBird, then
      checks it all works.
   2. Update the boat code: copies the latest backend and restarts it.
@@ -58,7 +58,9 @@ APT_PACKAGES = "python3-venv python3-dev python3-pip libxml2-dev libxslt1-dev cu
 # 32-bit Pis: the web framework comes from the OS (no compiling pydantic on a Pi Zero).
 APT_PACKAGES_32 = ("python3-fastapi python3-uvicorn python3-pydantic python3-psutil python3-serial "
                    "python3-smbus2 python3-websockets python3-lxml")
-CAMERA_PACKAGES = "rpicam-apps-lite"
+# The boat camera is a USB webcam: ffmpeg passes its MJPEG through to the app,
+# v4l-utils lists the camera and what it can send.
+CAMERA_PACKAGES = "ffmpeg v4l-utils"
 
 
 def is_32bit(ctx):
@@ -393,8 +395,7 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get -o DPkg::Lock::Timeout=600 update -y
 apt-get -o DPkg::Lock::Timeout=600 install -y --no-install-recommends {APT_PACKAGES}
 {f"apt-get -o DPkg::Lock::Timeout=600 install -y --no-install-recommends {APT_PACKAGES_32} || echo 'Some OS Python packages are missing — the pip fallback will be used.'" if is_32bit(ctx) else ""}
-apt-get -o DPkg::Lock::Timeout=600 install -y --no-install-recommends {CAMERA_PACKAGES} >/dev/null 2>&1 || \
-  apt-get -o DPkg::Lock::Timeout=600 install -y --no-install-recommends libcamera-apps-lite >/dev/null 2>&1 || true
+apt-get -o DPkg::Lock::Timeout=600 install -y --no-install-recommends {CAMERA_PACKAGES}
 """, sudo=True, timeout=2400, stream=True)
     ok("System packages installed" + (" (32-bit: web framework from the OS packages)" if is_32bit(ctx) else ""))
 
@@ -471,9 +472,14 @@ venv/bin/python -m pip install --disable-pip-version-check --extra-index-url htt
 
 
 def step_config(pi, ctx):
-    app = shlex.quote(ctx["app"])
     link = ctx["link"]
-    patch = {"mav_connection": link["device"], "mav_baud": link["baud"], "http_port": HTTP_PORT}
+    _patch_config(pi, ctx, {"mav_connection": link["device"], "mav_baud": link["baud"], "http_port": HTTP_PORT})
+    ok(f"Pixhawk link set to {link['device']} at {link['baud']} baud (boat_config.json)")
+
+
+def _patch_config(pi, ctx, patch):
+    """Merge `patch` into the boat's boat_config.json, keeping everything else."""
+    app = shlex.quote(ctx["app"])
     pi.run(f"""
 set -e
 cd {app}
@@ -491,7 +497,6 @@ p.write_text(json.dumps(cfg, indent=2))
 print("CONFIG_OK")
 PYEOF
 """)
-    ok(f"Pixhawk link set to {link['device']} at {link['baud']} baud (boat_config.json)")
 
 
 def step_uart(pi, ctx):
@@ -541,8 +546,9 @@ after=$(cat "$CFG" "$CMD" 2>/dev/null | md5sum)
 
 
 def step_camera_sensor(pi, ctx):
-    """Turn on the camera module and I2C (for the turbidity sensor's ADS1115),
-    give the service user access, and report what is connected."""
+    """Turn on I2C (for the turbidity sensor's ADS1115), give the service user
+    access to the camera, I2C and serial port, and report what is connected:
+    the USB camera (and whether it sends MJPEG) and the ADC."""
     user = shlex.quote(ctx["user"])
     _, out = pi.run(f"""
 set +e
@@ -550,8 +556,6 @@ R={ROOT}
 CFG="$R/boot/firmware/config.txt"; [ -f "$CFG" ] || CFG="$R/boot/config.txt"
 before=$(md5sum < "$CFG" 2>/dev/null)
 if [ -f "$CFG" ]; then
-  if grep -q '^camera_auto_detect=0' "$CFG"; then sed -i 's/^camera_auto_detect=0/camera_auto_detect=1/' "$CFG"; fi
-  grep -q '^camera_auto_detect=1' "$CFG" || echo 'camera_auto_detect=1' >> "$CFG"
   grep -q '^dtparam=i2c_arm=on' "$CFG" || echo 'dtparam=i2c_arm=on' >> "$CFG"
 fi
 command -v raspi-config >/dev/null 2>&1 && raspi-config nonint do_i2c 0 >/dev/null 2>&1
@@ -560,21 +564,24 @@ modprobe i2c-dev >/dev/null 2>&1
 usermod -aG video,i2c,dialout {user} >/dev/null 2>&1
 after=$(md5sum < "$CFG" 2>/dev/null)
 [ "$before" = "$after" ] || echo BOOT_CHANGED
-HELLO=$(command -v rpicam-hello || command -v libcamera-hello)
-if [ -n "$HELLO" ]; then timeout 20 "$HELLO" --list-cameras 2>&1 | head -8; else echo "NO_CAMERA_TOOL"; fi
+command -v ffmpeg >/dev/null 2>&1 || echo NO_FFMPEG
+DEV=""
+for p in /dev/v4l/by-id/*-video-index0; do [ -e "$p" ] && DEV=$(readlink -f "$p") && break; done
+if [ -n "$DEV" ]; then
+  echo "USBCAM=$DEV"
+  echo "USBNAME=$(v4l2-ctl -d "$DEV" --info 2>/dev/null | grep -m1 'Card type' | cut -d: -f2- | xargs)"
+  FMTS=$(v4l2-ctl -d "$DEV" --list-formats-ext 2>/dev/null)
+  echo "$FMTS" | grep -q MJPG && echo MJPEG_YES || echo MJPEG_NO
+  echo "$FMTS" | awk '/MJPG/{{m=1;next}} /]:/{{m=0}} m && /Size/{{print "SIZE=" $3}}' | head -30
+else
+  echo NO_USBCAM
+fi
 if command -v i2cdetect >/dev/null 2>&1 && [ -e /dev/i2c-1 ]; then i2cdetect -y 1 2>/dev/null | grep -q ' 48' && echo ADS_FOUND || echo ADS_MISSING; else echo I2C_OFF; fi
 """, sudo=True, check=False, timeout=120)
     if "BOOT_CHANGED" in out:
         ctx["reboot"] = True
-        ok("Camera module and I2C enabled in the Pi's boot settings — needs a reboot")
-    if "Available cameras" in out and "No cameras available" not in out:
-        cam = next((line.strip() for line in out.splitlines() if re.match(r"\s*0 :", line)), "camera module")
-        ok(f"Pi Camera found: {cam}")
-    elif "NO_CAMERA_TOOL" in out:
-        warn("The camera tools (rpicam-apps) aren't installed — the boat camera won't stream.")
-    else:
-        warn("No camera module detected yet. On a Pi Zero use the narrow Zero ribbon cable, contacts facing the board; "
-             "it shows up after the reboot.")
+        ok("I2C enabled in the Pi's boot settings — needs a reboot")
+    _report_usb_camera(pi, ctx, out)
     if "ADS_FOUND" in out:
         ok("Turbidity sensor ADC (ADS1115 at 0x48) found on I2C")
     elif "ADS_MISSING" in out:
@@ -582,6 +589,34 @@ if command -v i2cdetect >/dev/null 2>&1 && [ -e /dev/i2c-1 ]; then i2cdetect -y 
              "sensor signal → 10 kΩ → A0, A0 → 20 kΩ → GND.")
     else:
         warn("I2C isn't active yet — it will be after the reboot.")
+
+
+def _report_usb_camera(pi, ctx, out):
+    """What the camera check found; tells the boat to use the USB camera directly."""
+    info = dict(line.split("=", 1) for line in out.splitlines() if line.startswith(("USBCAM=", "USBNAME=")))
+    sizes = [line[5:].strip() for line in out.splitlines() if line.startswith("SIZE=")]
+    if "NO_FFMPEG" in out:
+        warn("ffmpeg isn't installed, so the boat camera can't stream. Run 1) Full setup again "
+             "(it installs ffmpeg), or on the Pi: sudo apt install ffmpeg v4l-utils")
+    if "USBCAM" not in info:
+        warn("No USB camera found. Plug it into the Pi — on a Pi Zero, the micro-USB port marked USB "
+             "(not PWR) through an OTG adapter — then run 9) Camera test.")
+        return
+    ok(f"USB camera found: {info.get('USBNAME') or 'USB camera'} ({info['USBCAM']})")
+    if "MJPEG_YES" in out:
+        size = "640x360" if "640x360" in sizes else "640x480" if "640x480" in sizes else None
+        if size:
+            ok(f"It sends MJPEG at {size}: frames go straight to the app, no encoding on the Pi (lightest for a Pi Zero)")
+        else:
+            warn(f"It sends MJPEG, but not at 640x360 or 640x480 (it offers {', '.join(sizes[:6]) or 'no sizes'}); "
+                 "the Pi will have to resize and encode, which is heavy on a Pi Zero.")
+    else:
+        warn("This camera only sends raw video, so the Pi has to encode every frame — heavy on a Pi Zero and it "
+             "may lag. A webcam with MJPEG output (most do) is recommended.")
+    # Straight to the USB camera: "auto" would first look for a camera module,
+    # which takes seconds of a Pi Zero's CPU every time the camera restarts.
+    _patch_config(pi, ctx, {"camera_source": "usb"})
+    say("  Set the webcam's horizontal field of view (from its spec sheet) in the app: Boat Vision → Settings.", "dim")
 
 
 def step_service(pi, ctx):
@@ -920,6 +955,9 @@ def action_update(pi, ctx):
         ctx["arch"] = lines[0].strip() if lines else ctx.get("arch")
         ctx["dpkg_arch"] = lines[1].strip() if len(lines) > 1 else ctx.get("dpkg_arch", "")
         app = shlex.quote(ctx["app"])
+        # The USB camera's tools (ffmpeg, v4l-utils), for Pis set up before the boat switched to a USB camera.
+        pi.run(f"DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=600 install -y --no-install-recommends "
+               f"{CAMERA_PACKAGES} >/dev/null", sudo=True, timeout=1800, check=False)
         if is_32bit(ctx):
             pi.run(f"apt-get -o DPkg::Lock::Timeout=600 install -y --no-install-recommends {APT_PACKAGES_32} i2c-tools >/dev/null",
                    sudo=True, timeout=1800, check=False)

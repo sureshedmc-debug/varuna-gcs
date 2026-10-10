@@ -42,7 +42,7 @@ DEFAULTS = {
     "sim_home_lat": 17.4239,
     "sim_home_lng": 78.4738,
 
-    # ---- Camera (Pi Camera 3 over the intake ramp, looking forward and down).
+    # ---- Camera (USB webcam over the intake ramp, looking forward and down).
     # 640x360 at 15 fps keeps a Pi Zero's software JPEG encoder within budget.
     "camera_source": "auto",          # auto | csi | usb | test | sim | off
     "camera_device": "auto",
@@ -59,7 +59,7 @@ DEFAULTS = {
     # Where the camera sits: used to turn a spot in the picture into a spot on the water.
     "camera_height_m": 0.6,           # lens height above the water
     "camera_tilt_deg": 15,            # below the horizon: 15° sees from the ramp (~1.2 m) out to ~20 m
-    "camera_hfov_deg": 66,            # Pi Camera 3: 66° (Wide: 102°)
+    "camera_hfov_deg": 66,            # the webcam's horizontal field of view (from its spec sheet)
     # Picture layout (fractions of the frame height/width), shared with the app.
     "ramp_top": 0.78,                 # the ramp fills the picture below this line
     "count_line": 0.55,               # counting line, as a fraction of the ramp band
