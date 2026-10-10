@@ -43,6 +43,14 @@ def dist_m(lat1, lng1, lat2, lng2):
     return math.hypot(north, east)
 
 
+def heading_off_home(t):
+    """Degrees between where the boat points and the direction home (0 = straight at it)."""
+    north = math.radians(HOME[0] - t["lat"]) * 6371000.0
+    east = math.radians(HOME[1] - t["lng"]) * 6371000.0 * math.cos(math.radians(t["lat"]))
+    to_home = math.degrees(math.atan2(east, north)) % 360
+    return abs((t["heading"] - to_home + 180) % 360 - 180)
+
+
 def check(cond, what):
     print(("  PASS  " if cond else "  FAIL  ") + what, flush=True)
     if not cond:
@@ -241,11 +249,14 @@ def main():
 
         # A duck on the way home, after the last item: the hold must not end the mission
         # (a finished mission disarms the boat — not on the water). Placed only once the
-        # boat has turned round at the last item and is driving straight home (full speed
-        # = no longer turning): a duck dropped mid-turn ends up beside or behind it.
+        # boat has turned round at the last item and points at home, with room to spare:
+        # a duck dropped mid-turn ends up beside or behind it. (Speed alone is not
+        # enough — the boat is back to full speed before it has finished turning.)
         wait_for(lambda: c.get("/api/mission/status").json()["state"] == "returning"
                  and (lambda t: t["flight_mode"] == "AUTO" and t["vision"]["phase"] is None
-                      and t["groundspeed"] >= 1.25)(c.get("/api/telemetry").json()), 120, "driving home")
+                      and t["heading"] is not None and heading_off_home(t) <= 10
+                      and dist_m(t["lat"], t["lng"], *HOME) >= 20)(c.get("/api/telemetry").json()),
+                 120, "driving home")
         c.post("/api/sim/duck", params={"ahead_m": 9})
         wait_for(lambda: c.get("/api/telemetry").json()["vision"]["wildlife"]["state"] != "clear", 20, "duck on the way home")
         ok_states = []
