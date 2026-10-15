@@ -897,6 +897,125 @@ def design_pod():
     return d
 
 
+def shift_els(els, dx, dy):
+    out = []
+    for e in els:
+        k = e[0]
+        if k == "poly":
+            out.append(("poly", [(x + dx, y + dy) for x, y in e[1]], e[2]))
+        elif k == "circle":
+            out.append(("circle", (e[1][0] + dx, e[1][1] + dy), e[2], e[3]))
+        elif k in ("line", "dim"):
+            out.append((k, (e[1][0] + dx, e[1][1] + dy), (e[2][0] + dx, e[2][1] + dy)) + tuple(e[3:]))
+        elif k == "skewer":
+            out.append(("skewer", (e[1][0] + dx, e[1][1] + dy)))
+        elif k == "text":
+            out.append(("text", (e[1][0] + dx, e[1][1] + dy)) + tuple(e[2:]))
+    return out
+
+
+def nest(sheet, parts, x0, x1, y0, y1):
+    """Fill the empty end of a sheet with small parts (top-down shelves). Returns the parts left over."""
+    els, left = list(sheet["els"]), []
+    x, y, row = x0, y1, 0
+    for p in sorted(parts, key=lambda p: -(p["bbox"][3] - p["bbox"][1])):
+        bx0, by0, bx1, by1 = p["bbox"]
+        w, h = bx1 - bx0, by1 - by0 + 7
+        if x + w > x1:
+            x, y, row = x0, y - row - 4, 0
+        if w > x1 - x0 or y - h < y0:
+            left.append(p)
+            continue
+        els += shift_els(p["els"], x - bx0, y - h - by0)
+        els.append(("text", (x, y - 2.5), f"{p['name']}  ({w:.0f} x {by1 - by0:.0f} mm, {p['material']})"[:70], 1.9, "l"))
+        x += w + 5
+        row = max(row, h)
+    sheet = tpart(sheet["name"], sheet["material"] + " + small parts", els, sheet["note"], sheet.get("copies", 1))
+    return sheet, left
+
+
+# ------------------------------------------------ pod: compact half templates
+
+
+def pod_half_sheets(small):
+    """The pod is the same left and right, so each big part is drawn once as a half (centreline
+    to the left side) and flipped over for the other half. Hull layers share one page pair,
+    lid and shelf share another."""
+    P = POD
+
+    def half(poly, dy=0):
+        return [(x, y + dy) for x, y in clip_rect(poly, -10, 0, 700, 200)]
+
+    def cline(x0, x1, dy, label):
+        return [("line", (x0, dy), (x1, dy), "fold"),
+                ("text", (x0 + 5, dy + 3), label, 2.4, "l")]
+
+    # top: base layers 1-3, bottom: wall and ledge rings
+    B, R = 136, 0
+    els = [("poly", half(pod_outline(True), B), "cut")]
+    els += cline(15, 395, B, "CENTRELINE - flip the paper over here and trace the other half")
+    for x, y, rl, nl, rr, nr in ((140, 85, 16, "turbidity", 8, "pH"), (190, 85, 8, "TDS", 5, "temperature")):
+        els += [("circle", (x, y + B), rl, "cut"), ("circle", (x, y + B), rr, "pocket"),
+                ("text", (x, y + B + rl + 4), f"left: {nl} {2 * rl} dia", 1.9, "c"),
+                ("text", (x, y + B - rl - 3.5), f"right (flipped): {nr} {2 * rr} dia", 1.9, "c")]
+    els += [("poly", rect(60, B, 100, B + 115), "pocket"), ("text", (80, B + 60), "layer 1 only:", 1.9, "c"),
+            ("text", (80, B + 55), "beam slot", 1.9, "c")]
+    for x, y in ((300, 117), (450, 117), (32, 0), (250, 0), (370, 0)):
+        els.append(("skewer", (x, y + B)))
+    els += [("text", (250, B + 60), "BASE LAYERS 1, 2, 3 - half template (cut 3, both halves)", 3.2, "c"),
+            ("text", (490, B + 30), "drawer tunnel (cut away)", 2.4, "c"),
+            ("dim", (15, B + 125), (585, B + 125), "570 overall length"),
+            ("dim", (520, B), (520, B + 75), "75 (tunnel 150 total)"),
+            ("dim", (395, B + 45), (585, B + 45), "190 tunnel depth"),
+            ("dim", (40, B), (40, B + 135), "135 (width 270 total)"),
+            ("text", (165, B + 115), "wells: 125 and 175 from stern, 85 from centreline", 1.9, "c"),
+            ("ruler", 15, 380, B + 15, 15)]
+    els += [("poly", half(pod_outline(False), R), "cut"), ("poly", half(pod_inner(P["wall"]), R), "pocket"),
+            ("poly", half(pod_inner(P["ledge"]), R), "fold")]
+    els += cline(15, 585, R, "CENTRELINE - flip here")
+    for x, y in ((300, 117), (450, 117), (32, 0)):
+        els.append(("skewer", (x, y + R)))
+    els += [("text", (300, R + 70), "RINGS - half template", 3.2, "c"),
+            ("text", (300, R + 62), "red line: wall rings, layers 4, 5, 7 and lid rim 8 (cut 4)", 2.2, "c"),
+            ("text", (300, R + 56), "blue dashed line: ledge ring, layer 6 (cut 1) - cut this line first", 2.2, "c"),
+            ("text", (300, R + 50), "layer 5: also 3 ultrasonic holes at the bow (23 mm, see 3D)", 2.2, "c"),
+            ("dim", (15, R + 125), (585, R + 125), "570 overall length"),
+            ("dim", (15, R + 20), (50, R + 20), "35 wall"), ("dim", (15, R + 32), (60, R + 32), "45 ledge"),
+            ("dim", (550, R + 20), (585, R + 20), "35"),
+            ("dim", (200, R), (200, R + 135), "135 (270 total)"),
+            ("dim", (50, R + 8), (550, R + 8), "500 inside (wall)"),
+            ("text", (85, R + 115), "R90 outside", 2, "c"), ("text", (100, R + 80), "R55 / R45 inside", 2, "c"),
+            ("ruler", 60, 540, R + 40, 15)]
+    hull = tpart("Hull half-templates: base layers and rings", "25 mm thermocol", els,
+                 "Cut the paper out on the black line, trace it, flip it over on the centreline, trace again.")
+
+    # top: lid, bottom: shelf
+    Lz, S = 104, 0
+    lid = [("poly", half(pod_outline(False), Lz), "cut")]
+    lid += cline(15, 585, Lz, "CENTRELINE - flip here")
+    for (x, y, r, t) in ((90, 0, 10.5, "mast 21 dia, 75 from stern"), (530, 0, 10, "camera cable 20 dia, 515 from stern"),
+                         (320, 0, 4, "panel cable 8 dia, 305 from stern"), (60, 105, 3, "nozzle 6 dia, 45 from stern"),
+                         (540, 105, 3, "nozzle 6 dia, 525 from stern"), (120, 80, 2.5, "status LED 5 dia: LEFT SIDE ONLY")):
+        lid += [("poly", half(circle_pts(x, y, r, 24), Lz), "cut"), ("text", (x, y + Lz + r + 4), t, 1.9, "c")]
+    lid += [("poly", half(rect(150, -115, 490, 115), Lz), "mark"), ("text", (320, Lz + 60), "solar panel 340 x 230", 2.6, "c"),
+            ("poly", half(rect(510, -11, 550, 11), Lz), "mark"), ("poly", half(rect(65, -25, 115, 25), Lz), "mark"),
+            ("text", (300, Lz + 40), "LID TOP - half template, 3 mm sunboard", 3.2, "c"),
+            ("dim", (15, Lz + 125), (585, Lz + 125), "570 overall length"),
+            ("dim", (30, Lz), (30, Lz + 135), "135 (270 total)")]
+    shelf = pod_inner(P["wall"] + 1)
+    sh = [("poly", half(shelf, S), "cut"), ("poly", rect(160, S + 60, 190, S + 85), "pocket")]
+    sh += cline(51, 549, S, "CENTRELINE - flip here")
+    sh += [("text", (300, S + 60), "SHELF - half template, 3 mm sunboard", 3.2, "c"),
+           ("text", (175, S + 92), "cable slot 30 x 25, both sides", 1.9, "c"),
+           ("dim", (51, S + 50), (549, S + 50), "498 long"), ("dim", (300, S), (300, S + 99), "99 (198 total)"),
+           ("text", (400, S + 25), "Pixhawk on the centreline at 195 from stern; Pi Zero right side", 1.9, "c")]
+    lidshelf = tpart("Lid and shelf half-templates", "3 mm sunboard", lid + sh,
+                     "Cut out, trace, flip on the centreline, trace again.")
+    hull, left = nest(hull, small, 600, 805, 0, 271)
+    lidshelf, left = nest(lidshelf, left, 600, 805, 0, 271)
+    return [hull, lidshelf], left
+
+
 # ------------------------------------------------------------ measurements
 
 
@@ -1158,6 +1277,7 @@ def full_name(d):
 
 
 def page_header(c, design, title, page_no):
+    ensure_scale(c)
     c.setFillColorRGB(0.1, 0.1, 0.15)
     band = MARGIN + USE_H
     ty = band + HEAD - 3.5 if HEAD > 5 else band + 0.9
@@ -1176,7 +1296,13 @@ def page_header(c, design, title, page_no):
 
 def new_page(c):
     c.showPage()
-    c.scale(mm, mm)
+    c._need_scale = True      # scale lazily so a trailing page stays empty and is dropped
+
+
+def ensure_scale(c):
+    if getattr(c, "_need_scale", False):
+        c.scale(mm, mm)
+        c._need_scale = False
 
 
 def draw_legend(c, x, y):
@@ -1341,7 +1467,7 @@ def build_pdf(d, path, large=False, paper="A4"):
     y -= 3
     c.setFont("Helvetica-Bold", 3.4)
     c.drawString(tx, y, "How to use these templates")
-    tips = ["1. Print at 100% / Actual size. Check the 50 mm bar with a ruler.",
+    tips = d.get("tips") or ["1. Print at 100% / Actual size. Check the 50 mm bar with a ruler.",
             "2. Join tiles by matching the grey 50 mm grid and the tile letters.",
             "3. Stick the paper on thermocol with a glue stick.",
             "4. Cut with a hot-wire cutter or a new snap-off blade, held upright.",
@@ -1367,6 +1493,7 @@ def build_pdf(d, path, large=False, paper="A4"):
             pw, ph, pname = next((a, b, n) for a, b, n in ((420, 297, "A3"), (594, 420, "A2"), (841, 594, "A1"),
                                                          (1189, 841, "A0")) if sw + 12 <= a and shh + 30 <= b)
             c.setPageSize((pw * mm, ph * mm))
+            ensure_scale(c)
             c.setFont("Helvetica-Bold", 4)
             c.setFillColorRGB(0.1, 0.1, 0.15)
             cp = f" | PRINT {sh['copies']} COPIES" if sh.get("copies", 1) > 1 else ""
@@ -1537,6 +1664,17 @@ BUILD_STEPS = {
 }
 
 
+POD_TIPS = ["1. Print page 2 first at 100% / Actual size; the square must be 100 mm.",
+            "2. Big parts are HALF templates: the boat is the same left and right.",
+            "3. Join the two tiles, cut the paper out on the black line.",
+            "4. Draw a centreline on the thermocol. Lay the template's centreline",
+            "   on it, trace round it, flip the paper over, trace the other half.",
+            "5. Rings: trace the outside on 5 sheets. Cut the paper on the blue",
+            "   dashed line, trace it on layer 6; cut the red line, trace on 4 rings.",
+            "6. Mark holes by pushing a pencil through them. Small parts: cut and",
+            "   paste directly. Glue with Fevicol SH, never Fevikwik or spray paint."]
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     designs = [design_pod(), design_twin(), design_block(), design_twin(conveyor=True)]
@@ -1545,7 +1683,12 @@ def main():
     for d in designs:
         hydro(d)
         add_dims(d)
-        build_pdf(d, os.path.join(OUT, f"{d['id']}_A3.pdf"), paper="A3")
+        if d["id"] == "ai-pod":
+            sheets, left = pod_half_sheets(d["small"])
+            compact = dict(d, sheets=sheets, small=left, tips=POD_TIPS)
+            build_pdf(compact, os.path.join(OUT, f"{d['id']}_A3.pdf"), paper="A3")
+        else:
+            build_pdf(d, os.path.join(OUT, f"{d['id']}_A3.pdf"), paper="A3")
         build_pdf(d, os.path.join(OUT, f"{d['id']}_A4.pdf"))
         build_pdf(d, os.path.join(OUT, f"{d['id']}_large-format.pdf"), large=True)
     data = []
