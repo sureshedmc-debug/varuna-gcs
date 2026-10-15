@@ -1,0 +1,399 @@
+<title>VARUNA Boat Designs</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a workshop sheet. Design tabs on top, the 3D model with its inspector beside it, then the cut list, build steps and electronics below. */
+:root {
+  --bg: #f1f2ee; --panel: #ffffff; --ink: #15222b; --muted: #5a6972; --line: #d5dbda;
+  --accent: #d9530b; --water: #237f93; --soft: #e7ebe8; --ok: #2f7d4f;
+  --display: "Barlow Condensed", "Arial Narrow", sans-serif;
+  --body: "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0e1519; --panel: #152027; --ink: #e5ecee; --muted: #93a3ab; --line: #26353f;
+  --accent: #ff7a2e; --water: #4fb3c6; --soft: #1b2932; --ok: #5cc28a; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0e1519; --panel: #152027; --ink: #e5ecee; --muted: #93a3ab; --line: #26353f;
+  --accent: #ff7a2e; --water: #4fb3c6; --soft: #1b2932; --ok: #5cc28a; color-scheme: dark }
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font: 16px/1.55 var(--body); }
+.wrap { max-width: 1240px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 22px 56px; display: grid; gap: 28px; }
+h1, h2, h3 { font-family: var(--display); letter-spacing: .01em; margin: 0; text-wrap: balance; line-height: 1.1; }
+h1 { font-size: clamp(30px, 5vw, 46px); }
+h2 { font-size: 26px; }
+h3 { font-size: 19px; }
+p { margin: 0; }
+.eyebrow { font: 600 12px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
+.lede { max-width: 68ch; color: var(--muted); }
+header { display: grid; gap: 10px; }
+.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+.tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+.tab { font: 600 15px var(--body); color: var(--ink); background: var(--panel); border: 1.5px solid var(--line);
+  border-radius: 10px; padding: 9px 14px; cursor: pointer; display: grid; gap: 1px; text-align: left; }
+.tab small { font: 500 11px var(--mono); color: var(--muted); letter-spacing: .04em; text-transform: uppercase; }
+.tab[aria-selected="true"] { border-color: var(--accent); box-shadow: inset 0 -3px 0 var(--accent); }
+.tab:focus-visible, button:focus-visible, .row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.stage { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
+@media (max-width: 900px) { .stage { grid-template-columns: 1fr; } }
+.viewer { position: relative; background: var(--panel); border: 1.5px solid var(--line); border-radius: 14px;
+  overflow: hidden; height: min(68vh, 640px); min-height: 380px; max-width: 100%; }
+.viewer canvas { display: block; touch-action: none; }
+.controls { position: absolute; left: 10px; top: 10px; right: 10px; display: flex; flex-wrap: wrap; gap: 6px; pointer-events: none; }
+.chipbtn { pointer-events: auto; font: 500 12.5px var(--body); color: var(--ink); background: var(--panel);
+  border: 1.5px solid var(--line); border-radius: 999px; padding: 4px 11px; cursor: pointer; }
+.chipbtn[aria-pressed="true"] { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+.hint { position: absolute; left: 12px; bottom: 10px; font: 12px var(--mono); color: var(--muted); pointer-events: none; }
+.dim { font: 500 11.5px var(--mono); color: var(--accent); background: var(--panel); border: 1px solid var(--accent);
+  border-radius: 6px; padding: 1px 6px; white-space: nowrap; }
+
+.side { display: grid; gap: 12px; }
+.card { background: var(--panel); border: 1.5px solid var(--line); border-radius: 14px; padding: 14px 16px; min-width: 0; }
+.spec { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; font-size: 14.5px; }
+.spec dt { color: var(--muted); }
+.spec dd { margin: 0; text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 13.5px; }
+.badge { display: inline-block; font: 600 11px var(--mono); letter-spacing: .06em; text-transform: uppercase;
+  color: var(--accent); border: 1px solid var(--accent); border-radius: 999px; padding: 1px 8px; }
+.sel h3 { font-size: 17px; }
+.sel .muted { color: var(--muted); font-size: 14px; }
+
+.list { max-height: 330px; overflow: auto; display: grid; }
+.row { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 5px 4px;
+  border-top: 1px solid var(--line); cursor: pointer; font-size: 13.5px; }
+.row:hover { background: var(--soft); }
+.row .sw { width: 12px; height: 12px; border-radius: 3px; border: 1px solid var(--line); }
+.row span:last-child { font: 12px var(--mono); color: var(--muted); }
+.row[aria-current="true"] { background: var(--soft); box-shadow: inset 3px 0 0 var(--accent); }
+
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+.tbl { overflow-x: auto; border: 1.5px solid var(--line); border-radius: 12px; background: var(--panel); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th { text-align: left; font: 600 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
+  padding: 9px 12px; background: var(--soft); }
+td { padding: 8px 12px; border-top: 1px solid var(--line); vertical-align: top; }
+td.n { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+ol.steps { margin: 0; padding-left: 22px; display: grid; gap: 10px; }
+ol.steps b { font-family: var(--display); font-size: 17px; letter-spacing: .01em; }
+code { font: 13px var(--mono); background: var(--soft); padding: 1px 5px; border-radius: 5px; }
+.files { display: grid; gap: 6px; font-size: 14.5px; }
+.note { color: var(--muted); font-size: 14px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">VARUNA boat · 600 × 300 mm · 25 mm thermocol layers</div>
+    <h1>Three boats you can cut from thermocol</h1>
+    <p class="lede">Every measurement on this page comes from the same file as the full-size cutting templates, so what you see in 3D is what you cut. Drag to turn the boat, scroll or pinch to zoom, and tap any part to see its size and where it goes.</p>
+  </header>
+
+  <div class="tabs" id="tabs" role="tablist"></div>
+
+  <section class="stage">
+    <div class="viewer" id="viewer">
+      <div class="controls" id="controls"></div>
+      <div class="hint">drag to rotate · scroll to zoom · tap a part</div>
+    </div>
+    <div class="side">
+      <div class="card" id="summary"></div>
+      <div class="card sel" id="selected"><h3>Tap a part</h3><p class="muted">Its size, position and job show here.</p></div>
+      <div class="card"><h3 style="margin-bottom:6px">Every part on the boat</h3><div class="list" id="partlist"></div></div>
+    </div>
+  </section>
+
+  <section style="display:grid;gap:12px">
+    <h2>Compare the three designs</h2>
+    <div class="tbl"><table id="compare"></table></div>
+  </section>
+
+  <section class="grid2">
+    <div style="display:grid;gap:12px;align-content:start">
+      <h2 id="steps-title">Build steps</h2>
+      <div class="card"><ol class="steps" id="steps"></ol></div>
+    </div>
+    <div style="display:grid;gap:12px;align-content:start">
+      <h2>Cut list</h2>
+      <div class="tbl"><table id="cut"></table></div>
+      <h2>Cutting templates</h2>
+      <div class="card files" id="files"></div>
+    </div>
+  </section>
+
+  <section style="display:grid;gap:12px">
+    <h2>Electronics (same on all three)</h2>
+    <div class="tbl"><table id="elec"></table></div>
+    <p class="note">The Pi Zero streams the camera and runs the boat's decisions. The plastic and animal detection runs in the VARUNA app on the laptop, as in the Boat Vision plan. Motors are air props above the water, so plastic and weeds cannot wrap around them.</p>
+  </section>
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { CSS2DRenderer, CSS2DObject } from "three/addons/renderers/CSS2DRenderer.js";
+
+const DATA = /*DATA*/null;
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+let cur = 0;
+try { const h = location.hash.slice(1); const i = DATA.designs.findIndex((d) => d.id === h); if (i >= 0) cur = i; } catch (e) {}
+const opts = { explode: false, xray: false, open: false, dims: true, water: true };
+
+// ---------------------------------------------------------------- scene
+const host = $("viewer");
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+host.prepend(renderer.domElement);
+const labels = new CSS2DRenderer();
+labels.domElement.style.position = "absolute";
+labels.domElement.style.top = "0";
+labels.domElement.style.pointerEvents = "none";
+host.appendChild(labels.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(36, 1, 5, 6000);
+camera.position.set(-760, 600, 840);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 80, 0);
+controls.enableDamping = true;
+scene.add(new THREE.HemisphereLight(0xffffff, 0x8a9aa3, 1.6));
+const sun = new THREE.DirectionalLight(0xffffff, 1.5);
+sun.position.set(-400, 800, 300);
+scene.add(sun);
+const grid = new THREE.GridHelper(1000, 20, 0x8894a0, 0xc2cad0);
+grid.position.y = -16;
+scene.add(grid);
+
+let root = null, pickables = [], selected = null, rows = [];
+const W = (x, y, z) => new THREE.Vector3(x - 300, z, -y);   // boat mm -> world
+
+function shapeFrom(pts, holes) {
+  const s = new THREE.Shape(pts.map(([x, y]) => new THREE.Vector2(x, y)));
+  for (const h of holes || []) s.holes.push(new THREE.Path(h.map(([x, y]) => new THREE.Vector2(x, y))));
+  return s;
+}
+function slabMesh(pts, holes, h, color, opacity) {
+  const g = new THREE.ExtrudeGeometry(shapeFrom(pts, holes), { depth: h, bevelEnabled: false, curveSegments: 6 });
+  g.rotateX(-Math.PI / 2);
+  g.translate(-300, 0, 0);
+  const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color, roughness: 0.85, transparent: opacity < 1, opacity }));
+  const e = new THREE.LineSegments(new THREE.EdgesGeometry(g, 25), new THREE.LineBasicMaterial({ color: 0x55636d, transparent: true, opacity: 0.55 }));
+  m.add(e);
+  return m;
+}
+function partMesh(p) {
+  let g;
+  if (p.kind === "box") g = new THREE.BoxGeometry(p.s[0], p.s[2], p.s[1]);
+  else if (p.kind === "cyl") g = new THREE.CylinderGeometry(p.r, p.r, p.h, 28);
+  else if (p.kind === "torus") g = new THREE.TorusGeometry(p.r, p.tube, 10, 40);
+  else return null;
+  const mat = new THREE.MeshStandardMaterial({ color: p.color, roughness: 0.6, metalness: p.group === "elec" ? 0.15 : 0,
+    transparent: p.opacity < 1, opacity: p.opacity, depthWrite: p.opacity >= 0.5 });
+  const m = new THREE.Mesh(g, mat);
+  m.position.copy(W(p.c[0], p.c[1], p.c[2]));
+  if (p.kind === "box" && p.pitch) m.rotation.z = THREE.MathUtils.degToRad(p.pitch);
+  if (p.kind === "cyl" && p.axis === "x") m.rotation.z = Math.PI / 2;
+  if (p.kind === "cyl" && p.axis === "y") m.rotation.x = Math.PI / 2;
+  if (p.kind === "torus") m.rotation.y = Math.PI / 2;
+  if (p.opacity >= 0.5) m.add(new THREE.LineSegments(new THREE.EdgesGeometry(g, 30), new THREE.LineBasicMaterial({ color: 0x2a333a, transparent: true, opacity: 0.35 })));
+  return m;
+}
+function dimLine(a, b, text, group) {
+  const mat = new THREE.LineBasicMaterial({ color: css("--accent") || "#d9530b" });
+  const geo = new THREE.BufferGeometry().setFromPoints([a, b]);
+  group.add(new THREE.Line(geo, mat));
+  const dir = b.clone().sub(a).normalize();
+  const n = Math.abs(dir.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+  for (const p of [a, b]) group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([p.clone().addScaledVector(n, -8), p.clone().addScaledVector(n, 8)]), mat));
+  const div = document.createElement("div");
+  div.className = "dim";
+  div.textContent = text;
+  const o = new CSS2DObject(div);
+  o.position.copy(a.clone().add(b).multiplyScalar(0.5));
+  group.add(o);
+}
+
+function build() {
+  if (root) { scene.remove(root); root.traverse((o) => { if (o.element) o.element.remove(); }); }
+  root = new THREE.Group();
+  pickables = [];
+  const d = DATA.designs[cur];
+  const foam = new THREE.Color(DATA.colors.foam);
+  for (const ly of d.layers) {
+    const tint = foam.clone().offsetHSL(0, 0, -0.035 * (ly.layer - 1));
+    const m = slabMesh(ly.pts, ly.holes, ly.h, tint, opts.xray ? 0.22 : 1);
+    m.position.y = ly.z0 + (opts.explode ? (ly.layer - 1) * 40 : 0);
+    m.userData = { info: { name: ly.name, info: "25 mm thermocol, cut from the template", kind: "layer" } };
+    root.add(m); pickables.push(m);
+  }
+  const lift = opts.explode ? 130 : 0;
+  for (const s of d.slabs) {
+    const m = slabMesh(s.pts, s.holes, s.h, new THREE.Color(DATA.colors.sunboard), 1);
+    m.position.y = s.z0 + lift;
+    m.visible = !opts.open;
+    m.userData = { info: { name: s.name, info: "cut from the template", kind: "slab" } };
+    root.add(m); pickables.push(m);
+  }
+  d.parts.forEach((p, i) => {
+    const m = partMesh(p);
+    if (!m) return;
+    const bottom = p.c[2] - (p.kind === "box" ? p.s[2] / 2 : p.kind === "cyl" && p.axis === "z" ? p.h / 2 : p.r);
+    if (bottom >= 74) m.position.y += lift;
+    if (opts.open && p.name.startsWith("Waterproof")) m.visible = false;
+    m.userData = { info: p, idx: i };
+    root.add(m); pickables.push(m);
+  });
+  if (opts.water) {
+    const wl = d.specs.empty.draft_mm;
+    const wm = new THREE.Mesh(new THREE.PlaneGeometry(1100, 620), new THREE.MeshStandardMaterial({ color: css("--water") || "#237f93", transparent: true, opacity: 0.22, depthWrite: false, side: THREE.DoubleSide }));
+    wm.rotation.x = -Math.PI / 2;
+    wm.position.set(40, wl, 0);
+    root.add(wm);
+  }
+  if (opts.dims && !opts.explode) {
+    const g = new THREE.Group(), s = d.specs;
+    dimLine(W(0, -185, 0), W(600, -185, 0), "600 mm", g);
+    dimLine(W(-30, 150, 0), W(-30, -150, 0), "300 mm", g);
+    dimLine(W(615, 150, 0), W(615, 150, 75), "75 mm hull", g);
+    dimLine(W(615, 70, 75), W(615, -70, 75), d.id === "u-hull" ? "140 mm slot" : "140 mm channel", g);
+    const mast = d.parts.find((p) => p.name.startsWith("Camera mast"));
+    if (mast) {
+      const top = mast.c[2] + mast.h / 2;
+      dimLine(W(mast.c[0] - 40, 0, 0), W(mast.c[0] - 40, 0, top), `${Math.round(top)} mm to mast top`, g);
+      dimLine(W(mast.c[0] + 60, 0, s.empty.draft_mm), W(mast.c[0] + 60, 0, s.empty.draft_mm + s.cam_height_mm), `camera ${s.cam_height_mm} mm above water`, g);
+    }
+    root.add(g);
+  }
+  scene.add(root);
+  if (selected != null) highlight(selected, false);
+}
+
+function highlight(idx, scroll = true) {
+  selected = idx;
+  for (const m of pickables) {
+    const on = m.userData.idx === idx && idx != null;
+    if (m.material && m.material.emissive) m.material.emissive.set(on ? (css("--accent") || "#d9530b") : 0x000000);
+    if (m.material) m.material.emissiveIntensity = on ? 0.55 : 0;
+  }
+  rows.forEach((r) => r.setAttribute("aria-current", String(Number(r.dataset.idx) === idx)));
+  const p = DATA.designs[cur].parts[idx];
+  if (!p) return;
+  const size = p.kind === "box" ? `${p.s.map((v) => Math.round(v)).join(" × ")} mm (L × W × H)`
+    : p.kind === "cyl" ? `${Math.round(p.r * 2)} mm dia × ${Math.round(p.h)} mm` : `${Math.round(p.r * 2 + p.tube * 2)} mm ring`;
+  const bottom = p.kind === "box" ? p.c[2] - p.s[2] / 2 : p.kind === "cyl" && p.axis === "z" ? p.c[2] - p.h / 2 : p.c[2];
+  $("selected").innerHTML = `<h3>${esc(p.name)}</h3>
+    <dl class="spec" style="margin:8px 0 0">
+      <dt>Size</dt><dd>${size}</dd>
+      <dt>From the stern</dt><dd>${Math.round(p.c[0])} mm (centre)</dd>
+      <dt>Across</dt><dd>${p.c[1] === 0 ? "on the centreline" : `${Math.abs(Math.round(p.c[1]))} mm ${p.c[1] > 0 ? "left" : "right"}`}</dd>
+      <dt>Height</dt><dd>${Math.round(bottom)} mm above hull bottom</dd>
+      <dt>Weight</dt><dd>${p.mass} g</dd>
+    </dl>${p.info ? `<p class="muted" style="margin-top:8px">${esc(p.info)}</p>` : ""}`;
+  if (scroll && innerWidth <= 900) $("selected").scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
+// picking
+const ray = new THREE.Raycaster(), ptr = new THREE.Vector2();
+let down = null;
+renderer.domElement.addEventListener("pointerdown", (e) => { down = [e.clientX, e.clientY]; });
+renderer.domElement.addEventListener("pointerup", (e) => {
+  if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 5) return;
+  const r = renderer.domElement.getBoundingClientRect();
+  ptr.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(ptr, camera);
+  const hit = ray.intersectObjects(pickables.filter((m) => m.visible), false)[0];
+  if (!hit) return;
+  const u = hit.object.userData;
+  if (u.idx != null) highlight(u.idx);
+  else { highlight(null); $("selected").innerHTML = `<h3>${esc(u.info.name)}</h3><p class="muted">${esc(u.info.info)}</p>`; }
+});
+
+function resize() {
+  const w = host.clientWidth, h = host.clientHeight;
+  renderer.setSize(w, h);
+  labels.setSize(w, h);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(host);
+function bgFromTheme() { scene.background = new THREE.Color(css("--panel") || "#ffffff"); }
+bgFromTheme();
+matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", () => { bgFromTheme(); build(); });
+new MutationObserver(() => { bgFromTheme(); build(); }).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+(function loop() { controls.update(); renderer.render(scene, camera); labels.render(scene, camera); requestAnimationFrame(loop); })();
+
+// ---------------------------------------------------------------- UI
+const TOGGLES = [["explode", "Explode layers"], ["xray", "See-through foam"], ["open", "Remove deck and lid"], ["dims", "Measurements"], ["water", "Waterline"]];
+$("controls").innerHTML = TOGGLES.map(([k, t]) => `<button class="chipbtn" id="t-${k}" aria-pressed="${opts[k]}">${t}</button>`).join("");
+TOGGLES.forEach(([k]) => $(`t-${k}`).addEventListener("click", (e) => { opts[k] = !opts[k]; e.currentTarget.setAttribute("aria-pressed", opts[k]); build(); }));
+
+$("tabs").innerHTML = DATA.designs.map((d, i) => `<button class="tab" role="tab" id="tab-${d.id}" aria-selected="${i === cur}"><small>Design ${i + 1} · ${esc(d.tag)}</small>${esc(d.name)}</button>`).join("");
+DATA.designs.forEach((d, i) => $(`tab-${d.id}`).addEventListener("click", () => { cur = i; selected = null; render(); }));
+
+function render() {
+  const d = DATA.designs[cur], s = d.specs;
+  DATA.designs.forEach((x, i) => $(`tab-${x.id}`).setAttribute("aria-selected", String(i === cur)));
+  $("summary").innerHTML = `<div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><h3>${esc(d.name)}</h3><span class="badge">${esc(d.tag)}</span></div>
+    <p style="margin:6px 0 10px;font-size:14.5px;color:var(--muted)">${esc(d.summary)}</p>
+    <dl class="spec" style="margin:0">
+      <dt>Hull</dt><dd>${s.length} × ${s.width} × ${s.hull_height} mm</dd>
+      <dt>Height to GPS</dt><dd>${s.overall_height} mm</dd>
+      <dt>Weight empty / full</dt><dd>${(s.empty.mass_g / 1000).toFixed(2)} / ${(s.full.mass_g / 1000).toFixed(2)} kg</dd>
+      <dt>Draft empty / full</dt><dd>${s.empty.draft_mm} / ${s.full.draft_mm} mm</dd>
+      <dt>Reserve buoyancy</dt><dd>${s.reserve_kg} kg</dd>
+      <dt>Stability (GM)</dt><dd>${s.empty.gm_t_mm} mm</dd>
+      <dt>Trim empty</dt><dd>bow ${s.empty.bow_up_mm} mm up</dd>
+      <dt>Collection</dt><dd>${s.bin_l} L</dd>
+      <dt>Camera</dt><dd>${s.cam_height_mm} mm up, ${s.cam_tilt}° down</dd>
+      <dt>Thermocol</dt><dd>${s.foam_sheets} × (1000 × 500 × 25)</dd>
+    </dl>`;
+  rows = [];
+  $("partlist").innerHTML = d.parts.map((p, i) => p.kind === "mass" ? "" :
+    `<div class="row" tabindex="0" data-idx="${i}"><span class="sw" style="background:${p.color}"></span><span>${esc(p.name)}</span><span>${Math.round(p.c[0])} mm</span></div>`).join("");
+  rows = [...$("partlist").querySelectorAll(".row")];
+  rows.forEach((r) => {
+    const go = () => highlight(Number(r.dataset.idx), false);
+    r.addEventListener("click", go);
+    r.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } });
+  });
+  $("selected").innerHTML = `<h3>Tap a part</h3><p class="muted">Its size, position and job show here. The number in the list is its distance from the stern.</p>`;
+  $("steps-title").textContent = `Build steps: ${d.name}`;
+  $("steps").innerHTML = d.steps.map(([t, x]) => `<li><b>${esc(t)}.</b> ${esc(x)}</li>`).join("");
+  $("cut").innerHTML = `<tr><th>Part</th><th>Material</th></tr>` + d.cut.map((c) => `<tr><td>${esc(c.name)}${c.note ? `<div class="note">${esc(c.note)}</div>` : ""}</td><td>${esc(c.material)}</td></tr>`).join("");
+  $("files").innerHTML = `<p>In the repo, folder <code>boat-design/templates/</code>:</p>
+    <p><code>${d.id}_A4.pdf</code> prints at home on A4, tiled with a 50 mm grid to join the pages.</p>
+    <p><code>${d.id}_large-format.pdf</code> puts each big part on one sheet for a print shop.</p>
+    <p class="note">Print at 100% (Actual size). Each page has a 50 mm bar: measure it before you cut.</p>`;
+  try { history.replaceState(null, "", "#" + d.id); } catch (e) {}
+  build();
+}
+
+const effort = { "twin-hull": "Medium", "u-hull": "Easy", "conveyor-cat": "Hard" };
+const best = { "twin-hull": "Everyday collecting, lightest boat", "u-hull": "First build, rough water, most stable", "conveyor-cat": "Most reliable pickup and counting" };
+$("compare").innerHTML = `<tr><th></th>${DATA.designs.map((d) => `<th>${esc(d.name)}</th>`).join("")}</tr>` +
+  [["Build effort", (d) => effort[d.id]],
+   ["Weight empty", (d) => `${(d.specs.empty.mass_g / 1000).toFixed(2)} kg`],
+   ["Draft empty", (d) => `${d.specs.empty.draft_mm} mm`],
+   ["Reserve buoyancy", (d) => `${d.specs.reserve_kg} kg`],
+   ["Stability (GM)", (d) => `${d.specs.empty.gm_t_mm} mm`],
+   ["Collection", (d) => `${d.specs.bin_l} L`],
+   ["Thermocol sheets", (d) => `${d.specs.foam_sheets}`],
+   ["Best for", (d) => best[d.id]]]
+  .map(([k, f]) => `<tr><td>${k}</td>${DATA.designs.map((d) => `<td class="${k === "Best for" || k === "Build effort" ? "" : "n"}">${esc(f(d))}</td>`).join("")}</tr>`).join("");
+$("elec").innerHTML = `<tr><th>Part</th><th>Size (mm)</th><th>Weight</th></tr>` +
+  DATA.electronics.map(([n, s, m]) => `<tr><td>${esc(n)}</td><td class="n">${esc(s)}</td><td class="n">${m} g</td></tr>`).join("");
+render();
+resize();
+</script>
