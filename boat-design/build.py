@@ -245,7 +245,7 @@ def crossbar(out, x0, z0, name):
 #          ("skewer", (x, y)) ("line", p0, p1, style)
 
 
-def tpart(name, material, els, note=""):
+def tpart(name, material, els, note="", copies=1):
     xs, ys = [], []
     for e in els:
         if e[0] == "poly":
@@ -257,7 +257,7 @@ def tpart(name, material, els, note=""):
         elif e[0] == "line":
             xs += [e[1][0], e[2][0]]
             ys += [e[1][1], e[2][1]]
-    return {"name": name, "material": material, "els": els, "note": note,
+    return {"name": name, "material": material, "els": els, "note": note, "copies": copies,
             "bbox": [min(xs), min(ys), max(xs), max(ys)]}
 
 
@@ -309,10 +309,10 @@ def mast_ring():
     return tpart("Mast foot ring", "5 mm sunboard (cut 2, stack)", els, "Mast clamps to the box front with 2 cable ties")
 
 
-def camera_parts():
-    h = round(30 * math.tan(math.radians(35)), 1)
-    wedge = tpart("Camera wedge side (35 deg)", "3 mm sunboard", [
-        ("poly", [(0, 0), (30, 0), (0, h)], "cut"), ("text", (9, 4), "35 deg", 2.4, "c")],
+def camera_parts(angle=35):
+    h = round(30 * math.tan(math.radians(angle)), 1)
+    wedge = tpart(f"Camera wedge side ({angle} deg)", "3 mm sunboard", [
+        ("poly", [(0, 0), (30, 0), (0, max(h, 6))], "cut"), ("text", (9, 2), f"{angle} deg", 1.8, "l")],
         "Camera plate glues on the sloping edge, lens looking forward and down")
     plate = tpart("Camera plate", "3 mm sunboard", [
         ("poly", rect(0, 0, 32, 32), "cut"), ("circle", (16, 18), 4.5, "cut"),
@@ -620,6 +620,283 @@ def design_block():
     return d
 
 
+# ------------------------------------------------------- design: AI Pod
+
+
+def rrect(x0, y0, x1, y1, r, n=10):
+    """Rounded rectangle, CCW, starting at the bottom edge going towards the bow."""
+    pts = []
+    for cx, cy, a0 in ((x1 - r, y0 + r, -90), (x1 - r, y1 - r, 0), (x0 + r, y1 - r, 90), (x0 + r, y0 + r, 180)):
+        for i in range(n + 1):
+            a = math.radians(a0 + 90 * i / n)
+            pts.append((cx + r * math.cos(a), cy + r * math.sin(a)))
+    return pts
+
+
+def clip_rect(poly, x0, y0, x1, y1):
+    """Sutherland-Hodgman clip of a polygon to an axis-aligned rectangle."""
+    def clip(pts, inside, cut):
+        out = []
+        for i, p in enumerate(pts):
+            q = pts[i - 1]
+            if inside(p):
+                if not inside(q):
+                    out.append(cut(q, p))
+                out.append(p)
+            elif inside(q):
+                out.append(cut(q, p))
+        return out
+
+    def cx(v):
+        return lambda a, b: (v, a[1] + (b[1] - a[1]) * (v - a[0]) / (b[0] - a[0]))
+
+    def cy(v):
+        return lambda a, b: (a[0] + (b[0] - a[0]) * (v - a[1]) / (b[1] - a[1]), v)
+    p = clip(poly, lambda q: q[0] >= x0, cx(x0))
+    p = clip(p, lambda q: q[0] <= x1, cx(x1))
+    p = clip(p, lambda q: q[1] >= y0, cy(y0))
+    return clip(p, lambda q: q[1] <= y1, cy(y1))
+
+
+POD = {"x0": 15, "x1": 585, "half": 135, "r": 90, "wall": 35, "ledge": 45,
+       "tunnel_x": 395, "tunnel_half": 75}
+
+
+def pod_outline(notch):
+    P = POD
+    pts = rrect(P["x0"], -P["half"], P["x1"], P["half"], P["r"])
+    if not notch:
+        return pts
+    th = P["tunnel_half"]
+    xa = P["x1"] - P["r"] + math.sqrt(P["r"] ** 2 - (th - (P["half"] - P["r"])) ** 2)
+    out, done = [], False
+    for p in pts:
+        if p[0] > P["tunnel_x"] and abs(p[1]) < th:
+            if not done:
+                out += [(xa, -th), (P["tunnel_x"], -th), (P["tunnel_x"], th), (xa, th)]
+                done = True
+            continue
+        out.append(p)
+    return out
+
+
+def pod_inner(off):
+    P = POD
+    return rrect(P["x0"] + off, -P["half"] + off, P["x1"] - off, P["half"] - off, P["r"] - off)
+
+
+POD_WELLS = [("Turbidity probe", 140, 85, 16), ("pH probe", 140, -85, 8), ("TDS probe", 190, 85, 8),
+             ("Temperature probe", 190, -85, 5)]
+POD_SKEWERS = [(32, 0), (300, 117), (300, -117), (450, 117), (450, -117)]
+
+POD_LOWER = [  # name, x0, yc, z0, sx, sy, sz, mass, colour, info
+    ("ESC 30 A bidirectional (left)", 65, 50, 75, 50, 25, 10, 25, "#5b6370", "left thruster, reversible for turning on the spot"),
+    ("ESC 30 A bidirectional (right)", 65, -50, 75, 50, 25, 10, 25, "#5b6370", "right thruster"),
+    ("12 V to 5 V 5 A buck converter", 120, -50, 75, 60, 35, 20, 30, "#46505c", "powers the Pi, servo and LEDs"),
+    ("2-channel relay module", 120, 50, 75, 50, 38, 19, 30, "#1f4f8a", "switches the spray pump and the UV LED"),
+    ("Li-ion 3S6P 20 Ah battery (18 x 18650 + BMS)", 100, 0, 75, 115, 60, 70, 960, "#2f6fb5",
+     "lowest and heaviest part: keeps the boat stable. Velcro strap, slide to trim"),
+    ("CN3791 solar charge module", 340, -75, 75, 50, 30, 15, 15, "#2f7d4f", "between the panel and the battery"),
+    ("Spray pump 12 V (385 diaphragm)", 240, -40, 75, 90, 40, 35, 110, "#7a828c", "feeds 4 nozzles through 4 mm tube"),
+    ("Ultrasonic board (front)", 430, -40, 80, 41, 28, 10, 10, "#2f7d4f", "JSN-SR04T, echo to Pixhawk"),
+    ("Ultrasonic board (left)", 480, -40, 80, 41, 28, 10, 10, "#2f7d4f", "JSN-SR04T"),
+    ("Ultrasonic board (right)", 430, -78, 80, 41, 28, 10, 10, "#2f7d4f", "JSN-SR04T"),
+]
+POD_UPPER = [
+    ("Power module", 180, 0, 153, 21, 25, 9, 15, "#8a6d3b", "battery to Pixhawk POWER"),
+    ("Pixhawk 2.4.8", 210, 0, 153, 82, 50, 16, 38, "#30343b", "arrow to the bow, on foam tape"),
+    ("Raspberry Pi Zero 2 W", 310, -50, 157, 65, 30, 5, 10, "#2f7d4f", "Pi camera + USB webcam, MAVLink to TELEM2"),
+    ("ADS1115 ADC", 385, -50, 157, 28, 18, 3, 3, "#1f4f8a", "A0 turbidity, A1 pH, A2 TDS (I2C 0x48)"),
+    ("pH sensor board", 310, 45, 153, 42, 32, 10, 15, "#2f7d4f", "calibrate with pH 4 and 7 buffer"),
+    ("TDS sensor board", 360, 45, 153, 42, 32, 10, 10, "#2f7d4f", ""),
+    ("Turbidity sensor board", 410, 45, 153, 38, 28, 10, 8, "#2f7d4f", "10k/20k divider to ADS1115"),
+]
+
+POD_ELECTRONICS = [
+    ("Pixhawk 2.4.8 (ArduRover)", "82 x 50 x 16", 38),
+    ("Raspberry Pi Zero 2 W", "65 x 30 x 5", 10),
+    ("Pi Camera Module 3 Wide (front camera)", "25 x 24 x 12", 5),
+    ("USB webcam on MG90S servo (360 deg camera)", "webcam about 60 x 30 x 30", 75),
+    ("GPS + compass (M8N)", "50 dia x 15", 30),
+    ("Li-ion 3S6P 20 Ah pack + 3S BMS (18 x 18650)", "115 x 60 x 70", 960),
+    ("2 x 12 V brushless underwater thruster, 2 kg class", "45 dia x 95 each", 360),
+    ("2 x 30 A bidirectional ESC", "50 x 25 x 10 each", 50),
+    ("10 W flexible solar panel", "340 x 230 x 3", 220),
+    ("CN3791 3S solar charge module", "50 x 30 x 15", 15),
+    ("Power module + 12 V to 5 V 5 A buck", "25 x 21 / 60 x 35", 45),
+    ("2-channel relay module", "50 x 38 x 19", 30),
+    ("ADS1115 ADC", "28 x 18 x 3", 3),
+    ("pH probe + board", "12 dia x 150 / 42 x 32", 60),
+    ("TDS probe + board", "42 x 32", 25),
+    ("Turbidity probe + board", "30 dia x 70 / 38 x 28", 33),
+    ("DS18B20 waterproof temperature probe", "6 dia x 50", 15),
+    ("3 x JSN-SR04T waterproof ultrasonic sensor", "23 dia, board 41 x 28", 90),
+    ("12 V diaphragm pump + 4 nozzles + tube", "90 x 40 x 35", 150),
+    ("365 nm UV LEDs, front LED strip, status RGB LED", "", 35),
+]
+
+
+def design_pod():
+    P = POD
+    d = {"id": "ai-pod", "name": "VARUNA AI Pod", "tag": "Your design, upgraded",
+         "summary": ("The boat from your picture at 60 x 30 cm: a rounded, enclosed thermocol pod with a pull-out "
+                     "collection drawer at the front, solar panel on the lid, a front camera and a 360 degree camera, "
+                     "water-quality sensors, obstacle sensors and a 4-way spray. Two shelves inside keep the heavy "
+                     "battery at the bottom for stability.")}
+    outer_n, outer = pod_outline(True), pod_outline(False)
+    inner, ledge = pod_inner(P["wall"]), pod_inner(P["ledge"])
+    wells = [circle_pts(x, y, r, 28) for _, x, y, r in POD_WELLS]
+    beam_slot = rect(60, -115, 100, 115)
+    layers = [{"pts": outer_n, "holes": wells + [beam_slot], "z0": 0, "h": T, "layer": 1, "name": "Base layer 1"},
+              {"pts": outer_n, "holes": wells, "z0": T, "h": T, "layer": 2, "name": "Base layer 2"},
+              {"pts": outer_n, "holes": wells, "z0": 2 * T, "h": T, "layer": 3, "name": "Base layer 3 (lower-bay floor)"}]
+    for i in range(4, 9):
+        hole = ledge if i == 6 else inner
+        nm = {6: "Ledge ring (shelf rests on it)", 8: "Lid rim ring"}.get(i, "Wall ring")
+        layers.append({"pts": outer, "holes": [hole], "z0": (i - 1) * T, "h": T, "layer": i, "name": f"{nm}, layer {i}"})
+    roof = clip_rect(inner, P["tunnel_x"] - 10, -90, 600, 90)
+    shelf = pod_inner(P["wall"] + 1)
+    slots = [rect(160, 60, 190, 85), rect(160, -85, 190, -60)]
+    lid_holes = [circle_pts(90, 0, 10.5, 24), circle_pts(530, 0, 10, 24), circle_pts(320, 0, 4, 16),
+                 circle_pts(120, 80, 2.5, 12)] + [circle_pts(x, y, 3, 12) for x in (60, 540) for y in (105, -105)]
+    slabs = [{"name": "Drawer tunnel roof (5 mm sunboard, sealed)", "pts": ccw(roof), "holes": [], "z0": 3 * T, "h": 5},
+             {"name": "Shelf (3 mm sunboard)", "pts": ccw(shelf), "holes": slots, "z0": 150, "h": 3},
+             {"name": "Lid top (3 mm sunboard)", "pts": ccw(outer), "holes": lid_holes, "z0": 200, "h": 3}]
+
+    parts = []
+    # propulsion: underwater thrusters on a beam set into layer 1
+    comp(parts, "Thruster beam (wood 230 x 40 x 20)", 60, 0, 0, 40, 230, 20, 115, C["wood"], "mech",
+         "glued into the slot in base layer 1, thrusters bolt underneath")
+    for side, lab in ((1, "left"), (-1, "right")):
+        comp(parts, f"Thruster bracket ({lab})", 70, side * 80, -10, 20, 12, 10, 10, "#7a828c", "mech", "")
+        cyl(parts, f"Underwater thruster ({lab})", [80, side * 80, -32], 22, 95, "x", 180, "#3b4148", "mech",
+            "12 V brushless, 2 kg class, prop in its own guard duct")
+    for n, x0, yc, z0, sx, sy, sz, m, col, info in POD_LOWER + POD_UPPER:
+        comp(parts, n, x0, yc, z0, sx, sy, sz, m, col, "elec", info)
+    cyl(parts, "Spray tank (500 ml bottle)", [340, 60, 112.5], 32.5, 200, "x", 525, "#cfe3ea", "spray",
+        "PAC solution, refill through the lid; full = 500 g", opacity=0.7)
+    for n, x, y, r in POD_WELLS:
+        hgt = {"pH probe": 160, "Turbidity probe": 105, "TDS probe": 110, "Temperature probe": 80}[n]
+        cyl(parts, n, [x, y, -15 + hgt / 2], max(r - 1, 3), hgt, "z", {"pH probe": 45, "Turbidity probe": 25}.get(n, 15),
+            C["probe"], "sensor", "through its well in the base, tip 15 mm below the hull, sealed with hot glue")
+    out_ = parts
+    # collection drawer in the bow tunnel
+    comp(out_, "Collection drawer (mesh basket, pulls out forward)", 397, 0, 0, 203, 140, 70, 90, C["mesh"], "collect",
+         "203 x 140 x 70, slides on two rails, front handle; empty it from the front", opacity=0.4)
+    comp(out_, "One-way flap (PET sheet)", 590, 0, 8, 1, 112, 55, 3, "#cfe8ee", "collect",
+         "hangs inside the drawer entrance, swings in only", opacity=0.6)
+    for side in (1, -1):
+        comp(out_, f"Drawer rail ({'left' if side > 0 else 'right'})", 395, side * 70, 60, 190, 10, 10, 10, C["wood"],
+             "collect", "10 x 10 wooden strip glued to the tunnel wall")
+    # sensors and lights at the bow
+    comp(out_, "Pi Camera 3 Wide (front, 10 deg down)", 571, 0, 128, 12, 25, 24, 10, C["cam"], "elec",
+         "behind a clear window in the ledge ring; marine life and plastic ahead", pitch=-10)
+    for nm, x, y in (("Ultrasonic sensor (front)", 578, 0), ("Ultrasonic sensor (left)", 570, 80),
+                     ("Ultrasonic sensor (right)", 570, -80)):
+        cyl(out_, nm, [x, y, 112], 11.5, 15, "x", 20, "#30343b", "sensor", "JSN-SR04T in a 23 mm hole in layer 5")
+    for side in (1, -1):
+        comp(out_, f"UV LED ({'left' if side > 0 else 'right'})", 575, side * 45, 82, 10, 16, 10, 4, "#7b4fd6", "sensor",
+             "365 nm, lights the water in front of the drawer")
+    comp(out_, "Front LED strip", 582, 0, 160, 4, 100, 6, 10, "#f4e7b0", "elec", "white, on the bow wall (layer 7)")
+    # lid
+    comp(out_, "Solar panel 10 W (flexible)", 150, 0, 203, 340, 230, 3, 220, "#1d2b4a", "power",
+         "340 x 230, glued on the lid, cable through the 8 mm hole")
+    comp(out_, "Mast socket (2 x 5 mm sunboard)", 65, 0, 203, 50, 50, 10, 10, C["sunboard"], "mech", "")
+    cyl(out_, "GPS mast (20 mm PVC conduit)", [90, 0, 273], 10, 120, "z", 18, C["mast"], "mech", "120 mm tall")
+    cyl(out_, "GPS + compass", [90, 0, 341], 25, 15, "z", 30, C["gps"], "elec", "arrow to the bow")
+    cyl(out_, "GPS disc (5 mm sunboard)", [90, 0, 335], 35, 4, "z", 5, C["sunboard"], "mech", "")
+    comp(out_, "Pan servo MG90S (360 deg camera)", 510, 0, 203, 40, 22, 30, 14, "#2c3036", "elec", "on the servo plate")
+    out_.append({"kind": "sphere", "name": "360 deg camera dome (USB webcam inside)", "c": [530, 0, 258], "r": 25,
+                 "mass": 80, "color": "#20232a", "group": "elec", "opacity": 0.92,
+                 "info": "webcam in a clear plastic ball half, turns with the servo"})
+    cyl(out_, "Status LED (RGB)", [120, 80, 207], 5, 8, "z", 3, "#59d18a", "elec", "green = auto, blue = manual, red = fault")
+    for x in (60, 540):
+        for y in (105, -105):
+            cyl(out_, "Spray nozzle", [x, y, 210], 4, 14, "z", 5, "#9aa3ad", "spray", "one of 4, aimed outwards")
+    # bumper: half pipe-insulation round the waterline, open at the drawer mouth
+    path = outer_n[outer_n.index(next(p for p in outer_n if p[0] == P["tunnel_x"] and p[1] > 0)) + 1:] + \
+        outer_n[:outer_n.index(next(p for p in outer_n if p[0] == P["tunnel_x"] and p[1] < 0))]
+    out_.append({"kind": "tube", "name": "Bumper (black pipe insulation, split)", "pts": path, "z": 40, "r": 16,
+                 "c": [300, 0, 40], "mass": 60, "color": "#1c2126", "group": "mech",
+                 "info": "32 mm foam pipe insulation cut in half, glued round the waterline"})
+    out_.append({"kind": "mass", "name": "Wiring, tube and connectors", "c": [300, 0, 110], "mass": 120})
+
+    # templates ------------------------------------------------------------
+    def base_sheet(i, marks):
+        els = [("poly", outer_n, "cut")]
+        for n, x, y, r in POD_WELLS:
+            els.append(("circle", (x, y), r, "cut"))
+            els.append(("text", (x, y + r + 4 if y > 0 else y - r - 4), n.replace(" probe", ""), 2.2, "c"))
+        if i == 1:
+            els.append(("poly", beam_slot, "pocket"))
+            els.append(("text", (80, 0), "beam slot", 2.4, "c"))
+        for x, y in POD_SKEWERS + [(250, 0), (370, 0)]:
+            els.append(("skewer", (x, y)))
+        els.append(("text", (490, 0), "DRAWER TUNNEL (cut away)", 3, "c"))
+        els.append(("text", (300, -125), f"BASE layer {i}" + (" - top face is the lower-bay floor" if marks else ""), 3.4, "c"))
+        if marks:
+            for n, x0, yc, z0, sx, sy, sz, *_ in POD_LOWER:
+                if x0 < P["tunnel_x"]:
+                    els.append(("poly", rect(x0, yc - sy / 2, x0 + sx, yc + sy / 2), "mark"))
+                    els.append(("text", (x0 + sx / 2, yc), n.split(" (")[0][:22], 1.9, "c"))
+        return tpart(f"Base layer {i}", "25 mm thermocol", els, "Bow (drawer tunnel) on the right.")
+
+    def ring_sheet(name, hole, extra=(), copies=1, note=""):
+        els = [("poly", outer, "cut"), ("poly", hole, "pocket")] + list(extra)
+        for x, y in POD_SKEWERS:
+            els.append(("skewer", (x, y)))
+        els.append(("text", (300, 0), name + " - cut out the centre", 3.4, "c"))
+        els.append(("text", (300, -12), "BOW >", 3, "c"))
+        return tpart(name, "25 mm thermocol", els, note, copies=copies)
+
+    us = [("line", (560, -25), (590, 25), "mark"), ("text", (520, 30), "layer 5 only: 3 ultrasonic holes", 2.2, "c"),
+          ("circle", (578, 0), 4, "mark"), ("circle", (570, 80), 4, "mark"), ("circle", (570, -80), 4, "mark")]
+    cam = [("poly", rect(574, -14, 590, 14), "mark"), ("text", (530, 0), "camera window", 2.2, "c")]
+    lid_els = [("poly", outer, "cut")] + [("poly", h, "cut") for h in lid_holes] + [
+        ("poly", rect(150, -115, 490, 115), "mark"), ("text", (320, 20), "solar panel 340 x 230", 3, "c"),
+        ("poly", rect(510, -11, 550, 11), "mark"), ("text", (530, -20), "servo plate", 2.2, "c"),
+        ("poly", rect(65, -25, 115, 25), "mark"), ("text", (90, 32), "GPS mast", 2.2, "c"),
+        ("text", (120, 90), "status LED", 2.2, "c"), ("text", (60, 95), "nozzle", 2, "c"),
+        ("text", (540, 95), "nozzle", 2, "c"), ("text", (575, 0), "BOW >", 3, "r")]
+    shelf_els = [("poly", shelf, "cut")] + [("poly", s, "pocket") for s in slots]
+    for n, x0, yc, z0, sx, sy, sz, *_ in POD_UPPER:
+        shelf_els += [("poly", rect(x0, yc - sy / 2, x0 + sx, yc + sy / 2), "mark"),
+                      ("text", (x0 + sx / 2, yc), n.split(" (")[0][:18], 1.9, "c")]
+    shelf_els += [("text", (175, 92), "cable slot", 2, "c"), ("text", (540, 0), "BOW >", 3, "r")]
+    sheets = [base_sheet(1, False), base_sheet(2, False), base_sheet(3, True),
+              ring_sheet("Wall ring (layers 4, 5, 7 and lid rim 8)", inner, us, copies=4,
+                         note="Print 4 copies. Layer 5 also gets the 3 ultrasonic holes."),
+              ring_sheet("Ledge ring (layer 6)", ledge, cam, note="10 mm narrower inside: the shelf rests on it."),
+              tpart("Lid top", "3 mm sunboard", lid_els, "Dashed boxes show where the lid parts go."),
+              tpart("Shelf", "3 mm sunboard", shelf_els, "Rests on the ledge ring. Dashed boxes: upper-bay parts.")]
+    roof_els = [("poly", roof, "cut")]
+    for n, x0, yc, z0, sx, sy, sz, *_ in POD_LOWER:
+        if x0 + sx > P["tunnel_x"]:
+            roof_els += [("poly", rect(max(x0, P["tunnel_x"] - 10), yc - sy / 2, x0 + sx, yc + sy / 2), "mark"),
+                         ("text", (max(x0, P["tunnel_x"]) + 20, yc), n.split(" (")[0][:16], 1.8, "c")]
+    roof_els += [("poly", rect(385, 27.5, 440, 92.5), "mark"), ("text", (412, 60), "tank end", 2, "c")]
+    cw, cp = camera_parts(10)
+    small = [tpart("Drawer tunnel roof", "5 mm sunboard", roof_els, "Seal all round with hot glue"),
+             framed_panel("Drawer bottom", "3 mm sunboard", 203, 134),
+             framed_panel("Drawer side (left)", "3 mm sunboard", 203, 70),
+             framed_panel("Drawer side (right)", "3 mm sunboard", 203, 70),
+             framed_panel("Drawer back", "3 mm sunboard", 134, 67),
+             tpart("Drawer front (entrance + handle)", "3 mm sunboard", [
+                 ("poly", [(0, 0), (134, 0), (134, 67), (87, 67), (87, 85), (47, 85), (47, 67), (0, 67)], "cut"),
+                 ("poly", rect(11, 5, 123, 60), "pocket"), ("text", (67, 76), "handle", 2.4, "c"),
+                 ("text", (67, 32), "entrance: cut out", 2.4, "c")], "Flap tapes inside, above the entrance"),
+             tpart("One-way flap", "PET sheet", [("poly", rect(0, 0, 115, 62), "cut"),
+                                                 ("line", (0, 55), (115, 55), "fold")]),
+             tpart("Servo plate", "3 mm sunboard", [("poly", rect(0, 0, 50, 50), "cut"),
+                                                    ("poly", rect(13.5, 19, 36.5, 31.5), "cut"),
+                                                    ("text", (25, 8), "MG90S cut-out", 2.2, "c")]),
+             mast_socket(), mast_socket(), gps_disc(), cw, cw, cp]
+    d.update(layers=layers, slabs=slabs, parts=parts, sheets=sheets, small=small, deck_z=200,
+             cam_z=140, cam_tilt=10, bin_vol=203 * 134 * 70 / 1e6, foam_sheets=4, glue=300, hull_h=8 * T,
+             power=(222, 40, 10), battery="Li-ion 3S6P 20 Ah (222 Wh)", electronics=POD_ELECTRONICS)
+    return d
+
+
 # ------------------------------------------------------------ hydrostatics
 
 
@@ -633,42 +910,59 @@ def hydro(d):
         items.append((v * EPS, cx, ly["z0"] + ly["h"] / 2))
     for s in d["slabs"]:
         A, cx, cy, _, _ = region_props([s["pts"]], s["holes"])
-        items.append((A * SB_AREAL[5], cx, s["z0"] + s["h"] / 2))
+        items.append((A * SB_AREAL.get(s["h"], 2.5e-3), cx, s["z0"] + s["h"] / 2))
     for p in d["parts"]:
         items.append((p["mass"], p["c"][0], p["c"][2]))
     fx = sum(m * x for m, x, _ in items[:len(d["layers"])]) / max(sum(m for m, _, _ in items[:len(d["layers"])]), 1)
-    items.append((150, fx, 40))            # glue, paint, tape
-    payload = round(d["bin_vol"] * 200)    # about 0.2 kg of wet plastic per litre
-    bin_c = next(p["c"] for p in d["parts"] if p["name"].startswith(("Collection basket", "Deck bin")))
+    items.append((d.get("glue", 150), fx, 40))   # glue, paint, tape
+    payload = round(d["bin_vol"] * 200)          # about 0.2 kg of wet plastic per litre
+    bin_c = next(p["c"] for p in d["parts"] if p["name"].startswith(("Collection", "Deck bin")))
 
-    bottom = [ly for ly in d["layers"] if ly["layer"] == 1]
-    A1, cbx, _, X2, Y2 = region_props([ly["pts"] for ly in bottom], [h for ly in bottom for h in ly["holes"]])
-    IL = X2 - A1 * cbx ** 2
-    IT = Y2
+    levels = {}
+    for ly in d["layers"]:
+        levels.setdefault((ly["z0"], ly["h"]), []).append(ly)
+    levels = [(z0, h, region_props([ly["pts"] for ly in lys], [x for ly in lys for x in ly["holes"]]))
+              for (z0, h), lys in sorted(levels.items())]
 
     def state(extra):
         its = items + extra
         m = sum(i[0] for i in its)
         cg = sum(i[0] * i[1] for i in its) / m
         kg = sum(i[0] * i[2] for i in its) / m
-        v = m / WATER
-        draft = v / A1
-        gmt = IT / v + draft / 2 - kg
-        gml = IL / v
-        trim = (cbx - cg) / gml * L          # + = bow higher than stern
+        v = left = m / WATER
+        for z0, h, wp in levels:                # fill the hull layer by layer
+            if left <= wp[0] * h:
+                draft = z0 + left / wp[0]
+                break
+            left -= wp[0] * h
+        A, cbx, _, X2, Y2 = wp
+        gmt = Y2 / v + draft / 2 - kg
+        gml = (X2 - A * cbx ** 2) / v
+        trim = (cbx - cg) / gml * L                # + = bow higher than stern
         return {"mass_g": round(m), "draft_mm": round(draft, 1), "cg_x": round(cg), "cb_x": round(cbx),
                 "kg_mm": round(kg), "gm_t_mm": round(gmt), "bow_up_mm": round(trim, 1)}
 
     empty = state([])
     full = state([(payload, bin_c[0], bin_c[2])])
     reserve = foam_v * WATER / 1000 - full["mass_g"] / 1000
-    height = max(p["c"][2] + (p["h"] / 2 if p["kind"] == "cyl" and p["axis"] == "z" else p.get("s", [0, 0, 0])[2] / 2)
-                 for p in d["parts"] if p["kind"] in ("box", "cyl"))
-    d["specs"] = {"length": L, "width": W, "hull_height": TOP, "overall_height": round(height),
+
+    def top(p):
+        if p["kind"] == "box":
+            return p["c"][2] + p["s"][2] / 2
+        if p["kind"] == "cyl":
+            return p["c"][2] + (p["h"] / 2 if p["axis"] == "z" else p["r"])
+        if p["kind"] == "sphere":
+            return p["c"][2] + p["r"]
+        return 0
+    wh, load, solar = d.get("power", (24.4, 25, 0))
+    d["specs"] = {"length": L, "width": W, "hull_height": d.get("hull_h", TOP),
+                  "overall_height": round(max(top(p) for p in d["parts"])),
                   "empty": empty, "full": full, "payload_g": payload, "bin_l": round(d["bin_vol"], 2),
                   "reserve_kg": round(reserve, 1), "foam_l": round(foam_v / 1e6, 1),
-                  "cam_height_mm": round(d["cam_z"] - empty["draft_mm"]), "cam_tilt": 35,
-                  "foam_sheets": d["foam_sheets"]}
+                  "cam_height_mm": round(d["cam_z"] - empty["draft_mm"]), "cam_tilt": d.get("cam_tilt", 35),
+                  "foam_sheets": d["foam_sheets"], "foam_text": d.get("foam_text", "1 sheet 1000 x 500 x 25 mm"), "battery": d.get("battery", "LiPo 3S 2200 mAh (24 Wh)"),
+                  "runtime_h": round(wh * 0.8 / load, 1),
+                  "runtime_sun_h": round(wh * 0.8 / max(load - solar * 0.6, 1), 1) if solar else None}
 
 
 # ------------------------------------------------------------------- PDF
@@ -741,13 +1035,17 @@ def rotate_part(p):
             els.append(("skewer", r(e[1])))
         else:
             els.append(("text", r(e[1]), e[2].replace("BOW >", "BOW ^"), e[3], "c"))
-    return tpart(p["name"], p["material"], els, p["note"])
+    return tpart(p["name"], p["material"], els, p["note"], p.get("copies", 1))
+
+
+def full_name(d):
+    return d["name"] if d["name"].startswith("VARUNA") else f"VARUNA {d['name']}"
 
 
 def page_header(c, design, title, page_no):
     c.setFillColorRGB(0.1, 0.1, 0.15)
     c.setFont("Helvetica-Bold", 3.6)
-    c.drawString(MARGIN, PAGE_H - MARGIN - 3.5, f"VARUNA {design['name']}  |  {title}")
+    c.drawString(MARGIN, PAGE_H - MARGIN - 3.5, f"{full_name(design)}  |  {title}")
     c.setFont("Helvetica", 2.6)
     c.drawRightString(PAGE_W - MARGIN, PAGE_H - MARGIN - 3.5,
                       f"Print at 100% (Actual size)  |  page {page_no}")
@@ -790,15 +1088,16 @@ def overview(c, d, x0, y0, s=0.2):
     c.drawString(x0, py + 34, "PLAN (from above), scale 1:5")
     c.drawString(x0 + 70, sy + 84, "SIDE, scale 1:5")
     for ly in d["layers"]:
-        if ly["layer"] == 3:
+        if ly["layer"] == max(l["layer"] for l in d["layers"]):
             draw_els(c, [("poly", [(x * s, y * s) for x, y in ly["pts"]], "cut")], x0, py)
         for h in ly["holes"]:
             if ly["layer"] == 2:
                 draw_els(c, [("poly", [(x * s, y * s) for x, y in h], "mark")], x0, py)
     for sl in d["slabs"]:
         draw_els(c, [("poly", [(x * s, y * s) for x, y in sl["pts"]], "fold")], x0, py)
-    for i, xe in enumerate(BOW_END):
-        draw_els(c, [("poly", rect(0, i * T * s, xe * s, (i + 1) * T * s), "cut")], x0, sy)
+    for ly in d["layers"]:
+        xs = [p[0] for p in ly["pts"]]
+        draw_els(c, [("poly", rect(min(xs) * s, ly["z0"] * s, max(xs) * s, (ly["z0"] + ly["h"]) * s), "cut")], x0, sy)
     for p in d["parts"]:
         if p["kind"] == "box":
             sx, syy, sz = p["s"]
@@ -810,6 +1109,10 @@ def overview(c, d, x0, y0, s=0.2):
             pts = [((cx + u * math.cos(a) - v * math.sin(a)) * s, (cz + u * math.sin(a) + v * math.cos(a)) * s)
                    for u, v in corners]
             draw_els(c, [("poly", pts, "mark")], x0, sy)
+        elif p["kind"] == "sphere":
+            cx, cy, cz = p["c"]
+            draw_els(c, [("circle", (cx * s, cy * s), p["r"] * s, "mark")], x0, py)
+            draw_els(c, [("circle", (cx * s, cz * s), p["r"] * s, "mark")], x0, sy)
         elif p["kind"] == "cyl":
             cx, cy, cz = p["c"]
             r, h = p["r"], p["h"]
@@ -837,7 +1140,7 @@ def overview(c, d, x0, y0, s=0.2):
 
 def build_pdf(d, path, large=False):
     c = canvas.Canvas(path, pagesize=landscape(A4))
-    c.setTitle(f"VARUNA {d['name']} templates")
+    c.setTitle(f"{full_name(d)} templates")
     c.scale(mm, mm)
     pno = [1]
 
@@ -849,20 +1152,21 @@ def build_pdf(d, path, large=False):
     head("overview, specs and shopping list")
     sp = d["specs"]
     c.setFont("Helvetica-Bold", 7)
-    c.drawString(MARGIN, PAGE_H - 25, f"VARUNA {d['name']}")
+    c.drawString(MARGIN, PAGE_H - 25, f"{full_name(d)}")
     c.setFont("Helvetica", 3.2)
     c.drawString(MARGIN, PAGE_H - 31, f"{L} x {W} mm thermocol boat  |  {d['tag']}")
     overview(c, d, MARGIN + 6, 108)
     tx = 160
-    rows = [("Size", f"{L} x {W} mm, hull {TOP} mm tall, {sp['overall_height']} mm to GPS top"),
+    rows = [("Size", f"{L} x {W} mm, hull {sp['hull_height']} mm tall, {sp['overall_height']} mm to GPS top"),
             ("Weight", f"{sp['empty']['mass_g']} g empty, {sp['full']['mass_g']} g with {sp['payload_g']} g of plastic"),
             ("Draft", f"{sp['empty']['draft_mm']} mm empty, {sp['full']['draft_mm']} mm full"),
             ("Reserve buoyancy", f"{sp['reserve_kg']} kg before the deck goes under"),
             ("Stability (GM)", f"{sp['empty']['gm_t_mm']} mm: very stable"),
             ("Trim", f"bow {sp['empty']['bow_up_mm']} mm higher than stern empty; slide the battery to level"),
-            ("Collection", f"{sp['bin_l']} L {'deck bin' if d['id'] == 'conveyor-cat' else 'basket'}"),
+            ("Collection", f"{sp['bin_l']} L {dict(zip(['conveyor-cat', 'ai-pod'], ['deck bin', 'pull-out drawer'])).get(d['id'], 'basket')}"),
             ("Camera", f"{sp['cam_height_mm']} mm above water, tilted {sp['cam_tilt']} deg down"),
-            ("Thermocol", f"{sp['foam_sheets']} sheet(s) 1000 x 500 x 25 mm")]
+            ("Battery", f"{sp['battery']}, about {sp['runtime_h']} h"),
+            ("Thermocol", sp["foam_text"])]
     y = PAGE_H - 44
     for k, v in rows:
         c.setFont("Helvetica-Bold", 3)
@@ -894,15 +1198,18 @@ def build_pdf(d, path, large=False):
         bx0, by0, bx1, by1 = sh["bbox"]
         sw, shh = bx1 - bx0 + 10, by1 - by0 + 10
         if large:
-            c.setPageSize(((sw + 20) * mm, (shh + 30) * mm))
+            pw, ph, pname = next((a, b, n) for a, b, n in ((420, 297, "A3"), (594, 420, "A2"), (841, 594, "A1"),
+                                                         (1189, 841, "A0")) if sw + 12 <= a and shh + 30 <= b)
+            c.setPageSize((pw * mm, ph * mm))
             c.setFont("Helvetica-Bold", 4)
             c.setFillColorRGB(0.1, 0.1, 0.15)
-            c.drawString(10, shh + 22, f"VARUNA {d['name']} | {sh['name']} | {sh['material']} | print at 100%")
+            cp = f" | PRINT {sh['copies']} COPIES" if sh.get("copies", 1) > 1 else ""
+            c.drawString(8, ph - 10, f"{full_name(d)} | {sh['name']} | {sh['material']} | {pname}, print at 100%{cp}")
             c.setFont("Helvetica", 3)
-            c.drawString(10, shh + 16, sh["note"])
-            c.rect(10, 6, 100, 4, stroke=1, fill=0)
-            c.drawString(112, 7, "<- must measure 100 mm")
-            draw_els(c, sh["els"], 15 - bx0, 15 - by0)
+            c.drawString(8, ph - 15, sh["note"])
+            c.rect(8, 5, 100, 4, stroke=1, fill=0)
+            c.drawString(110, 6, "<- must measure 100 mm")
+            draw_els(c, sh["els"], (pw - (bx1 - bx0)) / 2 - bx0, (ph - 20 - (by1 - by0)) / 2 + 10 - by0)
             new_page(c)
             continue
         step_x, step_y = USE_W - OVERLAP, USE_H - OVERLAP
@@ -911,7 +1218,8 @@ def build_pdf(d, path, large=False):
         for r in range(rows_n):
             for col in range(cols):
                 tag = f"{chr(65 + r)}{col + 1}"
-                head(f"{sh['name']} - tile {tag} of {chr(64 + rows_n)}{cols}  ({sh['material']})")
+                cp = f"  PRINT {sh['copies']} COPIES" if sh.get("copies", 1) > 1 else ""
+                head(f"{sh['name']} - tile {tag} of {chr(64 + rows_n)}{cols}  ({sh['material']}){cp}")
                 wx0 = col * step_x - 5 + bx0
                 wy1 = by1 + 5 - r * step_y
                 wy0 = wy1 - USE_H
@@ -1029,6 +1337,28 @@ BUILD_STEPS = {
         ("Ramp and basket", "Glue the ramp wedges to the slot walls on the bottom-layer marks, then the mesh ramp. "
                             "Build the basket, tape the flap inside the entrance, hang it by its lips."),
     ],
+    "ai-pod": [
+        ("Build the base", "Base layers 1 to 3 are solid except the drawer tunnel at the bow, the 4 sensor wells and "
+                           "the beam slot in layer 1. Glue them on skewers, then glue the wooden thruster beam into "
+                           "the slot."),
+        ("Roof the tunnel", "Glue the 5 mm tunnel roof over the tunnel on top of layer 3 and seal every edge with hot "
+                            "glue: it is the floor of the dry bay. Glue the two drawer rails along the tunnel walls."),
+        ("Build the walls", "Stack wall ring, wall ring (with the 3 ultrasonic holes), ledge ring, wall ring. Line them "
+                            "up on the skewers. The fourth wall-ring copy is the lid rim: glue it under the lid top, not "
+                            "to the hull."),
+        ("Fit the lower bay", "Battery, ESCs, buck converter, relay, pump, spray tank and solar module go on the "
+                              "dashed outlines on the floor. Heavy parts low keep the boat from rolling."),
+        ("Fit the shelf", "Lay the shelf on the ledge, then the Pixhawk, Pi, ADS1115 and sensor boards on their "
+                          "outlines. Cables pass through the two slots."),
+        ("Sensors and lights", "Push the pH, TDS, turbidity and temperature probes through their wells so the tips "
+                               "sit 15 mm below the hull, and seal with hot glue. Fit the 3 ultrasonic sensors, the "
+                               "front camera behind a clear plastic window, the UV LEDs and the LED strip."),
+        ("Lid and bumper", "Glue the solar panel, servo plate, GPS mast and nozzles on the lid. Seal the lid to the "
+                           "top ring with foam tape and hold it with 4 rubber bands. Glue split black pipe insulation "
+                           "round the waterline as the bumper."),
+        ("Thrusters and drawer", "Bolt the two thrusters under the beam. Build the mesh drawer, tape the flap inside "
+                                 "its entrance and slide it in on the rails."),
+    ],
     "conveyor-cat": [
         ("Join the pontoons", "Glue the deck on both pontoons with the channel exactly 140 mm wide. Glue and screw "
                               "the bow crossbar."),
@@ -1043,7 +1373,9 @@ BUILD_STEPS = {
 
 def main():
     os.makedirs(OUT, exist_ok=True)
-    designs = [design_twin(), design_block(), design_twin(conveyor=True)]
+    designs = [design_pod(), design_twin(), design_block(), design_twin(conveyor=True)]
+    designs[2]["foam_text"] = "3 sheets 1000 x 500, or 1 sheet 2 x 3 ft (610 x 915)"
+    designs[0]["foam_text"] = "8 sheets 1000 x 500, or 3 sheets 2 x 3 ft (610 x 915)"
     for d in designs:
         hydro(d)
         build_pdf(d, os.path.join(OUT, f"{d['id']}_A4.pdf"))
@@ -1061,9 +1393,9 @@ def main():
             "id": d["id"], "name": d["name"], "tag": d["tag"], "summary": d["summary"], "specs": d["specs"],
             "layers": [{k: v for k, v in ly.items()} for ly in d["layers"]],
             "slabs": d["slabs"], "parts": d["parts"], "steps": steps, "cut": cut,
-            "conveyor": d.get("conveyor"),
+            "conveyor": d.get("conveyor"), "electronics": d.get("electronics", ELECTRONICS),
         })
-    payload = {"designs": data, "electronics": ELECTRONICS, "shop": SHOP, "colors": C,
+    payload = {"designs": data, "shop": SHOP, "colors": C,
                "bow_end": BOW_END, "T": T}
     with open(os.path.join(HERE, "designs.json"), "w") as f:
         json.dump(payload, f, separators=(",", ":"))

@@ -88,8 +88,8 @@ code { font: 13px var(--mono); background: var(--soft); padding: 1px 5px; border
 <div class="wrap">
   <header>
     <div class="eyebrow">VARUNA boat · 600 × 300 mm · 25 mm thermocol layers</div>
-    <h1>Three boats you can cut from thermocol</h1>
-    <p class="lede">Every measurement on this page comes from the same file as the full-size cutting templates, so what you see in 3D is what you cut. Drag to turn the boat, scroll or pinch to zoom, and tap any part to see its size and where it goes.</p>
+    <h1>VARUNA boats you can cut from thermocol</h1>
+    <p class="lede">Design 1 is the boat from your picture, rebuilt to 60 × 30 cm. Designs 2 to 4 are simpler, lighter options. Every measurement comes from the same file as the full-size cutting templates, so what you see in 3D is what you cut. Drag to turn the boat, scroll or pinch to zoom, and tap any part to see its size and where it goes.</p>
   </header>
 
   <div class="tabs" id="tabs" role="tablist"></div>
@@ -107,7 +107,7 @@ code { font: 13px var(--mono); background: var(--soft); padding: 1px 5px; border
   </section>
 
   <section style="display:grid;gap:12px">
-    <h2>Compare the three designs</h2>
+    <h2>Compare the designs</h2>
     <div class="tbl"><table id="compare"></table></div>
   </section>
 
@@ -125,9 +125,9 @@ code { font: 13px var(--mono); background: var(--soft); padding: 1px 5px; border
   </section>
 
   <section style="display:grid;gap:12px">
-    <h2>Electronics (same on all three)</h2>
+    <h2 id="elec-title">Electronics</h2>
     <div class="tbl"><table id="elec"></table></div>
-    <p class="note">The Pi Zero streams the camera and runs the boat's decisions. The plastic and animal detection runs in the VARUNA app on the laptop, as in the Boat Vision plan. Motors are air props above the water, so plastic and weeds cannot wrap around them.</p>
+    <p class="note" id="elec-note"></p>
   </section>
 </div>
 
@@ -164,7 +164,7 @@ host.appendChild(labels.domElement);
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(36, 1, 5, 6000);
-camera.position.set(-760, 600, 840);
+camera.position.set(700, 520, 820);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0, 80, 0);
 controls.enableDamping = true;
@@ -196,18 +196,23 @@ function slabMesh(pts, holes, h, color, opacity) {
 function partMesh(p) {
   let g;
   if (p.kind === "box") g = new THREE.BoxGeometry(p.s[0], p.s[2], p.s[1]);
+  else if (p.kind === "sphere") g = new THREE.SphereGeometry(p.r, 28, 18);
+  else if (p.kind === "tube") {
+    const pts = p.pts.map(([x, y]) => W(x, y, p.z));
+    g = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, false, "centripetal"), 240, p.r, 10, false);
+  }
   else if (p.kind === "cyl") g = new THREE.CylinderGeometry(p.r, p.r, p.h, 28);
   else if (p.kind === "torus") g = new THREE.TorusGeometry(p.r, p.tube, 10, 40);
   else return null;
   const mat = new THREE.MeshStandardMaterial({ color: p.color, roughness: 0.6, metalness: p.group === "elec" ? 0.15 : 0,
     transparent: p.opacity < 1, opacity: p.opacity, depthWrite: p.opacity >= 0.5 });
   const m = new THREE.Mesh(g, mat);
-  m.position.copy(W(p.c[0], p.c[1], p.c[2]));
+  if (p.kind !== "tube") m.position.copy(W(p.c[0], p.c[1], p.c[2]));
   if (p.kind === "box" && p.pitch) m.rotation.z = THREE.MathUtils.degToRad(p.pitch);
   if (p.kind === "cyl" && p.axis === "x") m.rotation.z = Math.PI / 2;
   if (p.kind === "cyl" && p.axis === "y") m.rotation.x = Math.PI / 2;
   if (p.kind === "torus") m.rotation.y = Math.PI / 2;
-  if (p.opacity >= 0.5) m.add(new THREE.LineSegments(new THREE.EdgesGeometry(g, 30), new THREE.LineBasicMaterial({ color: 0x2a333a, transparent: true, opacity: 0.35 })));
+  if (p.opacity >= 0.5 && p.kind !== "tube" && p.kind !== "sphere") m.add(new THREE.LineSegments(new THREE.EdgesGeometry(g, 30), new THREE.LineBasicMaterial({ color: 0x2a333a, transparent: true, opacity: 0.35 })));
   return m;
 }
 function dimLine(a, b, text, group) {
@@ -225,6 +230,11 @@ function dimLine(a, b, text, group) {
   group.add(o);
 }
 
+function lift(z) {
+  if (!opts.explode) return 0;
+  const n = DATA.designs[cur].layers.reduce((a, l) => Math.max(a, l.layer), 1);
+  return 40 * Math.max(0, Math.min(n, Math.floor((z + 1) / 25)));
+}
 function build() {
   if (root) { scene.remove(root); root.traverse((o) => { if (o.element) o.element.remove(); }); }
   root = new THREE.Group();
@@ -234,14 +244,13 @@ function build() {
   for (const ly of d.layers) {
     const tint = foam.clone().offsetHSL(0, 0, -0.035 * (ly.layer - 1));
     const m = slabMesh(ly.pts, ly.holes, ly.h, tint, opts.xray ? 0.22 : 1);
-    m.position.y = ly.z0 + (opts.explode ? (ly.layer - 1) * 40 : 0);
+    m.position.y = ly.z0 + lift(ly.z0);
     m.userData = { info: { name: ly.name, info: "25 mm thermocol, cut from the template", kind: "layer" } };
     root.add(m); pickables.push(m);
   }
-  const lift = opts.explode ? 130 : 0;
   for (const s of d.slabs) {
     const m = slabMesh(s.pts, s.holes, s.h, new THREE.Color(DATA.colors.sunboard), 1);
-    m.position.y = s.z0 + lift;
+    m.position.y = s.z0 + lift(s.z0);
     m.visible = !opts.open;
     m.userData = { info: { name: s.name, info: "cut from the template", kind: "slab" } };
     root.add(m); pickables.push(m);
@@ -249,8 +258,8 @@ function build() {
   d.parts.forEach((p, i) => {
     const m = partMesh(p);
     if (!m) return;
-    const bottom = p.c[2] - (p.kind === "box" ? p.s[2] / 2 : p.kind === "cyl" && p.axis === "z" ? p.h / 2 : p.r);
-    if (bottom >= 74) m.position.y += lift;
+    const bottom = p.kind === "tube" ? 0 : p.c[2] - (p.kind === "box" ? p.s[2] / 2 : p.kind === "cyl" && p.axis === "z" ? p.h / 2 : p.r);
+    m.position.y += lift(bottom);
     if (opts.open && p.name.startsWith("Waterproof")) m.visible = false;
     m.userData = { info: p, idx: i };
     root.add(m); pickables.push(m);
@@ -266,13 +275,15 @@ function build() {
     const g = new THREE.Group(), s = d.specs;
     dimLine(W(0, -185, 0), W(600, -185, 0), "600 mm", g);
     dimLine(W(-30, 150, 0), W(-30, -150, 0), "300 mm", g);
-    dimLine(W(615, 150, 0), W(615, 150, 75), "75 mm hull", g);
-    dimLine(W(615, 70, 75), W(615, -70, 75), d.id === "u-hull" ? "140 mm slot" : "140 mm channel", g);
-    const mast = d.parts.find((p) => p.name.startsWith("Camera mast"));
+    dimLine(W(615, 150, 0), W(615, 150, s.hull_height), `${s.hull_height} mm hull`, g);
+    if (d.id === "ai-pod") dimLine(W(615, 75, 0), W(615, -75, 0), "150 mm drawer mouth", g);
+    else dimLine(W(615, 70, 75), W(615, -70, 75), d.id === "u-hull" ? "140 mm slot" : "140 mm channel", g);
+    const mast = d.parts.find((p) => p.name.startsWith("Camera mast") || p.name.startsWith("GPS mast"));
     if (mast) {
       const top = mast.c[2] + mast.h / 2;
       dimLine(W(mast.c[0] - 40, 0, 0), W(mast.c[0] - 40, 0, top), `${Math.round(top)} mm to mast top`, g);
-      dimLine(W(mast.c[0] + 60, 0, s.empty.draft_mm), W(mast.c[0] + 60, 0, s.empty.draft_mm + s.cam_height_mm), `camera ${s.cam_height_mm} mm above water`, g);
+      const cx = d.id === "ai-pod" ? 640 : mast.c[0] + 60;
+      dimLine(W(cx, 0, s.empty.draft_mm), W(cx, 0, s.empty.draft_mm + s.cam_height_mm), `camera ${s.cam_height_mm} mm above water`, g);
     }
     root.add(g);
   }
@@ -291,6 +302,7 @@ function highlight(idx, scroll = true) {
   const p = DATA.designs[cur].parts[idx];
   if (!p) return;
   const size = p.kind === "box" ? `${p.s.map((v) => Math.round(v)).join(" × ")} mm (L × W × H)`
+    : p.kind === "sphere" ? `${p.r * 2} mm dia` : p.kind === "tube" ? `${p.r * 2} mm dia, round the hull`
     : p.kind === "cyl" ? `${Math.round(p.r * 2)} mm dia × ${Math.round(p.h)} mm` : `${Math.round(p.r * 2 + p.tube * 2)} mm ring`;
   const bottom = p.kind === "box" ? p.c[2] - p.s[2] / 2 : p.kind === "cyl" && p.axis === "z" ? p.c[2] - p.h / 2 : p.c[2];
   $("selected").innerHTML = `<h3>${esc(p.name)}</h3>
@@ -357,7 +369,9 @@ function render() {
       <dt>Trim empty</dt><dd>bow ${s.empty.bow_up_mm} mm up</dd>
       <dt>Collection</dt><dd>${s.bin_l} L</dd>
       <dt>Camera</dt><dd>${s.cam_height_mm} mm up, ${s.cam_tilt}° down</dd>
-      <dt>Thermocol</dt><dd>${s.foam_sheets} × (1000 × 500 × 25)</dd>
+      <dt>Battery</dt><dd>${esc(s.battery)}</dd>
+      <dt>Run time</dt><dd>about ${s.runtime_h} h${s.runtime_sun_h ? `, ${s.runtime_sun_h} h in sun` : ""}</dd>
+      <dt>Thermocol (25 mm)</dt><dd style="text-align:right;max-width:180px">${esc(s.foam_text)}</dd>
     </dl>`;
   rows = [];
   $("partlist").innerHTML = d.parts.map((p, i) => p.kind === "mass" ? "" :
@@ -376,12 +390,18 @@ function render() {
     <p><code>${d.id}_A4.pdf</code> prints at home on A4, tiled with a 50 mm grid to join the pages.</p>
     <p><code>${d.id}_large-format.pdf</code> puts each big part on one sheet for a print shop.</p>
     <p class="note">Print at 100% (Actual size). Each page has a 50 mm bar: measure it before you cut.</p>`;
+  $("elec-title").textContent = `Electronics: ${d.name}`;
+  $("elec").innerHTML = `<tr><th>Part</th><th>Size (mm)</th><th>Weight</th></tr>` +
+    d.electronics.map(([n, sz, m]) => `<tr><td>${esc(n)}</td><td class="n">${esc(sz)}</td><td class="n">${m} g</td></tr>`).join("");
+  $("elec-note").textContent = d.id === "ai-pod"
+    ? "The Pi Zero streams both cameras and reads the water sensors; plastic and animal detection runs in the VARUNA app on the laptop. A camera with UV light cannot detect bacteria: use the pH, TDS, turbidity and temperature readings to decide where to spray, and lab-test samples for bacteria. Use the PAC spray only in tanks and pools you manage, at the dose on the pack."
+    : "The Pi Zero streams the camera and runs the boat's decisions. The plastic and animal detection runs in the VARUNA app on the laptop. Motors are air props above the water, so plastic and weeds cannot wrap around them.";
   try { history.replaceState(null, "", "#" + d.id); } catch (e) {}
   build();
 }
 
-const effort = { "twin-hull": "Medium", "u-hull": "Easy", "conveyor-cat": "Hard" };
-const best = { "twin-hull": "Everyday collecting, lightest boat", "u-hull": "First build, rough water, most stable", "conveyor-cat": "Most reliable pickup and counting" };
+const effort = { "ai-pod": "Hard", "twin-hull": "Medium", "u-hull": "Easy", "conveyor-cat": "Hard" };
+const best = { "ai-pod": "Long missions, water quality, solar, everything in one boat", "twin-hull": "Everyday collecting, lightest boat", "u-hull": "First build, most stable", "conveyor-cat": "Most reliable pickup and counting" };
 $("compare").innerHTML = `<tr><th></th>${DATA.designs.map((d) => `<th>${esc(d.name)}</th>`).join("")}</tr>` +
   [["Build effort", (d) => effort[d.id]],
    ["Weight empty", (d) => `${(d.specs.empty.mass_g / 1000).toFixed(2)} kg`],
@@ -389,11 +409,11 @@ $("compare").innerHTML = `<tr><th></th>${DATA.designs.map((d) => `<th>${esc(d.na
    ["Reserve buoyancy", (d) => `${d.specs.reserve_kg} kg`],
    ["Stability (GM)", (d) => `${d.specs.empty.gm_t_mm} mm`],
    ["Collection", (d) => `${d.specs.bin_l} L`],
-   ["Thermocol sheets", (d) => `${d.specs.foam_sheets}`],
+   ["Run time", (d) => `about ${d.specs.runtime_h} h`],
+   ["Height", (d) => `${d.specs.hull_height} mm hull, ${d.specs.overall_height} mm overall`],
    ["Best for", (d) => best[d.id]]]
   .map(([k, f]) => `<tr><td>${k}</td>${DATA.designs.map((d) => `<td class="${k === "Best for" || k === "Build effort" ? "" : "n"}">${esc(f(d))}</td>`).join("")}</tr>`).join("");
-$("elec").innerHTML = `<tr><th>Part</th><th>Size (mm)</th><th>Weight</th></tr>` +
-  DATA.electronics.map(([n, s, m]) => `<tr><td>${esc(n)}</td><td class="n">${esc(s)}</td><td class="n">${m} g</td></tr>`).join("");
+
 render();
 resize();
 </script>

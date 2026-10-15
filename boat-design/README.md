@@ -1,15 +1,17 @@
 # VARUNA thermocol boat designs
 
-Three 600 x 300 mm boat designs for the VARUNA collection boat, built from 25 mm
+Four 600 x 300 mm boat designs for the VARUNA collection boat, built from 25 mm
 thermocol (EPS) sheets and sunboard, with full-size cutting templates.
 
-| Design | Best for | Thermocol |
+| Design | Best for | Thermocol (25 mm) |
 | --- | --- | --- |
-| Twin-Hull Skimmer (recommended) | everyday collecting, lightest | 1 sheet |
-| U-Hull Block (easiest) | first build, most stable | 3 sheets |
-| Conveyor Cat (advanced) | belt lifts plastic into a deck bin | 1 sheet |
+| VARUNA AI Pod | enclosed solar boat: drawer, 2 cameras, water sensors, spray | 8 sheets 1000 x 500, or 3 sheets 2 x 3 ft |
+| Twin-Hull Skimmer | everyday collecting, lightest | 1 sheet 1000 x 500 |
+| U-Hull Block | first build, most stable | 3 sheets 1000 x 500 |
+| Conveyor Cat | belt lifts plastic into a deck bin | 1 sheet 1000 x 500 |
 
-Sheets are 1000 x 500 x 25 mm.
+The AI Pod's big layers (570 x 270 mm) each fit one A2 sheet: the large-format
+PDF is the easiest way to print it.
 
 - `boat-3d.html` is the interactive 3D model with every part's size and position.
 - `templates/<design>_A4.pdf` prints at home on A4. Print at 100% (Actual size),
