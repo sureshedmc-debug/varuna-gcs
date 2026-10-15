@@ -254,7 +254,7 @@ def tpart(name, material, els, note="", copies=1):
         elif e[0] in ("circle",):
             xs += [e[1][0] - e[2], e[1][0] + e[2]]
             ys += [e[1][1] - e[2], e[1][1] + e[2]]
-        elif e[0] == "line":
+        elif e[0] in ("line", "dim"):
             xs += [e[1][0], e[2][0]]
             ys += [e[1][1], e[2][1]]
     return {"name": name, "material": material, "els": els, "note": note, "copies": copies,
@@ -897,6 +897,75 @@ def design_pod():
     return d
 
 
+# ------------------------------------------------------------ measurements
+
+
+def add_dims(d):
+    """Measurement lines, coordinates and a mm ruler on every big template."""
+    def move(els, old, new_xy):
+        return [("text", new_xy, e[2], e[3], e[4]) if e[0] == "text" and e[2].startswith(old) else e for e in els]
+
+    out = []
+    for sh in d["sheets"]:
+        n, els = sh["name"], list(sh["els"])
+        if d["id"] == "ai-pod":
+            if n.startswith("Base layer"):
+                els = move(els, "DRAWER TUNNEL", (450, 30))
+                els += [("dim", (15, -112), (585, -112), "570 overall length"),
+                        ("dim", (40, -135), (40, 135), "270 overall width"),
+                        ("dim", (500, -75), (500, 75), "150 tunnel width"),
+                        ("dim", (395, -55), (585, -55), "190 tunnel, from bow edge"),
+                        ("ruler", 15, 585, 0, 15)]
+                for nm, x, y, r in POD_WELLS:
+                    els.append(("text", (x, y + r + 8 if y > 0 else y - r - 8),
+                                f"{2 * r} dia: {x - 15} from stern, {abs(y)} {'left' if y > 0 else 'right'}", 1.9, "c"))
+                if n.endswith("1"):
+                    els = [e for e in els if not (e[0] == "text" and e[2] == "beam slot")]
+                    els += [("dim", (108, -115), (108, 115), "230 beam slot"),
+                            ("dim", (60, -40), (100, -40), "40"), ("text", (80, 50), "slot starts 45 from stern", 1.9, "c")]
+            elif n.startswith(("Wall ring", "Ledge ring")):
+                ledge = n.startswith("Ledge")
+                w_ = POD["ledge"] if ledge else POD["wall"]
+                els = [("text", (470, 50) if e[2].startswith(("Wall", "Ledge")) else (470, 38), e[2], e[3], e[4])
+                       if e[0] == "text" and (e[2].startswith(("Wall", "Ledge")) or e[2] == "BOW >") else e for e in els]
+                els += [("dim", (15, -117), (585, -117), "570 overall length"),
+                        ("dim", (200, -135), (200, 135), "270 overall width"),
+                        ("dim", (15, 20), (15 + w_, 20), f"{w_} wall"), ("dim", (585 - w_, 20), (585, 20), f"{w_}"),
+                        ("dim", (15 + w_, -30), (585 - w_, -30), f"{570 - 2 * w_} inside"),
+                        ("dim", (360, -135 + w_), (360, 135 - w_), f"{270 - 2 * w_} inside"),
+                        ("text", (85, 115), "R90 outside", 2, "c"), ("text", (90, 70), f"R{90 - w_} inside", 2, "c"),
+                        ("ruler", 15, 585, 0, 15)]
+            elif n == "Lid top":
+                els += [("dim", (15, -125), (585, -125), "570 overall length"),
+                        ("dim", (30, -135), (30, 135), "270 overall width"),
+                        ("text", (90, -32), "mast hole 21 dia, 75 from stern", 1.9, "c"),
+                        ("text", (530, 18), "camera cable hole 20 dia, 515 from stern", 1.9, "c"),
+                        ("text", (320, -9), "panel cable 8 dia, 305 from stern", 1.9, "c"),
+                        ("text", (120, 70), "5 dia, 105 from stern, 80 left", 1.8, "c"),
+                        ("text", (300, 128), "nozzle holes 6 dia: 45 and 525 from stern, 105 each side", 1.9, "c"),
+                        ("ruler", 15, 585, -60, 15)]
+            elif n == "Shelf":
+                els += [("dim", (51, -92), (549, -92), "498 long"), ("dim", (300, -99), (300, 99), "198 wide"),
+                        ("text", (175, -94 + 190), "slots 30 x 25, 145 from stern", 1.8, "c")]
+        elif n.startswith("Pontoons layer"):
+            xe = BOW_END[int(n.split()[2]) - 1]
+            els += [("dim", (0, 20), (xe, 20), f"{xe} long (to bow tip)"), ("dim", (20, 7), (20, 87), "80"),
+                    ("dim", (0, -20), (xe, -20), f"{xe} long (to bow tip)"), ("dim", (20, -87), (20, -7), "80"),
+                    ("ruler", 0, xe - 40, 60, 0), ("ruler", 0, xe - 40, -80, 0)]
+        elif n == "Deck":
+            xs = [p[0] for e in els if e[0] == "poly" and e[2] == "cut" for p in e[1]]
+            els += [("dim", (0, 285), (max(xs), 285), f"{max(xs):.0f} long"), ("dim", (285 if max(xs) > 300 else 260, 0),
+                    (285 if max(xs) > 300 else 260, 300), "300 wide"), ("ruler", 0, max(xs), 120, 0)]
+        elif n.startswith("Hull layer"):
+            els = move(els, "SLOT", (430, 175))
+            els = move(els, "HULL", (60, 175))
+            els += [("dim", (0, 288), (600, 288), "600 overall (to bow tips)"), ("dim", (12, 0), (12, 300), "300 wide"),
+                    ("dim", (560, 80), (560, 220), "140 slot"), ("dim", (270, 135), (600, 135), "330 slot depth"),
+                    ("ruler", 0, 270, 150, 0)]
+        out.append(tpart(sh["name"], sh["material"], els, sh["note"], sh.get("copies", 1)))
+    d["sheets"] = out
+
+
 # ------------------------------------------------------------ hydrostatics
 
 
@@ -967,15 +1036,23 @@ def hydro(d):
 
 # ------------------------------------------------------------------- PDF
 
-PAGE_W, PAGE_H = 297, 210
-MARGIN = 7
-HEAD = 9
-USE_W = PAGE_W - 2 * MARGIN
-USE_H = PAGE_H - 2 * MARGIN - HEAD
+PAPERS = {"A4": (297, 210, 7, 9, 5), "A3": (420, 297, 7, 4, 3)}   # width, height, margin, header, padding
+
+
+def set_paper(name):
+    global PAGE_W, PAGE_H, MARGIN, HEAD, PAD, USE_W, USE_H, PAPER
+    PAGE_W, PAGE_H, MARGIN, HEAD, PAD = PAPERS[name]
+    PAPER = name
+    USE_W = PAGE_W - 2 * MARGIN
+    USE_H = PAGE_H - 2 * MARGIN - HEAD
+
+
+set_paper("A4")
 OVERLAP = 10
 
 STYLE = {"cut": ((0, 0, 0), 0.35, None), "pocket": ((0.8, 0.1, 0.1), 0.35, None),
-         "fold": ((0.1, 0.3, 0.8), 0.3, (2, 1.5)), "mark": ((0.45, 0.45, 0.5), 0.22, (1.5, 1.2))}
+         "fold": ((0.1, 0.3, 0.8), 0.3, (2, 1.5)), "mark": ((0.45, 0.45, 0.5), 0.22, (1.5, 1.2)),
+         "dim": ((0.05, 0.45, 0.55), 0.2, None)}
 
 
 def set_style(c, style):
@@ -1003,6 +1080,40 @@ def draw_els(c, els, ox, oy):
         elif k == "line":
             set_style(c, e[3])
             c.line(e[1][0] + ox, e[1][1] + oy, e[2][0] + ox, e[2][1] + oy)
+        elif k == "dim":
+            (x0, y0), (x1, y1), txt = e[1], e[2], e[3]
+            x0, y0, x1, y1 = x0 + ox, y0 + oy, x1 + ox, y1 + oy
+            set_style(c, "dim")
+            c.line(x0, y0, x1, y1)
+            a = math.atan2(y1 - y0, x1 - x0)
+            for (px, py), s_ in (((x0, y0), 1), ((x1, y1), -1)):
+                for da in (0.4, -0.4):
+                    c.line(px, py, px + s_ * 2.2 * math.cos(a + da), py + s_ * 2.2 * math.sin(a + da))
+                c.line(px - 1.8 * math.sin(a), py + 1.8 * math.cos(a), px + 1.8 * math.sin(a), py - 1.8 * math.cos(a))
+            deg = math.degrees(a)
+            if deg > 90 or deg <= -90:
+                deg += 180
+            c.saveState()
+            c.translate((x0 + x1) / 2, (y0 + y1) / 2)
+            c.rotate(deg)
+            c.setFillColorRGB(0.05, 0.4, 0.5)
+            c.setFont("Helvetica-Bold", 2.8)
+            c.drawCentredString(0, 1.1, txt)
+            c.restoreState()
+        elif k == "ruler":
+            x0, x1, y, zero = e[1] + ox, e[2] + ox, e[3] + oy, e[4]
+            set_style(c, "dim")
+            c.line(x0, y, x1, y)
+            c.setFillColorRGB(0.05, 0.4, 0.5)
+            c.setFont("Helvetica", 2)
+            i = math.ceil(e[1] - zero)
+            while zero + i <= e[2]:
+                t = 3 if i % 50 == 0 else (2 if i % 10 == 0 else 0)
+                if t:
+                    c.line(zero + i + ox, y, zero + i + ox, y + t)
+                if i % 50 == 0:
+                    c.drawCentredString(zero + i + ox, y + 3.6, f"{i}")
+                i += 1
         elif k == "skewer":
             set_style(c, "cut")
             x, y = e[1][0] + ox, e[1][1] + oy
@@ -1033,6 +1144,10 @@ def rotate_part(p):
             els.append(("line", r(e[1]), r(e[2]), e[3]))
         elif e[0] == "skewer":
             els.append(("skewer", r(e[1])))
+        elif e[0] == "dim":
+            els.append(("dim", r(e[1]), r(e[2]), e[3]))
+        elif e[0] == "ruler":
+            continue
         else:
             els.append(("text", r(e[1]), e[2].replace("BOW >", "BOW ^"), e[3], "c"))
     return tpart(p["name"], p["material"], els, p["note"], p.get("copies", 1))
@@ -1044,16 +1159,17 @@ def full_name(d):
 
 def page_header(c, design, title, page_no):
     c.setFillColorRGB(0.1, 0.1, 0.15)
-    c.setFont("Helvetica-Bold", 3.6)
-    c.drawString(MARGIN, PAGE_H - MARGIN - 3.5, f"{full_name(design)}  |  {title}")
+    band = MARGIN + USE_H
+    ty = band + HEAD - 3.5 if HEAD > 5 else band + 0.9
+    c.setFont("Helvetica-Bold", 3.6 if HEAD > 5 else 3.2)
+    c.drawString(MARGIN, ty, f"{full_name(design)}  |  {title}")
     c.setFont("Helvetica", 2.6)
-    c.drawRightString(PAGE_W - MARGIN, PAGE_H - MARGIN - 3.5,
-                      f"Print at 100% (Actual size)  |  page {page_no}")
+    c.drawRightString(PAGE_W - MARGIN, ty, f"{PAPER} landscape, print at 100% (Actual size)  |  page {page_no}")
     # scale check: 50 mm bar
-    x0, y0 = PAGE_W - MARGIN - 110, PAGE_H - MARGIN - 7.5
+    x0, y0 = (PAGE_W - MARGIN - 110, PAGE_H - MARGIN - 7.5) if HEAD > 5 else (PAGE_W - 175, band + 0.6)
     c.setStrokeColorRGB(0, 0, 0)
     c.setLineWidth(0.3)
-    c.rect(x0, y0, 50, 3, stroke=1, fill=0)
+    c.rect(x0, y0, 50, 3 if HEAD > 5 else 2.4, stroke=1, fill=0)
     c.setFont("Helvetica", 2.2)
     c.drawString(x0 + 52, y0 + 0.6, "<- must measure 50 mm")
 
@@ -1138,8 +1254,56 @@ def overview(c, d, x0, y0, s=0.2):
     c.drawString(x0 + L * s + 3, py, "300 mm")
 
 
-def build_pdf(d, path, large=False):
-    c = canvas.Canvas(path, pagesize=landscape(A4))
+def print_test(c, d, head):
+    head("PRINT THIS PAGE FIRST and check the size")
+    x0, y0 = MARGIN + 10, MARGIN + 8
+    set_style(c, "cut")
+    c.rect(x0, y0, 100, 100, stroke=1, fill=0)
+    c.setFillColorRGB(0.1, 0.1, 0.15)
+    c.setFont("Helvetica-Bold", 4)
+    c.drawCentredString(x0 + 50, y0 + 52, "100 mm x 100 mm")
+    bar = 200 if PAGE_W > 300 else 150
+    by = y0 + 112
+    c.line(x0, by, x0 + bar, by)
+    for i in range(bar + 1):
+        t = 4 if i % 10 == 0 else (2.5 if i % 5 == 0 else 1.4)
+        c.line(x0 + i, by, x0 + i, by + t)
+        if i % 10 == 0:
+            c.setFont("Helvetica", 2.4)
+            c.drawCentredString(x0 + i, by + 5.2, str(i))
+    c.setFont("Helvetica", 2.6)
+    c.drawString(x0, by - 5, f"ruler in mm: the 0 to {bar} marks must be exactly {bar} mm apart")
+    tx = x0 + 115
+    lines = [f"How to print on {PAPER} so every part comes out real size",
+             f"1. Paper: {PAPER}, landscape. Printer: '{PAPER}' selected as the paper size.",
+             "2. Scaling: 'Actual size' or '100%'. Turn OFF 'Fit to page', 'Shrink oversized pages'",
+             "   and 'Fit to printable area'. On a phone, choose 'Original size' / 'Do not scale'.",
+             "3. Print this page only. Measure the square with a steel ruler: both sides must be",
+             "   100 mm, and the ruler marks must match your ruler. 1 mm off is fine; more is not.",
+             "4. If it is wrong, fix the printer setting and print this page again. Do not go on.",
+             "5. When it is right, print all the other pages with the SAME settings.",
+             "6. Big parts are split across pages (tiles A1, A2, B1...). Cut each tile on its border,",
+             "   lay the next tile over the grey overlap strip, line up the grey 50 mm grid and the",
+             "   measurement ruler, and tape it. Check the long measurement with a tape before cutting.",
+             "7. Glue-stick the paper on the thermocol, cut along the solid black line,",
+             "   cut out the red parts, and push a skewer through every + mark.",
+             "Line types:"]
+    y = y0 + 98
+    for i, t in enumerate(lines):
+        c.setFont("Helvetica-Bold" if i == 0 else "Helvetica", 3.4 if i == 0 else 2.9)
+        c.drawString(tx, y, t)
+        y -= 6 if i == 0 else 4.6
+    draw_legend(c, tx, y - 4)
+    set_style(c, "dim")
+    c.line(tx + 120, y - 4, tx + 130, y - 4)
+    c.setFont("Helvetica", 2.8)
+    c.drawString(tx + 133, y - 5, "measurement (mm), do not cut")
+    new_page(c)
+
+
+def build_pdf(d, path, large=False, paper="A4"):
+    set_paper(paper)
+    c = canvas.Canvas(path, pagesize=(PAGE_W * mm, PAGE_H * mm))
     c.setTitle(f"{full_name(d)} templates")
     c.scale(mm, mm)
     pno = [1]
@@ -1155,7 +1319,7 @@ def build_pdf(d, path, large=False):
     c.drawString(MARGIN, PAGE_H - 25, f"{full_name(d)}")
     c.setFont("Helvetica", 3.2)
     c.drawString(MARGIN, PAGE_H - 31, f"{L} x {W} mm thermocol boat  |  {d['tag']}")
-    overview(c, d, MARGIN + 6, 108)
+    overview(c, d, MARGIN + 6, PAGE_H - 102)
     tx = 160
     rows = [("Size", f"{L} x {W} mm, hull {sp['hull_height']} mm tall, {sp['overall_height']} mm to GPS top"),
             ("Weight", f"{sp['empty']['mass_g']} g empty, {sp['full']['mass_g']} g with {sp['payload_g']} g of plastic"),
@@ -1192,11 +1356,13 @@ def build_pdf(d, path, large=False):
         c.drawString(tx, y, t)
     draw_legend(c, tx, 34)
     new_page(c)
+    if not large:
+        print_test(c, d, head)
 
     # tiled big sheets
     for sh in d["sheets"]:
         bx0, by0, bx1, by1 = sh["bbox"]
-        sw, shh = bx1 - bx0 + 10, by1 - by0 + 10
+        sw, shh = bx1 - bx0 + 2 * PAD, by1 - by0 + 2 * PAD
         if large:
             pw, ph, pname = next((a, b, n) for a, b, n in ((420, 297, "A3"), (594, 420, "A2"), (841, 594, "A1"),
                                                          (1189, 841, "A0")) if sw + 12 <= a and shh + 30 <= b)
@@ -1220,8 +1386,8 @@ def build_pdf(d, path, large=False):
                 tag = f"{chr(65 + r)}{col + 1}"
                 cp = f"  PRINT {sh['copies']} COPIES" if sh.get("copies", 1) > 1 else ""
                 head(f"{sh['name']} - tile {tag} of {chr(64 + rows_n)}{cols}  ({sh['material']}){cp}")
-                wx0 = col * step_x - 5 + bx0
-                wy1 = by1 + 5 - r * step_y
+                wx0 = col * step_x - PAD + bx0
+                wy1 = by1 + PAD - r * step_y
                 wy0 = wy1 - USE_H
                 ox, oy = MARGIN - wx0, MARGIN - wy0
                 c.saveState()
@@ -1260,7 +1426,7 @@ def build_pdf(d, path, large=False):
                 c.rect(MARGIN, MARGIN, USE_W, USE_H, stroke=1, fill=0)
                 new_page(c)
     if large:
-        c.setPageSize(landscape(A4))
+        c.setPageSize((PAGE_W * mm, PAGE_H * mm))
 
     # small parts, shelf-packed onto A4 pages
     pieces = [rotate_part(p) if p["bbox"][3] - p["bbox"][1] + 12 > USE_H else p for p in d["small"]]
@@ -1290,7 +1456,7 @@ def build_pdf(d, path, large=False):
             c.setFont("Helvetica-Bold", 2.6)
             c.drawString(MARGIN + x + 1, top - 3, pc["name"][:48])
             c.setFont("Helvetica", 2.2)
-            c.drawString(MARGIN + x + 1, top - 6, pc["material"][:52])
+            c.drawString(MARGIN + x + 1, top - 6, f"{pc['material'][:40]}  |  {bx1 - bx0:.0f} x {by1 - by0:.0f} mm")
         new_page(c)
     c.save()
 
@@ -1378,6 +1544,8 @@ def main():
     designs[0]["foam_text"] = "8 sheets 1000 x 500, or 3 sheets 2 x 3 ft (610 x 915)"
     for d in designs:
         hydro(d)
+        add_dims(d)
+        build_pdf(d, os.path.join(OUT, f"{d['id']}_A3.pdf"), paper="A3")
         build_pdf(d, os.path.join(OUT, f"{d['id']}_A4.pdf"))
         build_pdf(d, os.path.join(OUT, f"{d['id']}_large-format.pdf"), large=True)
     data = []

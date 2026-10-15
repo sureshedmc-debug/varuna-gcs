@@ -387,6 +387,7 @@ function render() {
   $("steps").innerHTML = d.steps.map(([t, x]) => `<li><b>${esc(t)}.</b> ${esc(x)}</li>`).join("");
   $("cut").innerHTML = `<tr><th>Part</th><th>Material</th></tr>` + d.cut.map((c) => `<tr><td>${esc(c.name)}${c.note ? `<div class="note">${esc(c.note)}</div>` : ""}</td><td>${esc(c.material)}</td></tr>`).join("");
   $("files").innerHTML = `<p>In the repo, folder <code>boat-design/templates/</code>:</p>
+    <p><code>${d.id}_A3.pdf</code> real size on A3, with every measurement, a mm ruler and a print-test page.</p>
     <p><code>${d.id}_A4.pdf</code> prints at home on A4, tiled with a 50 mm grid to join the pages.</p>
     <p><code>${d.id}_large-format.pdf</code> puts each big part on one sheet for a print shop.</p>
     <p class="note">Print at 100% (Actual size). Each page has a 50 mm bar: measure it before you cut.</p>`;

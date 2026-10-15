@@ -14,6 +14,8 @@ The AI Pod's big layers (570 x 270 mm) each fit one A2 sheet: the large-format
 PDF is the easiest way to print it.
 
 - `boat-3d.html` is the interactive 3D model with every part's size and position.
+- `templates/<design>_A3.pdf` is the real-size A3 set with measurements, a mm ruler on every big
+  part and a print-test page (print that first and check the 100 mm square).
 - `templates/<design>_A4.pdf` prints at home on A4. Print at 100% (Actual size),
   check the 50 mm bar, then join the tiles on the grey 50 mm grid.
 - `templates/<design>_large-format.pdf` has each big part on one sheet for a print shop.
