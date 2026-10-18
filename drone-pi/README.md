@@ -30,7 +30,7 @@ When it's done, it prints the address for the app: System → Connection.
 The same tool can also:
 - **9) Camera test** — takes a picture with the drone camera and opens it on the laptop
 - **13) Camera** — switch between auto-detect, USB webcam and Pi camera module; it sets up the camera module too
-- update the code
+- update the code (this also switches the camera to auto-detect: USB webcam or Pi camera module)
 - show status and live logs
 - restart the service
 - open an SSH terminal

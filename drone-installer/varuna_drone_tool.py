@@ -7,7 +7,8 @@ once, then offers:
      the drone backend (bundled in this app), Python libraries, Pixhawk link,
      serial port, camera, auto-start service, optional NetBird, then checks
      the Pixhawk and the 720p / 30 fps video all work.
-  2. Update the drone code: copies the latest backend and restarts it.
+  2. Update the drone code: copies the latest backend, switches the camera to
+     auto-detect (USB webcam or Pi camera module) and restarts it.
   3. Status: service, Pixhawk link, camera, NetBird address, recent log.
   4. Live log of the drone service.
   5. Restart the drone service.
@@ -910,11 +911,29 @@ def action_update(pi, ctx):
     run_steps(pi, [
         ("Copying the latest drone backend", lambda: step_copy(pi, ctx)),
         ("Checking the Python libraries", libs),
+        ("Camera: auto-detect (USB webcam or Pi camera module)", lambda: step_camera_auto(pi, ctx)),
         ("Restarting the drone service", restart),
         ("Checking it works", lambda: step_verify(pi, ctx)),
+        ("Finishing", lambda: step_reboot(pi, ctx)),
     ])
     say("")
     ok("Drone code updated.")
+
+
+def step_camera_auto(pi, ctx):
+    """Updates move a drone fixed to one camera (usb / csi) over to auto-detect,
+    and set up both cameras, so a USB webcam or a Pi camera module just works.
+    A camera turned off (or the test picture) is left alone; 13) Camera picks a
+    fixed one again."""
+    current = _config_value(pi, ctx, "camera_source") or "auto"
+    if current in ("usb", "csi"):
+        _patch_config(pi, ctx, {"camera_source": "auto"})
+        ok(f"Camera switched from {CAMERA_LABEL[current]} only to {CAMERA_LABEL['auto']}")
+    elif current != "auto":
+        ok(f"Camera left as: {CAMERA_LABEL.get(current, current)} (change it with 13) Camera)")
+        return
+    ctx["camera"] = "auto"
+    step_camera(pi, ctx)
 
 
 def action_status(pi, ctx):
