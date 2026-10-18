@@ -1,0 +1,8 @@
+# Runtime state and local settings live on the Pi only.
+data/
+drone_config.json
+web/
+__pycache__/
+*.pyc
+venv/
+.venv/

@@ -1,0 +1,15 @@
+[Unit]
+Description=VARUNA drone backend (FastAPI + pymavlink + camera)
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+User=pi
+WorkingDirectory=/home/pi/varuna-drone
+ExecStart=/home/pi/varuna-drone/venv/bin/python main.py
+Restart=always
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
