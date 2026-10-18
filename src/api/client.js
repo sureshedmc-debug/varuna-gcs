@@ -155,6 +155,9 @@ export const api = {
   takeoff: (altitude) =>
     request('/api/mavlink/takeoff', { method: 'POST', body: { altitude } }),
   rtl: () => request('/api/mavlink/rtl', { method: 'POST' }),
+  // Keyboard flight (Control tab): GUIDED, holding position / back to LOITER.
+  controlTake: () => request('/api/control/take', { method: 'POST', timeout: 15000 }),
+  controlRelease: () => request('/api/control/release', { method: 'POST', timeout: 15000 }),
   land: () => request('/api/mavlink/land', { method: 'POST' }),
   // Emergency stop: abort any running mission and land at the current position.
   // Switching the flight controller into LAND overrides AUTO/mission mode. Tries
@@ -197,6 +200,11 @@ export function wsUrl() {
   if (base) return base.replace(/^http/i, 'ws') + '/api/ws'
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   return `${proto}//${window.location.host}/api/ws`
+}
+
+/** The Control tab's keyboard socket (keys → drone), next to the telemetry one. */
+export function controlWsUrl() {
+  return wsUrl().replace(/\/api\/ws$/, '/api/control')
 }
 
 /**

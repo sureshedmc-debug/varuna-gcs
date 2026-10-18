@@ -19,6 +19,7 @@ import SystemScreen from './screens/SystemScreen'
 
 // Lazy load heavy screens with AI models
 const LiveScreen = lazy(() => import('./screens/LiveScreen'))
+const ControlScreen = lazy(() => import('./screens/ControlScreen'))
 const MissionScreen = lazy(() => import('./screens/MissionScreen'))
 const DetectionsScreen = lazy(() => import('./screens/DetectionsScreen'))
 const ReplayScreen = lazy(() => import('./screens/ReplayScreen'))
@@ -30,6 +31,7 @@ const WaterLabScreen = lazy(() => import('./screens/WaterLabScreen'))
 const SCREENS = {
   home: MissionControlScreen,
   live: LiveScreen,
+  control: ControlScreen,
   mission: MissionScreen,
   boat: BoatScreen,
   collect: CollectScreen,
@@ -81,7 +83,7 @@ function Shell({ onLock }) {
   // Lets the AI assistant switch tabs (e.g. open Missions after planning).
   useEffect(() => registerNavigator(setTab), [])
   const Screen = SCREENS[tab]
-  const fullBleed = tab === 'live' || tab === 'mission' || tab === 'boat' || tab === 'collect' || tab === 'vision' || tab === 'water'
+  const fullBleed = tab === 'live' || tab === 'control' || tab === 'mission' || tab === 'boat' || tab === 'collect' || tab === 'vision' || tab === 'water'
 
   return (
     <div className="relative min-h-screen">

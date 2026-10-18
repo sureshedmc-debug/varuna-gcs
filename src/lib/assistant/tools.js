@@ -19,7 +19,7 @@ import { buildHotspotPlan, clusterHotspots } from '../hotspots'
 import { getImpactStats } from '../impactStats'
 import { resolvePeriod, filterByDateRange, summarizeSightings } from '../trashQuery'
 
-const TABS = ['home', 'live', 'mission', 'boat', 'collect', 'vision', 'water', 'detections', 'replay', 'system']
+const TABS = ['home', 'live', 'control', 'mission', 'boat', 'collect', 'vision', 'water', 'detections', 'replay', 'system']
 const ASSIST_MAX_TAKEOFF = 30 // m
 const S = { OBJECT: 'object', STRING: 'string', NUMBER: 'number' }
 
@@ -35,7 +35,7 @@ const DECLARATIONS = [
     description: 'Switch the app to a tab.',
     parameters: {
       type: S.OBJECT,
-      properties: { tab: { type: S.STRING, enum: TABS, description: 'home = Home dashboard, live = Live camera, mission = Missions planner, boat = Boat control (the collection boat), collect = plan the boat plastic collection, vision = Boat Vision (boat camera AI: homing, wildlife pauses, catch counter), water = Water Lab (turbidity map and readings), detections, replay = mission replay, system' } },
+      properties: { tab: { type: S.STRING, enum: TABS, description: 'home = Home dashboard, live = Live camera, control = Control (fly the drone from the keyboard, flight modes, plain live view), mission = Missions planner, boat = Boat control (the collection boat), collect = plan the boat plastic collection, vision = Boat Vision (boat camera AI: homing, wildlife pauses, catch counter), water = Water Lab (turbidity map and readings), detections, replay = mission replay, system' } },
       required: ['tab'],
     },
   },
