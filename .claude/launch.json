@@ -11,6 +11,16 @@
       "port": 5173
     },
     {
+      "name": "river-lab",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "vite",
+        "--config",
+        "river-lab/vite.config.js"
+      ],
+      "port": 5174
+    },
+    {
       "name": "boat-sim",
       "runtimeExecutable": "python",
       "runtimeArgs": [
