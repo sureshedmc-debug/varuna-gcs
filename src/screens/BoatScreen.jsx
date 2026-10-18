@@ -10,6 +10,7 @@ import { Btn, StaleBadge, CommandButton, CommandPanel } from '../components/ui'
 import { boatIcon, itemIcon, MISSION_STATE, BoatOffline, BLUE, GREEN } from '../components/BoatParts'
 import { homeIcon } from '../components/MapCanvas'
 import { BoatVisionWidgets } from '../components/BoatVisionWidgets'
+import { BoatGamepadCard } from '../components/BoatGamepadCard'
 import { num, relTime } from '../lib/format'
 import { isOk } from '../lib/commands'
 
@@ -227,6 +228,8 @@ export default function BoatScreen({ onNavigate }) {
                   </div>
                 )}
               </div>
+
+              <BoatGamepadCard />
 
               <BoatVisionWidgets onNavigate={onNavigate} />
 

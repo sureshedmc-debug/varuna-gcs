@@ -4,6 +4,7 @@ import { ToastProvider } from './components/Toast'
 import { SystemProvider, useSystem } from './components/SystemContext'
 import { BoatProvider } from './components/BoatContext'
 import { BoatVisionProvider } from './components/BoatVisionContext'
+import { BoatDriveProvider } from './components/BoatDriveContext'
 import { WarningBanner, deriveWarnings } from './components/WarningBanner'
 import { Rail } from './components/Rail'
 import { TopBar } from './components/TopBar'
@@ -179,7 +180,9 @@ export default function App() {
       <SystemProvider>
         <BoatProvider>
           <BoatVisionProvider>
-            <Shell onLock={lock} />
+            <BoatDriveProvider>
+              <Shell onLock={lock} />
+            </BoatDriveProvider>
           </BoatVisionProvider>
         </BoatProvider>
       </SystemProvider>

@@ -103,6 +103,11 @@ export const boatApi = {
   waterMeasure: () => post('/api/water/measure', undefined, 15000),
   waterCalibrate: (action, ntu) => post('/api/water/calibrate', { action, ntu }, 10000),
 
+  // Driving by game controller: the Pixhawk's radio failsafe (what stops the
+  // boat if its Pi dies, with no RC transmitter).
+  failsafe: () => req('/api/pixhawk/failsafe', { timeout: 15000 }),
+  fixFailsafe: () => post('/api/pixhawk/failsafe/fix', undefined, 20000),
+
   // Simulator only
   simDetections: (frameTime) => req(`/api/sim/detections?frame_time=${frameTime}`, { timeout: 3000 }),
   simDuck: (aheadM = 9) => post(`/api/sim/duck?ahead_m=${aheadM}`, undefined, 5000),
@@ -122,6 +127,11 @@ export function boatWsUrl() {
   if (/^https?:\/\//i.test(base)) return base.replace(/^http/i, 'ws') + '/api/ws'
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   return `${proto}//${window.location.host}${base}/api/ws`
+}
+
+/** The game controller's socket (sticks → boat), next to the telemetry one. */
+export function boatDriveUrl() {
+  return boatWsUrl().replace(/\/api\/ws$/, '/api/drive')
 }
 
 /** True only when a reply really came from a VARUNA boat backend. */

@@ -56,6 +56,17 @@ DEFAULTS = {
     # Pi Zero: lighter defaults (LITE_PROFILE) so a single slow core keeps up.
     # auto = on a Pi Zero only; on / off to force it. Values set in the file still win.
     "lite_mode": "auto",
+    # ---- Driving by hand.
+    # transmitter: an RC transmitter on the Pixhawk (the Pi sends no stick commands).
+    # gamepad: no transmitter; a game controller on the PC drives the boat through
+    #   the app. The Pi then sends the Pixhawk stick values (RC override, steering
+    #   on channel 1, throttle on 3) ten times a second, ALWAYS — neutral unless
+    #   someone is driving — so the Pixhawk sees a live "radio": it can arm and run
+    #   missions, and if the Pi dies its own radio failsafe stops the boat (FS_ACTION).
+    "rc_source": "transmitter",
+    "gamepad_max_throttle": 0.6,      # full stick = this share of full throttle
+    "gamepad_timeout_s": 0.5,         # no controller input this long → sticks centred
+    "gamepad_lost_s": 3.0,            # …this long while driving in MANUAL → HOLD
     # Where the camera sits: used to turn a spot in the picture into a spot on the water.
     "camera_height_m": 0.6,           # lens height above the water
     "camera_tilt_deg": 15,            # below the horizon: 15° sees from the ramp (~1.2 m) out to ~20 m
@@ -115,7 +126,8 @@ _FLOAT_KEYS = {"default_hold_s", "default_speed_mps", "max_distance_m", "sim_hom
                "homing_capture_m", "homing_drive_through_m", "homing_confirm_s",
                "wildlife_clear_s", "wildlife_alert_s", "vision_timeout_s", "vision_lost_speed_mps",
                "motion_sensitivity", "turb_divider", "turb_clear_volts", "turb_ref_volts", "turb_ref_ntu",
-               "turb_log_every_s", "measure_s", "telemetry_hz"}
+               "turb_log_every_s", "measure_s", "telemetry_hz",
+               "gamepad_max_throttle", "gamepad_timeout_s", "gamepad_lost_s"}
 
 # Pi Zero defaults: the camera's JPEG encoding is done in software, on one slow
 # core, and the video goes over NetBird; 10 fps at quality 70 is about half the
@@ -144,6 +156,7 @@ TUNABLE = {
     "ramp_top": ("float", 0.5, 1), "count_line": ("float", 0.1, 0.9),
     "zone_x1": ("float", 0, 0.5), "zone_x2": ("float", 0.5, 1), "zone_y1": ("float", 0, 0.95),
     "measure_s": ("float", 5, 120), "turb_divider": ("float", 1, 3),
+    "gamepad_max_throttle": ("float", 0.1, 1),
 }
 
 
@@ -226,6 +239,9 @@ def load_config():
             if key not in chosen:
                 cfg[key] = value
     cfg["telemetry_hz"] = max(0.5, min(10.0, float(cfg["telemetry_hz"])))
+    if cfg["rc_source"] not in ("transmitter", "gamepad"):
+        cfg["rc_source"] = "transmitter"
+    cfg["gamepad_max_throttle"] = max(0.1, min(1.0, float(cfg["gamepad_max_throttle"])))
     return cfg
 
 

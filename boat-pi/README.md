@@ -124,6 +124,37 @@ Set these with Mission Planner or QGroundControl:
 | `FS_ACTION` | 1 | Failsafe = RTL |
 | `FENCE_ENABLE` | 1 | Draw a fence around the water so the boat can never reach the bank |
 
+### Driving by hand with a game controller (no RC transmitter)
+
+Set `"rc_source": "gamepad"` (the Boat Pi Tool asks in Full setup, or use its
+**13. Driving by hand**). A USB / Bluetooth game controller on the PC then
+drives the boat through the VARUNA app (Boat tab → Game controller):
+
+| Control | Does |
+|---|---|
+| Left stick up / down | Throttle (forward / reverse), up to the throttle limit (`gamepad_max_throttle`, 60 %) |
+| Right stick left / right | Steering |
+| A / B / X / Y | MANUAL (drive) / HOLD (stop) / resume mission / return home |
+| Hold START / BACK 1 s | Arm / disarm |
+
+How it stays safe without a transmitter (tested on ArduRover SITL with its RC
+input cut, `SIM_RC_FAIL=1`):
+
+* The Pi sends the Pixhawk RC override values (steering ch 1, throttle ch 3)
+  ten times a second, **always** — neutral when nobody drives. That is the
+  Pixhawk's "radio": with none at all ArduRover refuses to arm (*Radio failsafe*).
+* If the **boat Pi dies**, the overrides stop and the Pixhawk's own radio
+  failsafe acts after ~3 s (`RC_OVERRIDE_TIME`): `FS_THR_ENABLE` must be 1 and
+  `FS_ACTION` 1 (RTL) or 2 (Hold). The tool's menu 13 checks and can fix this.
+* If the **PC or controller link drops**, the Pi centres the sticks after 0.5 s
+  and, if the boat was being driven in MANUAL, switches to HOLD after 3 s.
+* The app only drives while its window has focus (an unfocused window may keep
+  reporting the last stick position).
+* The sticks only move the boat in MANUAL; AUTO, GUIDED, HOLD and RTL ignore them.
+
+With `"rc_source": "transmitter"` (the default) the Pi sends no stick values,
+so a real transmitter keeps full control.
+
 ## 4. Install on the boat Pi
 
 Use Raspberry Pi OS **Lite 64-bit**. Enable the UART and turn off the serial console:

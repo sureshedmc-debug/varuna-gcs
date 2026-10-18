@@ -593,6 +593,45 @@ class BoatLink:
             0, self.target_system, self.target_component, mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
             mask, int(round(lat * 1e7)), int(round(lng * 1e7)), 0, 0, 0, 0, 0, 0, 0, 0, 0))
 
+    def rc_override(self, steer_pwm, throttle_pwm):
+        """Stick values for the Pixhawk (no transmitter): steering on channel 1,
+        throttle on 3; 0 on every other channel leaves it alone. The Pixhawk
+        drops overrides that stop arriving (RC_OVERRIDE_TIME), then its radio
+        failsafe acts — so this must be sent continuously."""
+        if self.target_system is None:
+            return False
+        ts, tc = self.target_system, self.target_component
+        return self._send(lambda m: m.mav.rc_channels_override_send(
+            ts, tc, int(steer_pwm), 0, int(throttle_pwm), 0, 0, 0, 0, 0))
+
+    def get_param(self, name, timeout=3.0):
+        """A Pixhawk parameter's value, or None if it didn't answer / has no such parameter."""
+        self._require_fc()
+        for _ in range(2):
+            w = self._expect(("PARAM_VALUE",), lambda m: m.param_id == name)
+            self._send(lambda m: m.mav.param_request_read_send(
+                self.target_system, self.target_component, name.encode(), -1))
+            msg = self._wait(w, timeout)
+            if msg is not None:
+                return float(msg.param_value)
+        return None
+
+    def set_param(self, name, value, timeout=3.0):
+        """Set a Pixhawk parameter and confirm it took (the Pixhawk echoes the
+        stored value). Returns the stored value; raises LinkError otherwise."""
+        self._require_fc()
+        for _ in range(2):
+            w = self._expect(("PARAM_VALUE",), lambda m: m.param_id == name)
+            self._send(lambda m: m.mav.param_set_send(
+                self.target_system, self.target_component, name.encode(), float(value),
+                mavlink.MAV_PARAM_TYPE_REAL32))
+            msg = self._wait(w, timeout)
+            if msg is not None:
+                if abs(float(msg.param_value) - float(value)) > 1e-3:
+                    raise LinkError(f"The Pixhawk kept {name} = {msg.param_value:g} (asked for {value:g}).")
+                return float(msg.param_value)
+        raise LinkError(f"The Pixhawk did not confirm {name}.")
+
     def set_speed(self, mps):
         """Change the cruise speed (works in AUTO and GUIDED)."""
         result = self.command_long(mavlink.MAV_CMD_DO_CHANGE_SPEED, [1, float(mps), -1, 0])

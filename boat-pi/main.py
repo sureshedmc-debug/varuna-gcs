@@ -24,6 +24,7 @@ Test on a laptop:   python main.py --sim --port 8001   (simulated Pixhawk)
 import argparse
 import asyncio
 import inspect
+import json
 import logging
 import os
 import platform
@@ -39,6 +40,7 @@ from pydantic import BaseModel, Field
 
 from camera import CameraManager
 from config import DATA_DIR, TUNABLE, load_config, save_settings, tune
+from drive import DriveManager
 from mav_link import BoatLink, LinkError
 from mission import ACTIVE_STATES, MissionManager
 from turbidity import Turbidity
@@ -81,7 +83,8 @@ if SIM:
     from sim_vehicle import SimBoat
     sim_boat = SimBoat(cfg["sim_home_lat"], cfg["sim_home_lng"],
                        "tcpin:127.0.0.1:" + os.environ.get("BOAT_SIM_TCP_PORT", "5762"),
-                       sim_rate=float(os.environ.get("BOAT_SIM_RATE", "1")))
+                       sim_rate=float(os.environ.get("BOAT_SIM_RATE", "1")),
+                       no_transmitter=cfg["rc_source"] == "gamepad")
     try:
         import PIL  # noqa: F401  (the simulated camera draws with Pillow)
         from sim_world import SimCamera, SimWorld
@@ -94,6 +97,7 @@ else:
     camera = CameraManager(cfg)
 turbidity = Turbidity(cfg, DATA_DIR, link, sim=SIM, save_settings=save_settings)
 vision = VisionManager(link, missions, cfg, DATA_DIR, turbidity)
+drive = DriveManager(link, cfg, vision)
 operator = {"last": time.time(), "ws": 0, "acted": False}
 
 
@@ -189,6 +193,7 @@ def telemetry():
         "mission": m,
         "vision": vision.summary(),
         "water": turbidity.summary(),
+        "drive": drive.status(),
         "camera": {"connected": bool(camera.connected), "fps": camera.measured_fps()},
         "simulated": SIM,
         "t": round(time.time(), 2),
@@ -241,14 +246,19 @@ async def lifespan(app):
     camera.start()
     turbidity.start()
     vision.start()
+    drive.start()
     tasks = [asyncio.create_task(broadcast_loop()), asyncio.create_task(operator_watchdog())]
     log.info("VARUNA boat backend %s ready on port %s (Pixhawk: %s)", VERSION, cfg["http_port"], cfg["mav_connection"])
+    if drive.enabled:
+        log.info("Driving by hand: game controller via the app (no RC transmitter); max throttle %d%%",
+                 round(cfg["gamepad_max_throttle"] * 100))
     if cfg["lite"]:
         log.info("Pi Zero lite mode: camera %s fps, quality %s, telemetry %g/s",
                  cfg["camera_fps"], cfg["camera_quality"], cfg["telemetry_hz"])
     yield
     for t in tasks:
         t.cancel()
+    drive.stop()
     vision.stop()
     turbidity.stop()
     camera.stop()
@@ -372,6 +382,72 @@ async def ws_endpoint(ws: WebSocket):
         operator["last"] = time.time()
 
 
+# ---------------------------------------------------------------------------- game controller
+@app.websocket("/api/drive")
+async def drive_endpoint(ws: WebSocket):
+    """The app's game controller: {"s": steering -1..1, "t": throttle -1..1, "pad": name}
+    about 20 times a second. Closing the socket centres the sticks at once."""
+    await ws.accept()
+    drive.connected(True)
+    try:
+        while True:
+            try:
+                msg = json.loads(await ws.receive_text())
+            except ValueError:
+                continue
+            if isinstance(msg, dict):
+                drive.input(msg.get("s"), msg.get("t"), msg.get("pad"))
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        log.debug("Drive socket closed: %s", exc)
+    finally:
+        drive.connected(False)
+
+
+FAILSAFE_PARAMS = ("FS_THR_ENABLE", "FS_ACTION", "FS_TIMEOUT", "RC_OVERRIDE_TIME", "FS_GCS_ENABLE")
+FS_ACTIONS = {0: "do nothing", 1: "return home", 2: "hold (stop)", 3: "smart return home, else return home",
+              4: "smart return home, else hold"}
+
+
+def failsafe_report():
+    """The Pixhawk's radio failsafe, read back: with a game controller instead of a
+    transmitter it is what stops the boat if the boat Pi dies."""
+    values = {name: link.get_param(name) for name in FAILSAFE_PARAMS}
+    problems = []
+    if values["FS_THR_ENABLE"] == 0:
+        problems.append("FS_THR_ENABLE is 0: if the boat Pi stopped, the Pixhawk would carry on with the last command.")
+    if values["FS_ACTION"] == 0:
+        problems.append("FS_ACTION is 0 (do nothing): the radio failsafe would not stop the boat.")
+    return {"values": values, "action": FS_ACTIONS.get(int(values["FS_ACTION"] or 0)) if values["FS_ACTION"] is not None else None,
+            "ok": not problems and None not in (values["FS_THR_ENABLE"], values["FS_ACTION"]), "problems": problems,
+            "rc_source": cfg["rc_source"]}
+
+
+@app.get("/api/pixhawk/failsafe")
+def pixhawk_failsafe():
+    try:
+        return failsafe_report()
+    except LinkError as exc:
+        return fail(str(exc))
+
+
+@app.post("/api/pixhawk/failsafe/fix")
+def pixhawk_failsafe_fix():
+    """Radio failsafe on, and HOLD (stop) as its action if it was set to do nothing."""
+    try:
+        changed = []
+        if link.get_param("FS_THR_ENABLE") == 0:
+            link.set_param("FS_THR_ENABLE", 1)
+            changed.append("FS_THR_ENABLE = 1")
+        if link.get_param("FS_ACTION") == 0:
+            link.set_param("FS_ACTION", 2)
+            changed.append("FS_ACTION = 2 (hold)")
+        return ok("Changed: " + ", ".join(changed) if changed else "Nothing to change.", report=failsafe_report())
+    except LinkError as exc:
+        return fail(str(exc))
+
+
 # ---------------------------------------------------------------------------- boat control
 @app.post("/api/mavlink/arm")
 def mavlink_arm(body: ArmRequest):
@@ -490,6 +566,7 @@ def boat_info():
         "active_states": list(ACTIVE_STATES),
         "camera": camera.get_status()["source"],
         "turbidity": turbidity.summary()["connected"],
+        "rc_source": cfg["rc_source"],
     }
 
 

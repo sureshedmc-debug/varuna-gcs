@@ -13,8 +13,10 @@ or let the backend start it:   python main.py --sim
 """
 
 import argparse
+import json
 import logging
 import math
+import os
 import threading
 import time
 
@@ -28,6 +30,7 @@ log = logging.getLogger("boat.sim")
 EARTH_R = 6371000.0
 ARRIVE_M = 1.0          # waypoint radius
 TURN_RATE = 60.0        # deg/s
+MANUAL_MAX_MPS = 2.0    # full throttle in MANUAL
 
 
 def _offset(lat, lng, north_m, east_m):
@@ -43,7 +46,8 @@ def _dist_bearing(lat1, lng1, lat2, lng2):
 
 
 class SimBoat:
-    def __init__(self, lat, lng, address="tcpin:127.0.0.1:5762", speed_mps=1.0, sim_rate=1.0):
+    def __init__(self, lat, lng, address="tcpin:127.0.0.1:5762", speed_mps=1.0, sim_rate=1.0,
+                 no_transmitter=False):
         self.address = address
         self.home = (lat, lng)
         self.lat, self.lng = lat, lng
@@ -62,6 +66,20 @@ class SimBoat:
         self.rtl_done = False
         self.guided_target = None     # (lat, lng) in GUIDED
         self.upload = None            # {"count": n, "items": {}, "next": seq, "last": t}
+        # No RC transmitter (driven by a game controller through the Pi): like
+        # ArduRover, the only "radio" is RC override; without it the radio
+        # failsafe is on (no arming) and, armed, FS_ACTION is taken.
+        self.no_rc = no_transmitter
+        self.rc = {"steer": 1500, "thr": 1500, "t": 0.0}
+        self.rc_failsafe = no_transmitter
+        self.params = {"FS_THR_ENABLE": 1.0, "FS_ACTION": 2.0, "FS_TIMEOUT": 1.5, "RC_OVERRIDE_TIME": 3.0,
+                       "FS_GCS_ENABLE": 0.0}
+        # Tests can start the simulated Pixhawk with other values, e.g. '{"FS_ACTION": 0}'.
+        try:
+            self.params.update({k: float(v) for k, v in json.loads(os.environ.get("BOAT_SIM_PARAMS", "{}")).items()
+                                if k in self.params})
+        except (ValueError, TypeError, AttributeError):
+            pass
         self._stop = threading.Event()
         self._thread = None
         self.m = None
@@ -110,6 +128,7 @@ class SimBoat:
                 last_slow = now
                 self.m.mav.mission_current_send(self.cur)
             self._upload_timeout(now)
+            self._radio_failsafe(now)
 
     def _send_telemetry(self):
         vn = self.speed * math.cos(math.radians(self.heading))
@@ -176,6 +195,23 @@ class SimBoat:
         elif t == "SET_POSITION_TARGET_GLOBAL_INT":
             if msg.lat_int or msg.lon_int:
                 self.guided_target = (msg.lat_int / 1e7, msg.lon_int / 1e7)
+        elif t == "RC_CHANNELS_OVERRIDE":
+            if msg.chan1_raw not in (0, 65535):
+                self.rc["steer"] = msg.chan1_raw
+            if msg.chan3_raw not in (0, 65535):
+                self.rc["thr"] = msg.chan3_raw
+            self.rc["t"] = time.time()
+        elif t == "PARAM_REQUEST_READ":
+            name = msg.param_id
+            if name in self.params:
+                self.m.mav.param_value_send(name.encode(), self.params[name], mavlink.MAV_PARAM_TYPE_REAL32,
+                                            len(self.params), list(self.params).index(name))
+        elif t == "PARAM_SET":
+            name = msg.param_id
+            if name in self.params:
+                self.params[name] = float(msg.param_value)
+                self.m.mav.param_value_send(name.encode(), self.params[name], mavlink.MAV_PARAM_TYPE_REAL32,
+                                            len(self.params), list(self.params).index(name))
         elif t == "MISSION_CLEAR_ALL":
             self.mission, self.cur = [], 0
             self.m.mav.mission_ack_send(msg.get_srcSystem(), msg.get_srcComponent(), mavlink.MAV_MISSION_ACCEPTED)
@@ -210,6 +246,9 @@ class SimBoat:
             if want and self.mode not in (ROVER_MODES["HOLD"], ROVER_MODES["MANUAL"], ROVER_MODES["AUTO"],
                                           ROVER_MODES["GUIDED"], ROVER_MODES["LOITER"]):
                 self.text("Arm: Mode not armable", mavlink.MAV_SEVERITY_CRITICAL)
+                return self._ack(c, mavlink.MAV_RESULT_FAILED)
+            if want and self.rc_failsafe:
+                self.text("Arm: Radio failsafe on", mavlink.MAV_SEVERITY_CRITICAL)
                 return self._ack(c, mavlink.MAV_RESULT_FAILED)
             if want and self.battery < 10.8:
                 self.text("PreArm: Battery below minimum", mavlink.MAV_SEVERITY_CRITICAL)
@@ -252,6 +291,24 @@ class SimBoat:
             self.text(f"Mode {MODE_NAMES[number]}")
         return True
 
+    def _radio_failsafe(self, now):
+        if not self.no_rc:
+            return
+        lost = now - self.rc["t"] > self.params["RC_OVERRIDE_TIME"]
+        if lost == self.rc_failsafe:
+            return
+        self.rc_failsafe = lost
+        if not lost:
+            self.text("Radio Failsafe Cleared")
+            return
+        self.text("Radio Failsafe", mavlink.MAV_SEVERITY_WARNING)
+        if self.armed and self.params["FS_THR_ENABLE"]:
+            action = int(self.params["FS_ACTION"])
+            if action == 1:
+                self._set_mode(ROVER_MODES["RTL"])
+            elif action in (2, 4):
+                self._set_mode(ROVER_MODES["HOLD"])
+
     # ------------------------------------------------------------------ physics
     def _drive_to(self, lat, lng, dt, arrive=ARRIVE_M):
         dist, brg = _dist_bearing(self.lat, self.lng, lat, lng)
@@ -283,6 +340,18 @@ class SimBoat:
         if name == "GUIDED":
             if self.guided_target is None or self._drive_to(self.guided_target[0], self.guided_target[1], dt, arrive=0.3):
                 self.speed = 0.0
+            return
+        if name == "MANUAL":
+            # The sticks: throttle (channel 3) sets the speed, steering (channel 1) the turn.
+            fresh = time.time() - self.rc["t"] <= self.params["RC_OVERRIDE_TIME"]
+            thr = (self.rc["thr"] - 1500) / 400 if fresh else 0.0
+            steer = (self.rc["steer"] - 1500) / 400 if fresh else 0.0
+            self.speed = MANUAL_MAX_MPS * max(-1.0, min(1.0, thr))
+            if abs(self.speed) > 0.05:
+                self.heading = (self.heading + TURN_RATE * dt * max(-1.0, min(1.0, steer))) % 360
+            step = self.speed * dt
+            self.lat, self.lng = _offset(self.lat, self.lng, step * math.cos(math.radians(self.heading)),
+                                         step * math.sin(math.radians(self.heading)))
             return
         if name != "AUTO":
             self.speed = 0.0

@@ -18,6 +18,8 @@ once, then offers:
  10. Turbidity sensor check: live reading, volts and the ADC on I2C.
  11. Calibrate the turbidity sensor in clear water.
  12. Find the Pixhawk: what the boat tried on each port and speed.
+ 13. Driving by hand: a game controller on the PC (no RC transmitter) or an
+     RC transmitter; checks the Pixhawk's radio failsafe.
 
 Works on 64-bit and 32-bit Raspberry Pi OS (Pi Zero, Pi 3/4/5). On 32-bit,
 FastAPI and pydantic come from the OS packages, because building pydantic
@@ -51,7 +53,7 @@ SERVICE = "varuna-boat"
 HTTP_PORT = 8000
 PAYLOAD_FILES = [
     "main.py", "config.py", "mav_link.py", "mission.py", "sim_vehicle.py",
-    "camera.py", "camera_model.py", "vision.py", "turbidity.py", "sim_world.py",
+    "camera.py", "camera_model.py", "vision.py", "turbidity.py", "sim_world.py", "drive.py",
     "requirements.txt", "README.md", "boat_config.example.json", "test_e2e.py",
 ]
 APT_PACKAGES = "python3-venv python3-dev python3-pip libxml2-dev libxslt1-dev curl i2c-tools"
@@ -473,7 +475,10 @@ venv/bin/python -m pip install --disable-pip-version-check --extra-index-url htt
 
 def step_config(pi, ctx):
     link = ctx["link"]
-    _patch_config(pi, ctx, {"mav_connection": link["device"], "mav_baud": link["baud"], "http_port": HTTP_PORT})
+    patch = {"mav_connection": link["device"], "mav_baud": link["baud"], "http_port": HTTP_PORT}
+    if ctx.get("rc_source"):
+        patch["rc_source"] = ctx["rc_source"]
+    _patch_config(pi, ctx, patch)
     ok(f"Pixhawk link set to {link['device']} at {link['baud']} baud (boat_config.json)")
 
 
@@ -906,11 +911,17 @@ def action_setup(pi, ctx):
         choice, {"kind": "auto", "device": "/dev/serial0", "baud": 57600,
                  "label": "find it automatically (USB or TELEM2, any speed)"})
     say("")
+    say("How will you drive the boat by hand?")
+    say("  1) Game controller (USB / Bluetooth) on the PC, through the VARUNA app — no RC transmitter")
+    say("  2) RC transmitter on the Pixhawk")
+    ctx["rc_source"] = "gamepad" if ask("Choose 1 or 2", "1").strip() == "1" else "transmitter"
+    say("")
     say("NetBird lets the VARUNA app reach the boat from anywhere (optional).", "dim")
     say("Paste a setup key from app.netbird.io → Setup Keys, or press Enter to skip.", "dim")
     ctx["netbird_key"] = ask("NetBird setup key", "", secret=True)
     say("")
     say(f"  Pixhawk:  {ctx['link']['label']}")
+    say(f"  By hand:  {DRIVE_LABEL[ctx['rc_source']]}")
     say(f"  NetBird:  {'join with the setup key' if ctx['netbird_key'] else 'skip'}")
     say("  Takes 10–30 minutes on a Pi 3 (mostly downloading libraries).", "dim")
     if not ask_yes("Start the full setup?", True):
@@ -928,6 +939,7 @@ def action_setup(pi, ctx):
         ("Pi Zero tune-up", lambda: step_lite(pi, ctx)),
         ("NetBird", lambda: step_netbird(pi, ctx)),
         ("Checking everything works", lambda: step_verify(pi, ctx)),
+        ("Driving by hand", lambda: step_drive(pi, ctx)),
         ("Finishing", lambda: step_reboot(pi, ctx)),
     ])
     ctx["installed"] = True
@@ -1007,6 +1019,9 @@ def action_status(pi, ctx):
     ip = _netbird_ip(out)
     ctx["netbird_ip"] = ip or ctx.get("netbird_ip")
     say(f"  NetBird: {ip or 'not connected'}")
+    info = _api(pi, "/api/boat/info") or {}
+    if info.get("rc_source"):
+        say(f"  Driving by hand: {DRIVE_LABEL.get(info['rc_source'], info['rc_source'])}")
     _, out = pi.run("hostname -I 2>/dev/null || true", check=False)
     ips = [x for x in out.split() if re.match(r"^\d+\.\d+\.\d+\.\d+$", x) and not x.startswith("100.")]
     if ips:
@@ -1171,6 +1186,81 @@ def action_calibrate(pi, ctx):
     (ok if res.get("success") else warn)(res.get("message") or "No answer from the backend.")
 
 
+DRIVE_LABEL = {"gamepad": "game controller on the PC (no RC transmitter)", "transmitter": "RC transmitter"}
+
+
+def _check_failsafe(pi, ctx, offer_fix=True):
+    """With no transmitter the Pixhawk's radio failsafe is what stops the boat if
+    the boat Pi dies (the Pi's stick commands stop). Read it back, offer a fix."""
+    fs = _api(pi, "/api/pixhawk/failsafe", timeout=40)
+    if not fs or fs.get("success") is False:
+        warn("Couldn't read the Pixhawk's failsafe settings"
+             + (f": {fs.get('message')}" if fs and fs.get("message") else " — is the Pixhawk connected? (3) Status)")
+             + ". Check again later with 13) Driving by hand.")
+        return
+    v = fs.get("values") or {}
+    if fs.get("ok"):
+        ok(f"Pixhawk radio failsafe on: if the boat Pi stops, the boat will {fs.get('action')} "
+           f"(after about {v.get('RC_OVERRIDE_TIME') or 3:g} s)")
+        return
+    for problem in fs.get("problems") or ["The failsafe settings could not all be read."]:
+        warn(problem)
+    if offer_fix and ask_yes("Turn the radio failsafe on, with HOLD (stop) as its action?", True):
+        res = _api(pi, "/api/pixhawk/failsafe/fix", method="POST", timeout=40) or {}
+        (ok if res.get("success") else warn)(res.get("message") or "No answer from the boat backend.")
+
+
+def _drive_help():
+    say("  In the VARUNA app → Boat tab → Game controller: plug the controller into the PC and press any button.", "dim")
+    say("  Left stick = throttle, right stick = steering (only in MANUAL).", "dim")
+    say("  A = MANUAL   B = HOLD (stop)   X = resume mission   Y = return home", "dim")
+    say("  Hold START 1 s = arm, hold BACK 1 s = disarm. Controller lost 3 s while driving → the boat holds.", "dim")
+
+
+def step_drive(pi, ctx):
+    if ctx.get("rc_source") != "gamepad":
+        ok("Driven by hand with an RC transmitter")
+        return
+    ok("Driven by hand with a game controller on the PC (no RC transmitter)")
+    _check_failsafe(pi, ctx)
+    _drive_help()
+
+
+def action_drive(pi, ctx):
+    """Choose how the boat is driven by hand, and check the Pixhawk's radio failsafe."""
+    if not ctx.get("installed"):
+        warn("The boat backend isn't installed on this Pi yet — run 1) Full setup first.")
+        return
+    info = _api(pi, "/api/boat/info")
+    if not info:
+        raise InstallError("The boat backend is not answering — try 5) Restart the boat service.")
+    cur = info.get("rc_source", "transmitter")
+    say(f"Now: {DRIVE_LABEL.get(cur, cur)}")
+    say("  1) Game controller (USB / Bluetooth) on the PC, through the VARUNA app — no RC transmitter")
+    say("  2) RC transmitter on the Pixhawk")
+    want = "gamepad" if ask("Choose 1 or 2", "1" if cur == "gamepad" else "2").strip() == "1" else "transmitter"
+    if want != cur:
+        _patch_config(pi, ctx, {"rc_source": want})
+        pi.run(f"systemctl restart {SERVICE}", sudo=True, timeout=120)
+        for _ in range(15):
+            time.sleep(2)
+            info = _api(pi, "/api/boat/info")
+            if info and info.get("rc_source") == want:
+                break
+        ok(f"Switched to: {DRIVE_LABEL[want]}")
+        if want == "transmitter":
+            say("  The Pi no longer sends stick commands: the transmitter has full control.", "dim")
+    if want == "gamepad":
+        h = _api(pi, "/api/health") or {}
+        for _ in range(10):
+            if h.get("pixhawk_connected"):
+                break
+            time.sleep(2)
+            h = _api(pi, "/api/health") or {}
+        _check_failsafe(pi, ctx)
+        _drive_help()
+
+
 def action_find_pixhawk(pi, ctx):
     """The boat searches every USB port and TELEM2 speed by itself; show what it found."""
     h = _api(pi, "/api/health")
@@ -1202,6 +1292,7 @@ MENU = [
     ("10", "Turbidity sensor check (live readings)", action_turbidity),
     ("11", "Calibrate the turbidity sensor in clear water", action_calibrate),
     ("12", "Find the Pixhawk (what the boat tried)", action_find_pixhawk),
+    ("13", "Driving by hand: game controller or RC transmitter", action_drive),
     ("0", "Exit", None),
 ]
 
