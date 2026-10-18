@@ -8,6 +8,7 @@ import { Btn, StaleBadge, StatusOrb, CommandButton, CommandPanel } from '../comp
 import { ViewToggle, EYE, EYE_OFF, SWAP } from '../components/ViewToggle'
 import VideoHUD from '../components/VideoHUD'
 import MapCanvas from '../components/MapCanvas'
+import LiveDetectionMarkers from '../components/LiveDetectionMarkers'
 import { pick, num, bool, fmtCoord, DASH } from '../lib/format'
 import { cmd } from '../lib/commands'
 import { getDetectModel } from '../lib/detector'
@@ -128,12 +129,21 @@ export default function LiveScreen() {
           <Suspense fallback={<div className="flex h-full w-full items-center justify-center text-sm text-muted">Loading AI detector…</div>}>
             <WebcamDetect confThr={conf} />
           </Suspense>
-        ) : mainView === 'video' ? (
-          <Suspense fallback={<div className="flex h-full w-full items-center justify-center text-sm text-muted">Loading feed…</div>}>
-            <WebcamDetect confThr={conf} defaultSource="webcam" autoStart controlsLift={hideWidgets ? 0 : 135} />
-          </Suspense>
         ) : (
-          <MapCanvas center={center} hasFix={hasFix} />
+          <>
+            {/* The feed stays mounted under the map, so detection keeps running in Map view
+                and new plastic keeps appearing on the map. */}
+            <Suspense fallback={<div className="flex h-full w-full items-center justify-center text-sm text-muted">Loading feed…</div>}>
+              <WebcamDetect confThr={conf} defaultSource="webcam" autoStart controlsLift={hideWidgets ? 0 : 135} />
+            </Suspense>
+            {mainView === 'map' && (
+              <div className="absolute inset-0 z-10">
+                <MapCanvas center={center} hasFix={hasFix}>
+                  <LiveDetectionMarkers />
+                </MapCanvas>
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -288,7 +298,7 @@ export default function LiveScreen() {
             title="Tap to swap main view"
           >
             {mainView === 'video'
-              ? <MapCanvas center={center} hasFix={hasFix} zoom={15} />
+              ? <MapCanvas center={center} hasFix={hasFix} zoom={15}><LiveDetectionMarkers small /></MapCanvas>
               : <VideoHUD speed={t.speed} altitude={t.alt} heading={t.heading} aiOn={aiOn} fill />
             }
             <span
