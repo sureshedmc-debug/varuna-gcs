@@ -16,7 +16,7 @@ System tabs) talks to it over NetBird. It talks to the drone's Pixhawk
 Double-click **VARUNA Drone Pi Tool.exe**. Build it with `drone-installer\build.bat`; it lands in `drone-installer\dist\`.
 
 1. Enter the drone Pi's IP, username and password.
-2. Choose **1) Full setup**. It asks how the Pixhawk is wired (TELEM2 / USB) and which camera you have (USB webcam / Pi camera module).
+2. Choose **1) Full setup**. It asks how the Pixhawk is wired (TELEM2 / USB) and which camera you have (auto-detect — the default — USB webcam, or Pi camera module).
 3. Over SSH it then:
    - installs everything (including ffmpeg for the camera)
    - copies this backend
@@ -29,6 +29,7 @@ When it's done, it prints the address for the app: System → Connection.
 
 The same tool can also:
 - **9) Camera test** — takes a picture with the drone camera and opens it on the laptop
+- **13) Camera** — switch between auto-detect, USB webcam and Pi camera module; it sets up the camera module too
 - update the code
 - show status and live logs
 - restart the service
@@ -44,6 +45,8 @@ The same tool can also:
 | **USB webcam with MJPEG 720p30** (recommended) | ffmpeg asks the camera for its own JPEG frames and passes them through untouched | very low |
 | USB webcam without MJPEG | ffmpeg encodes the raw frames on the Pi | high: may drop below 30 fps |
 | Pi camera module | `rpicam-vid` encodes MJPEG | moderate |
+
+With `camera_source` = `auto` (the default) the drone uses whichever camera is connected: the USB webcam if one is plugged in, else the Pi camera module. If the camera in use fails or is unplugged, it switches to the other one by itself. You can also pick the camera in the app: System → Live tuning → `camera_source` (it switches straight away; "Save to disk" keeps it after a restart).
 
 If the camera can't do 720p30, the backend falls back by itself: first to encoding on the Pi, then to 640×480. System → Camera in the app shows the real resolution and fps.
 
@@ -152,7 +155,7 @@ The tool writes this file. You can also edit it, or set `DRONE_<KEY>` environmen
 | Key | Default | Meaning |
 |---|---|---|
 | `link_prefer` | `auto` | `usb`, `telem2`, or `auto` (USB if plugged in, else TELEM2). The app can also change it (System → Advanced). |
-| `camera_source` | `auto` | `usb`, `csi`, `auto`, `test` or `off` |
+| `camera_source` | `auto` | `auto` (USB webcam if plugged in, else Pi camera module), `usb`, `csi`, `test` or `off` (live) |
 | `camera_width/height/fps` | 1280/720/30 | Capture size and rate |
 | `stream_fps` | 30 | Frames per second sent to the app (live) |
 | `takeoff_alt_m` | 10 | Default take-off height (live) |

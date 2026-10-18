@@ -20,6 +20,8 @@ once, then offers:
      blockers (ModemManager, serial console), saves the link that works.
  12. Keyboard flight (the app's Control tab): its limits, and the Pixhawk
      failsafes that matter for it, with a fix for the GCS failsafe.
+ 13. Camera: auto-detect (USB webcam, else the Pi camera module), USB webcam
+     only or camera module only; sets the camera up and shows which one runs.
 
 Safe to run again and again: setup and update keep the drone's settings and
 mission data. The password is only kept in memory and never written to disk.
@@ -47,7 +49,9 @@ VERSION = "1.2.0"
 APP_DIR_NAME = "varuna-drone"
 SERVICE = "varuna-drone"
 HTTP_PORT = 8000
-CAMERA_LABEL = {"usb": "USB webcam", "csi": "Pi camera module", "auto": "auto-detect"}
+CAMERA_LABEL = {"usb": "USB webcam", "csi": "Pi camera module",
+                "auto": "auto-detect (USB webcam if plugged in, else the Pi camera module)",
+                "test": "test picture", "off": "off"}
 PAYLOAD_FILES = [
     "main.py", "config.py", "mav_link.py", "mission.py", "camera.py", "system_info.py", "control.py",
     "requirements.txt", "README.md", "drone_config.example.json", "test_e2e.py",
@@ -409,12 +413,9 @@ venv/bin/python -m pip install -r requirements.txt --disable-pip-version-check
     ok("Python libraries installed and working")
 
 
-def step_config(pi, ctx):
+def _patch_config(pi, ctx, patch):
+    """Merge patch into the drone's drone_config.json (kept: everything else)."""
     app = shlex.quote(ctx["app"])
-    link, cam = ctx["link"], ctx["camera"]
-    patch = {"mav_connection": "", "link_prefer": link["prefer"], "telem2_baud": 57600, "usb_baud": 115200,
-             "camera_source": cam, "camera_width": 1280, "camera_height": 720, "camera_fps": 30,
-             "http_port": HTTP_PORT}
     pi.run(f"""
 set -e
 cd {app}
@@ -432,6 +433,13 @@ p.write_text(json.dumps(cfg, indent=2))
 print("CONFIG_OK")
 PYEOF
 """)
+
+
+def step_config(pi, ctx):
+    link, cam = ctx["link"], ctx["camera"]
+    _patch_config(pi, ctx, {"mav_connection": "", "link_prefer": link["prefer"], "telem2_baud": 57600,
+                            "usb_baud": 115200, "camera_source": cam, "camera_width": 1280,
+                            "camera_height": 720, "camera_fps": 30, "http_port": HTTP_PORT})
     ok(f"Pixhawk link: {link['label']}   ·   camera: {CAMERA_LABEL[cam]} at 1280x720, 30 fps (drone_config.json)")
 
 
@@ -482,13 +490,33 @@ after=$(cat "$CFG" "$CMD" 2>/dev/null | md5sum)
 
 
 def step_camera(pi, ctx):
-    """Let the service use the camera, set up the camera module if chosen, and
-    check the camera can really do 1280x720 at 30 fps."""
+    """Let the service use the camera, set up the camera module and/or check the
+    USB webcam (auto: both, so whichever is connected works)."""
     user = shlex.quote(ctx["user"])
     pi.run(f"usermod -aG video {user}", sudo=True, check=False)
     cam = ctx["camera"]
-    if cam == "csi":
-        _, out = pi.run(f"""
+    auto = cam == "auto"
+    csi = _setup_csi(pi, ctx, quiet=auto) if cam in ("csi", "auto") else False
+    usb = _check_usb(pi, quiet=auto) if cam in ("usb", "auto") else False
+    if not auto:
+        return
+    if usb and csi:
+        ok("Both cameras found: the drone uses the USB webcam, and the camera module if the webcam fails or is unplugged")
+    elif usb:
+        ok("Auto-detect: the drone uses the USB webcam (a Pi camera module would be picked up too)")
+    elif csi:
+        ok("Auto-detect: the drone uses the Pi camera module (a USB webcam plugged in later takes over)")
+    elif ctx.get("reboot"):
+        warn("No camera found yet. A Pi camera module only shows up after the reboot; a USB webcam can be plugged in any time.")
+    else:
+        warn("No camera found. Plug in a USB webcam or connect the Pi camera module (ribbon cable) — "
+             "the drone picks up whichever is there by itself.")
+
+
+def _setup_csi(pi, ctx, quiet=False):
+    """Install rpicam-vid and enable the camera module in the boot settings.
+    True if a camera module is detected. quiet: don't warn when there is none."""
+    _, out = pi.run(f"""
 set +e
 export DEBIAN_FRONTEND=noninteractive
 command -v rpicam-vid >/dev/null 2>&1 || command -v libcamera-vid >/dev/null 2>&1 || \\
@@ -506,14 +534,20 @@ after=$(md5sum < "$CFG" 2>/dev/null)
 HELLO=$(command -v rpicam-hello || command -v libcamera-hello)
 [ -n "$HELLO" ] && timeout 20 "$HELLO" --list-cameras 2>&1 | head -12
 """, sudo=True, timeout=900)
-        if "CAM_CHANGED" in out:
-            ctx["reboot"] = True
-            ok("Camera module enabled in the Pi's boot settings — needs a reboot")
-        if "Available cameras" in out and "No cameras available" not in out:
-            ok("Camera module found")
-        else:
-            warn("No camera module detected yet. Check the ribbon cable (blue side to the Ethernet port on a Pi 3), then reboot.")
-        return
+    if "CAM_CHANGED" in out:
+        ctx["reboot"] = True
+        ok("Camera module enabled in the Pi's boot settings — needs a reboot")
+    if "Available cameras" in out and "No cameras available" not in out:
+        ok("Camera module found")
+        return True
+    if not quiet:
+        warn("No camera module detected yet. Check the ribbon cable (blue side to the Ethernet port on a Pi 3), then reboot.")
+    return False
+
+
+def _check_usb(pi, quiet=False):
+    """Find the USB webcam and check it can do MJPEG 1280x720 at 30 fps. True if
+    one is plugged in. quiet: don't warn when there is none."""
     _, out = pi.run(r"""
 set +e
 DEV=""
@@ -532,8 +566,9 @@ fi
 """, check=False, timeout=60)
     dev = next((line.split("=", 1)[1] for line in out.splitlines() if line.startswith("DEV=")), "")
     if not dev:
-        warn("No USB camera found. Plug the webcam into the Pi — the drone service picks it up by itself, no restart needed.")
-        return
+        if not quiet:
+            warn("No USB camera found. Plug the webcam into the Pi — the drone service picks it up by itself, no restart needed.")
+        return False
     name = next((line.split(":", 1)[1].strip() for line in out.splitlines() if "Card type" in line), dev)
     ok(f"USB camera found: {name} ({dev})")
     mjpg_720_30 = False
@@ -554,6 +589,7 @@ fi
     else:
         warn("This camera doesn't offer MJPEG at 1280x720 / 30 fps. The drone will fall back to encoding on the Pi "
              "(heavier, maybe fewer fps) or to 640x480. A webcam with MJPEG 720p30 is recommended.")
+    return True
 
 
 def step_service(pi, ctx):
@@ -679,7 +715,8 @@ def step_verify(pi, ctx, label="Checking the drone backend"):
     if cam and cam.get("camera_connected"):
         fps, res = cam.get("measured_fps", 0), cam.get("resolution")
         (ok if res == "1280x720" and fps >= 24 else warn)(
-            f"Camera streaming: {res} at {fps} fps via {cam.get('pipeline')}")
+            f"Camera streaming: {CAMERA_LABEL.get(cam.get('source'), cam.get('source'))}, {res} at {fps} fps "
+            f"via {cam.get('pipeline')}")
         ctx["camera_ok"] = True
     else:
         why = (cam or {}).get("last_error") or (cam or {}).get("status_text") or "no frames yet"
@@ -793,6 +830,15 @@ def print_address(ctx):
     say("then press  Test connection  →  Save & reconnect.")
 
 
+def ask_camera(current="auto"):
+    say("Which camera is on the drone?")
+    say("  1) Find it automatically: USB webcam if plugged in, else the Pi camera module   [recommended]")
+    say("  2) USB webcam only   (best: one with MJPEG 1280x720 at 30 fps)")
+    say("  3) Raspberry Pi camera module only (ribbon cable)")
+    default = {"usb": "2", "csi": "3"}.get(current, "1")
+    return {"2": "usb", "3": "csi"}.get(ask("Choose 1, 2 or 3", default).strip(), "auto")
+
+
 def action_setup(pi, ctx):
     say("")
     say("How is the Pixhawk connected to the Pi?")
@@ -804,12 +850,7 @@ def action_setup(pi, ctx):
                    "3": {"prefer": "auto", "label": "auto: USB if plugged in, else TELEM2"}}.get(
         choice, {"prefer": "telem2", "label": "TELEM2 → GPIO serial (/dev/serial0, 57600)"})
     say("")
-    say("Which camera is on the drone?")
-    say("  1) USB webcam   [recommended: one with MJPEG 1280x720 at 30 fps]")
-    say("  2) Raspberry Pi camera module (ribbon cable)")
-    say("  3) Not sure — find it automatically")
-    cam = ask("Choose 1, 2 or 3", "1")
-    ctx["camera"] = {"2": "csi", "3": "auto"}.get(cam, "usb")
+    ctx["camera"] = ask_camera("auto")
     say("")
     say("NetBird lets the VARUNA app reach the drone from anywhere (optional).", "dim")
     say("Paste a setup key from app.netbird.io → Setup Keys, or press Enter to skip.", "dim")
@@ -970,7 +1011,7 @@ def action_reboot(pi, ctx):
 def step_reboot(pi, ctx):
     if not ctx.get("reboot"):
         return
-    if not ask_yes("  The serial port change needs a reboot of the Pi. Reboot now?", True):
+    if not ask_yes("  The serial port or camera module change needs a reboot of the Pi. Reboot now?", True):
         warn("Remember to reboot the Pi before the first mission (menu 7, or sudo reboot).")
         return
     _reboot_and_wait(pi, ctx)
@@ -1029,6 +1070,44 @@ def action_camera_test(pi, ctx):
         os.startfile(str(path))   # opens it in the Photos app
     except (AttributeError, OSError):
         pass
+
+
+def action_camera(pi, ctx):
+    """Choose the drone camera (auto-detect / USB webcam / camera module), set it
+    up, restart the service and show which camera is streaming."""
+    if not ctx.get("installed"):
+        warn("The drone backend isn't installed on this Pi yet — run 1) Full setup first.")
+        return
+    cam = _drone_api(pi, "/api/camera/status") or {}
+    current = cam.get("camera_source") or _config_value(pi, ctx, "camera_source") or "auto"
+    say(f"Now: {CAMERA_LABEL.get(current, current)}"
+        + (f"   ·   streaming from the {CAMERA_LABEL.get(cam.get('source'), cam.get('source'))}"
+           if cam.get("camera_connected") else ""))
+    avail = cam.get("available") or {}
+    if avail:
+        say(f"  The Pi sees: USB webcam {'✔ ' + avail['usb'] if avail.get('usb') else '✘'}"
+            f"   ·   camera module {'✔' if avail.get('csi') else '✘ (or not checked yet)'}", "dim")
+    say("")
+    ctx["camera"] = ask_camera(current)
+    _patch_config(pi, ctx, {"camera_source": ctx["camera"]})
+    ok(f"Camera set to: {CAMERA_LABEL[ctx['camera']]} (drone_config.json)")
+    step_camera(pi, ctx)
+    if ctx.get("reboot"):
+        step_reboot(pi, ctx)
+        if ctx.get("reboot"):
+            return
+    else:
+        pi.run(f"systemctl restart {SERVICE}", sudo=True, timeout=120)
+        step_verify(pi, ctx, "Checking the camera")
+
+
+def _config_value(pi, ctx, key):
+    app = shlex.quote(ctx["app"])
+    _, out = pi.run(f"cat {app}/drone_config.json 2>/dev/null || true", check=False)
+    try:
+        return json.loads(out).get(key)
+    except ValueError:
+        return None
 
 
 def _find_web_dist():
@@ -1249,6 +1328,7 @@ MENU = [
     ("10", "Put the VARUNA web app on the Pi (optional)", action_webapp),
     ("11", "Find the Pixhawk (fix the link automatically)", action_find_pixhawk),
     ("12", "Keyboard flight: limits and Pixhawk failsafes", action_keyboard),
+    ("13", "Camera: auto-detect, USB webcam or Pi camera module", action_camera),
     ("0", "Exit", None),
 ]
 

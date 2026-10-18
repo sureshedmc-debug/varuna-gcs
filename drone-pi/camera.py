@@ -12,6 +12,11 @@ out of a Raspberry Pi 3:
     MJPEG at 1280x720/30.
   * test → a generated test picture (laptop testing / no camera).
 
+camera_source "auto" (the default) uses whichever camera is there: the USB
+webcam if one is plugged in, else the camera module. If the one in use fails
+or is unplugged it switches to the other by itself, and changing
+camera_source live (System → Live tuning in the app) restarts the capture.
+
 The process's output is a stream of JPEGs; each frame is cut out at its start
 (FFD8) and end (FFD9) markers. The latest frame is kept for /video_feed (all
 viewers) and /api/camera/snapshot. If the process dies (camera unplugged), it
@@ -31,6 +36,8 @@ log = logging.getLogger("drone.camera")
 
 SOI, EOI = b"\xff\xd8", b"\xff\xd9"
 STALL_S = 10          # restart a capture process that sends nothing for this long
+CSI_CHECK_S = 30      # how long a "camera module there or not" answer is trusted
+FAILED_SKIP_S = 60    # auto: after a camera fails every setting, prefer the other one this long
 
 # Standard JPEG Huffman tables (ITU-T T.81, Annex K.3). Many USB webcams leave
 # them out of their MJPEG frames ("AVI1" style); browsers usually cope, but
@@ -104,15 +111,24 @@ def find_csi_tool():
     return None
 
 
-def csi_camera_present():
+_csi_cache = {"at": 0.0, "present": None}
+
+
+def csi_camera_present(max_age=CSI_CHECK_S):
+    """True if a camera module is connected. Asking means starting rpicam-hello,
+    so the answer is reused for max_age seconds."""
+    if _csi_cache["present"] is not None and time.time() - _csi_cache["at"] < max_age:
+        return _csi_cache["present"]
+    present = False
     hello = shutil.which("rpicam-hello") or shutil.which("libcamera-hello")
-    if not hello:
-        return False
-    try:
-        out = subprocess.run([hello, "--list-cameras"], capture_output=True, text=True, timeout=15)
-        return "Available cameras" in out.stdout and "No cameras available" not in out.stdout
-    except (OSError, subprocess.SubprocessError):
-        return False
+    if hello:
+        try:
+            out = subprocess.run([hello, "--list-cameras"], capture_output=True, text=True, timeout=15)
+            present = "Available cameras" in out.stdout and "No cameras available" not in out.stdout
+        except (OSError, subprocess.SubprocessError):
+            present = False
+    _csi_cache.update(at=time.time(), present=present)
+    return present
 
 
 class CameraManager:
@@ -133,12 +149,13 @@ class CameraManager:
         self.pipeline = None
         self.resolution = None
         self.started_at = None
+        self._setting = None       # camera_source the running capture was started for
+        self._failed_at = {}       # source → when every setting of it last failed
 
     # ------------------------------------------------------------------ lifecycle
     def start(self):
-        if self.cfg["camera_source"] == "off":
-            self.status_text = "OFF"
-            return
+        # The thread runs even when the camera is "off", so turning it on from
+        # the app later needs no restart.
         self._thread = threading.Thread(target=self._run, name="camera", daemon=True)
         self._thread.start()
 
@@ -172,11 +189,8 @@ class CameraManager:
         qv = str(max(2, min(31, round(31 - q * 0.29))))
         source = self.cfg["camera_source"]
         if source == "auto":
-            if find_usb_camera():
-                source = "usb"
-            elif find_csi_tool() and csi_camera_present():
-                source = "csi"
-            else:
+            source = self._auto_source()
+            if not source:
                 return "none", None, []
         if source == "test":
             return "test", "testsrc", [
@@ -212,15 +226,39 @@ class CameraManager:
              v4l + ["-video_size", "640x480", "-i", dev, "-c:v", "mjpeg", "-q:v", qv] + out),
         ]
 
+    def _auto_source(self):
+        """auto: the USB webcam if one is plugged in, else the camera module. A
+        camera that just failed every setting goes behind the other one."""
+        usb = bool(find_usb_camera())
+        csi = bool(find_csi_tool()) and csi_camera_present()
+        order = ["usb", "csi"]
+        if usb and csi and time.time() - self._failed_at.get("usb", 0.0) < FAILED_SKIP_S:
+            order.reverse()
+        for source in order:
+            if usb if source == "usb" else csi:
+                return source
+        return None
+
     def _run(self):
         attempt_index = 0
+        last = None
         while not self._stop.is_set():
+            setting = self.cfg["camera_source"]
+            self._setting = setting
+            if setting == "off":
+                self.source = self.device = self.pipeline = self.resolution = None
+                self.status_text = "OFF"
+                self.last_error = "The camera is turned off (camera_source = off)."
+                self._stop.wait(2)
+                continue
             source, device, attempts = self._attempts()
+            if (setting, source) != last:          # another camera: start from its best setting
+                attempt_index, last = 0, (setting, source)
             self.source, self.device = source, device
             if not attempts:
                 self.status_text = "NO CAMERA"
                 self.last_error = {
-                    "none": "No camera found. Plug in the USB webcam (or connect the camera module) — it is picked up automatically.",
+                    "none": "No camera found. Plug in a USB webcam or connect the Pi camera module — whichever is there is used automatically.",
                     "csi": "rpicam-vid / libcamera-vid is not installed, or no camera module is connected.",
                     "usb": "No USB camera found.",
                 }.get(source, "No camera found.")
@@ -230,13 +268,22 @@ class CameraManager:
             ok = self._capture(name, res, cmd)
             if self._stop.is_set():
                 break
+            if self._setting_changed():
+                continue                           # camera_source changed in the app
             if not ok:
                 attempt_index += 1                 # this setting doesn't work: try the next one
                 if attempt_index % len(attempts) == 0:
+                    self._failed_at[source] = time.time()
+                    if source == "csi":
+                        _csi_cache["present"] = None   # re-check: maybe it was unplugged
                     self.status_text = "ERROR"
                     self._stop.wait(5)             # all failed: wait, then start over
             else:
-                self._stop.wait(2)                 # it was streaming and stopped: retry the same
+                _csi_cache["present"] = None       # it was streaming and stopped: re-check, retry
+                self._stop.wait(2)
+
+    def _setting_changed(self):
+        return self.cfg["camera_source"] != self._setting
 
     def _capture(self, name, res, cmd):
         """Run one capture process until it ends. True if it produced frames."""
@@ -295,6 +342,13 @@ class CameraManager:
         _capture's blocking read returns and the camera is restarted."""
         while proc.poll() is None and not self._stop.is_set():
             time.sleep(1)
+            if self._setting_changed():
+                log.info("Camera: camera_source changed to %s — switching", self.cfg["camera_source"])
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                return
             last = self._stamps[-1] if self._stamps else 0.0
             if time.time() - max(last, self.started_at or 0.0) > STALL_S:
                 log.warning("Camera: no frames for %d s — restarting the capture", STALL_S)
@@ -352,6 +406,10 @@ class CameraManager:
         # right after starting doesn't read as double the real rate.
         return round((len(st) - 1) / max(st[-1] - st[0], 1.0), 1)
 
+    def available(self):
+        """Cameras the Pi can see right now (the camera-module answer is the cached one)."""
+        return {"usb": find_usb_camera(), "csi": bool(_csi_cache["present"])}
+
     def get_status(self):
         connected = bool(self.connected)
         return {
@@ -361,8 +419,10 @@ class CameraManager:
             "target": f"{self.cfg['camera_width']}x{self.cfg['camera_height']} @ {self.cfg['camera_fps']} fps",
             "resolution": self.resolution,
             "pipeline": self.pipeline,
+            "camera_source": self.cfg["camera_source"],
             "source": self.source,
             "device": self.device,
+            "available": self.available(),
             "frames_captured": self.frames_captured,
             "frame_bytes": len(self.frame) if self.frame else 0,
             "last_error": None if connected else self.last_error,

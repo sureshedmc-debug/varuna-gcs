@@ -5,7 +5,7 @@
   "telem2_device": "/dev/serial0",
   "telem2_baud": 57600,
   "http_port": 8000,
-  "camera_source": "usb",
+  "camera_source": "auto",
   "camera_device": "auto",
   "camera_width": 1280,
   "camera_height": 720,

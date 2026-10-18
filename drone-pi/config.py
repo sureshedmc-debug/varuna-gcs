@@ -61,6 +61,9 @@ DEFAULTS = {
 
 # Live-tunable settings, shown in the app as sliders / fields.
 TUNABLE = {
+    "camera_source": {"type": "str", "options": ["auto", "usb", "csi", "off"],
+                      "description": "Which camera: auto (USB webcam if plugged in, else the Pi camera module), "
+                                     "usb, csi (Pi camera module) or off. Switches straight away."},
     "stream_fps": {"type": "int", "min": 1, "max": 30,
                    "description": "Video frames per second sent to the app (lower it on a weak link)."},
     "takeoff_alt_m": {"type": "float", "min": 2, "max": 50,

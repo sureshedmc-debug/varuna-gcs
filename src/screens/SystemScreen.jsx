@@ -305,6 +305,12 @@ function TuningPanel() {
                   value={Number(val) || 0}
                   onChange={(e) => setDraft((d) => ({ ...d, [key]: m.type === 'int' ? parseInt(e.target.value) : parseFloat(e.target.value) }))}
                   className="w-full accent-accent" />
+              ) : Array.isArray(m.options) ? (
+                <select value={val ?? ''}
+                  onChange={(e) => setDraft((d) => ({ ...d, [key]: e.target.value }))}
+                  className="inp w-full px-2 py-1 font-mono text-sm">
+                  {m.options.map((o) => <option key={o} value={o}>{o}</option>)}
+                </select>
               ) : (
                 <input value={val ?? ''}
                   onChange={(e) => setDraft((d) => ({ ...d, [key]: isNum ? Number(e.target.value) : e.target.value }))}
@@ -510,6 +516,16 @@ function Section({ title, children, right }) {
   )
 }
 
+// The drone Pi's camera_source / source values, as the operator calls them.
+const CAMERA_NAMES = {
+  auto: 'Auto-detect',
+  usb: 'USB webcam',
+  csi: 'Pi camera module',
+  test: 'Test picture',
+  off: 'Off',
+  none: 'None found',
+}
+
 // ── Main screen ───────────────────────────────────────────────────────────────
 export default function SystemScreen() {
   const { pi, health } = useSystem()
@@ -532,7 +548,7 @@ export default function SystemScreen() {
       {/* ── Health lights — 2×2 grid ── */}
       <div className="grid gap-3 sm:grid-cols-2">
         <HealthLight label="Pixhawk (flight controller)" ok={pixhawk} icon="🧭" />
-        <HealthLight label="Camera (USB webcam)"         ok={camOk}   icon="📷" />
+        <HealthLight label="Camera"                      ok={camOk}   icon="📷" />
         <HealthLight label="Boat Pi (link)"              ok={boat.reachable} icon="🚤" />
         <HealthLight label="Boat Pixhawk"                ok={boat.reachable === true ? boat.fcConnected : boat.reachable === false ? false : undefined} icon="⚓" />
       </div>
@@ -598,6 +614,8 @@ export default function SystemScreen() {
             <Field label="Measured FPS" value={num(pick(cam.data, ['measured_fps']), 1)} />
             <Field label="Resolution"   value={pick(cam.data, ['resolution']) || '—'} mono={false} />
             <Field label="Frames"       value={num(pick(cam.data, ['frames_captured']), 0)} />
+            <Field label="Camera"       value={CAMERA_NAMES[pick(cam.data, ['source'])] || '—'} mono={false} />
+            <Field label="Choice"       value={CAMERA_NAMES[pick(cam.data, ['camera_source'])] || '—'} mono={false} />
           </div>
           {pick(cam.data, ['last_error']) && <div className="mt-2 text-xs text-warn">{cam.data.last_error}</div>}
         </Section>
