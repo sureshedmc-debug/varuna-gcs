@@ -11,3 +11,7 @@ desktop.ini
 
 # Desktop app (electron-builder output)
 release/
+
+# Local editor settings and unpacked desktop-app builds
+.idea/
+/VARUNA GCS/
