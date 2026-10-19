@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { api } from '../api/client'
 import { num, DASH } from '../lib/format'
 import { StatusOrb } from './ui'
+import StreamImg from './StreamImg'
 
 // Classic FPV tape gauge — column of tick values centred on the current reading.
 function Tape({ label, value, unit, align = 'left', step = 5 }) {
@@ -155,7 +156,7 @@ export default function VideoHUD({ speed, altitude, heading, aiOn, fill = false 
       className={`relative overflow-hidden bg-[#0A0E18] ${fill ? 'h-full w-full rounded-2xl' : 'aspect-video w-full rounded-xl'}`}
     >
       {!failed ? (
-        <img
+        <StreamImg
           src={api.streamUrl()}
           alt="Live drone feed"
           className="h-full w-full object-cover"

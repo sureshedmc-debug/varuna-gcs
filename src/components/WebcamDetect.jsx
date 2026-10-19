@@ -17,6 +17,7 @@ import { fmtLength, getFovSettings, metersPerPixel, pixelBoxToRealSize, summariz
 import { projectBoxes } from '../lib/geoProject'
 import { getAlertSettings } from '../lib/alertSettings'
 import { sendBigDumpEmail } from '../lib/alerts/email'
+import { releaseStream } from './StreamImg'
 import {
   createLearner, boxFeatures, cropInfo, saveFeedback, deleteFeedback, feedbackCount, clearFeedback, exportFeedback,
   learnerEnabled, setLearnerEnabled, showFilteredEnabled, setShowFilteredEnabled,
@@ -222,6 +223,9 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
 
   useEffect(() => {
     let alive = true
+    // Read now: React clears the ref before the cleanup below runs, and an
+    // MJPEG <img> that is only removed keeps streaming (see StreamImg).
+    const streamImg = streamImgRef.current
     ;(async () => {
       try {
         let d
@@ -272,7 +276,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
           : 'Failed to load model: ' + raw)
       }
     })()
-    return () => { alive=false; stop(); detRef.current?.dispose(); faceDetRef.current?.dispose(); personDetRef.current?.dispose() }
+    return () => { alive=false; stop(); releaseStream(streamImg); detRef.current?.dispose(); faceDetRef.current?.dispose(); personDetRef.current?.dispose() }
   }, [defaultSource, autoStart])
 
   function fitCanvas() { const cv=canvasRef.current; if(!cv) return; const r=cv.getBoundingClientRect(); cv.width=Math.max(2,Math.round(r.width)); cv.height=Math.max(2,Math.round(r.height)) }
@@ -625,7 +629,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
     runningRef.current=false; cancelAnimationFrame(rafRef.current)
     stopMissionRecording()
     const v=videoRef.current; if(v?.srcObject){v.srcObject.getTracks().forEach(t=>t.stop());v.srcObject=null}
-    if(streamImgRef.current)streamImgRef.current.src=''
+    releaseStream(streamImgRef.current)
     srcElRef.current=null; boxesRef.current=[]; tileBoxesRef.current.clear()
     tileGridRef.current=null; activeTileRef.current=null; trackerRef.current.reset()
     answeredRef.current.clear(); xformRef.current=null; mppRef.current=null; setAsk(null)
