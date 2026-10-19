@@ -150,7 +150,8 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
   const [fps,    setFps]                  = useState(0)
   const [count,  setCount]                = useState(0)
   const [facing, setFacing]               = useState('environment')
-  const [source, setSource]               = useState(defaultSource)
+  // 'auto' = the drone's camera when it is streaming, else the laptop webcam.
+  const [source, setSource]               = useState(defaultSource === 'auto' ? 'webcam' : defaultSource)
   const [longRange,        setLongRange]        = useState(false)
   const [gridSize,         setGridSize]         = useState(2)
   const [humanDetection,   setHumanDetection]   = useState(true)
@@ -252,7 +253,12 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
           personDetRef.current = pd; setEp(d.ep + '+face+person')
         } catch (pe) { console.warn('[person] load failed:', pe) }
         setStatus('ready')
-        if (autoStart) start(defaultSource)
+        if (autoStart) {
+          const first = defaultSource === 'auto' ? await pickSource() : defaultSource
+          if (!alive) return
+          setSource(first)
+          start(first)
+        }
       } catch (e) {
         if (!alive) return
         // "memory access out of bounds" is a WASM trap. Once the shared
@@ -591,10 +597,21 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
       setTimeout(()=>{if(img.naturalWidth){srcElRef.current=img;resolve()}},1500)
     })
   }
+  /** The drone's camera if it is streaming, else the laptop webcam. */
+  async function pickSource(){
+    try{const r=await api.cameraStatus();return r?.camera_connected?'drone':'webcam'}catch{return 'webcam'}
+  }
   async function start(src=source,f=facing){
     if(!detRef.current) return
     try{
-      if(src==='webcam')await startWebcam(f); else await startStream()
+      if(src==='webcam'){
+        try{await startWebcam(f)}
+        catch(e){
+          // No laptop camera (or no permission): use the drone's if it is streaming.
+          if(defaultSource!=='auto'||(await pickSource())!=='drone')throw e
+          src='drone';setSource('drone');await startStream()
+        }
+      } else await startStream()
       fitCanvas(); runningRef.current=true; setStatus('running'); draw(); detectLoop()
       // Record the whole mission (the boxed view, exactly what the operator saw)
       // from Start to Stop, so a full video — not just still detections — is
@@ -614,7 +631,15 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
     answeredRef.current.clear(); xformRef.current=null; mppRef.current=null; setAsk(null)
     emaRef.current=60; gridSizeRef.current=2; setStatus(s=>s==='running'?'ready':s)
   }
-  async function switchSource(next){if(next===source)return;const was=runningRef.current;stop();setSource(next);if(was)await start(next)}
+  async function switchSource(next){
+    if(next===source)return
+    // Start the new source if the old one was running, or if this view starts by
+    // itself (a failed webcam must not leave the drone feed waiting for Start).
+    const go=runningRef.current||autoStart
+    stop();setSource(next)
+    if(detRef.current){setStatus(s=>s==='error'?'ready':s);setMsg('')}
+    if(go)await start(next)
+  }
   async function flip(){const next=facing==='environment'?'user':'environment';setFacing(next);if(runningRef.current&&source==='webcam'){stop();await start('webcam',next)}}
 
   async function getSaveFolder(){

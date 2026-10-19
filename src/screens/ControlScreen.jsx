@@ -90,6 +90,8 @@ export default function ControlScreen() {
   const t = readT(telemetry.data)
   const connected = telemetry.status === 'live' || telemetry.status === 'polling'
   const real = connected && !simulated && t.fc !== false
+  // The camera hangs off the Pi, not the Pixhawk: show it whenever the Pi answers.
+  const piUp = connected && !simulated
   const flying = !!t.armed && Number(t.alt) > 1
   const kbActive = real && !!t.kb?.active
   const [busy, setBusy] = useState(null)
@@ -161,14 +163,14 @@ export default function ControlScreen() {
 
       {/* ── Plain live view (no detection) ── */}
       <div className="absolute inset-0 z-0 overflow-hidden rounded-2xl border border-line" style={{ background: '#05070B' }}>
-        {real && videoOk ? (
+        {piUp && videoOk ? (
           <img src={api.streamUrl()} alt="Drone camera" className="h-full w-full object-contain"
             onError={() => setVideoOk(false)} onLoad={() => setVideoOk(true)} />
         ) : (
           <div className="flex h-full w-full flex-col items-center justify-center gap-2 text-center text-sm text-muted">
             <span className="text-3xl">📡</span>
-            {simulated ? 'Simulator — no camera. Connect the drone to see its live view.' : real ? 'No video from the drone camera.' : 'Drone not connected.'}
-            {real && !videoOk && <button className="text-[12px] font-semibold text-accent" onClick={() => setVideoOk(true)}>Retry video</button>}
+            {simulated ? 'Simulator — no camera. Connect the drone to see its live view.' : piUp ? 'No video from the drone camera.' : 'Drone not connected.'}
+            {piUp && !videoOk && <button className="text-[12px] font-semibold text-accent" onClick={() => setVideoOk(true)}>Retry video</button>}
           </div>
         )}
       </div>

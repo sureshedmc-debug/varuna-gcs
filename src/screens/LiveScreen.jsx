@@ -134,7 +134,7 @@ export default function LiveScreen() {
             {/* The feed stays mounted under the map, so detection keeps running in Map view
                 and new plastic keeps appearing on the map. */}
             <Suspense fallback={<div className="flex h-full w-full items-center justify-center text-sm text-muted">Loading feed…</div>}>
-              <WebcamDetect confThr={conf} defaultSource="webcam" autoStart controlsLift={hideWidgets ? 0 : 135} />
+              <WebcamDetect confThr={conf} defaultSource="auto" autoStart controlsLift={hideWidgets ? 0 : 135} />
             </Suspense>
             {mainView === 'map' && (
               <div className="absolute inset-0 z-10">
