@@ -15,7 +15,8 @@ out of a Raspberry Pi 3:
 camera_source "auto" (the default) uses whichever camera is there: the USB
 webcam if one is plugged in, else the camera module. If the one in use fails
 or is unplugged it switches to the other by itself, and changing
-camera_source live (System → Live tuning in the app) restarts the capture.
+camera_source or camera_quality live (System → Live tuning in the app)
+restarts the capture with the new setting.
 
 The process's output is a stream of JPEGs; each frame is cut out at its start
 (FFD8) and end (FFD9) markers. The latest frame is kept for /video_feed (all
@@ -149,7 +150,7 @@ class CameraManager:
         self.pipeline = None
         self.resolution = None
         self.started_at = None
-        self._setting = None       # camera_source the running capture was started for
+        self._setting = None       # (camera_source, camera_quality) the capture was started with
         self._failed_at = {}       # source → when every setting of it last failed
 
     # ------------------------------------------------------------------ lifecycle
@@ -244,7 +245,7 @@ class CameraManager:
         last = None
         while not self._stop.is_set():
             setting = self.cfg["camera_source"]
-            self._setting = setting
+            self._setting = self._setting_key()
             if setting == "off":
                 self.source = self.device = self.pipeline = self.resolution = None
                 self.status_text = "OFF"
@@ -269,7 +270,7 @@ class CameraManager:
             if self._stop.is_set():
                 break
             if self._setting_changed():
-                continue                           # camera_source changed in the app
+                continue                           # camera choice or quality changed in the app
             if not ok:
                 attempt_index += 1                 # this setting doesn't work: try the next one
                 if attempt_index % len(attempts) == 0:
@@ -282,8 +283,11 @@ class CameraManager:
                 _csi_cache["present"] = None       # it was streaming and stopped: re-check, retry
                 self._stop.wait(2)
 
+    def _setting_key(self):
+        return self.cfg["camera_source"], self.cfg["camera_quality"]
+
     def _setting_changed(self):
-        return self.cfg["camera_source"] != self._setting
+        return self._setting_key() != self._setting
 
     def _capture(self, name, res, cmd):
         """Run one capture process until it ends. True if it produced frames."""
@@ -343,7 +347,7 @@ class CameraManager:
         while proc.poll() is None and not self._stop.is_set():
             time.sleep(1)
             if self._setting_changed():
-                log.info("Camera: camera_source changed to %s — switching", self.cfg["camera_source"])
+                log.info("Camera: settings changed to %s / quality %s — restarting the capture", *self._setting_key())
                 try:
                     proc.kill()
                 except Exception:

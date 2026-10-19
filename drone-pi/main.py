@@ -21,6 +21,7 @@ import asyncio
 import json
 import logging
 import os
+import socket
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -613,7 +614,30 @@ def main():
     port = args.port or cfg["http_port"]
     os.environ["DRONE_CLI_PORT"] = str(port)
     import uvicorn
-    uvicorn.run("main:app", host=args.host, port=port, log_level="info")
+    # An open /video_feed never ends by itself, so without a limit a restart
+    # waits for every viewer to leave (systemd kills it only after 90 s).
+    server = uvicorn.Server(uvicorn.Config("main:app", host=args.host, port=port, log_level="info",
+                                           timeout_graceful_shutdown=3))
+    server.run(sockets=[listen_socket(args.host, port)])
+
+
+# Linux lets a connection queue up to 4 MB of unsent data. On the drone's Wi-Fi
+# (a few Mbit/s) that is many seconds of old video waiting to go out: the live
+# view falls further and further behind. A small send buffer keeps at most a
+# couple of frames in flight, so the stream skips stale frames instead and stays
+# live. Connections accepted from this socket inherit it. Small API replies
+# don't notice.
+SEND_BUFFER = 64 * 1024
+
+
+def listen_socket(host, port):
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    sock = socket.socket(family, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, SEND_BUFFER)
+    sock.bind((host, port))
+    sock.listen(128)
+    return sock
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")

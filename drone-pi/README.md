@@ -50,7 +50,7 @@ With `camera_source` = `auto` (the default) the drone uses whichever camera is c
 
 If the camera can't do 720p30, the backend falls back by itself: first to encoding on the Pi, then to 640×480. System → Camera in the app shows the real resolution and fps.
 
-Video at 720p30 needs about **8–25 Mbit/s** to the laptop. On a weak link, lower **stream_fps** in System → Live tuning; the camera keeps running at 30 fps.
+Video at 720p, 15 fps and quality 55 needs about **4 Mbit/s** to the laptop. On a weak link, lower **stream_fps** or **camera_quality** in System → Live tuning; the camera keeps running at 30 fps.
 
 ## Pixhawk (ArduCopter) settings
 
@@ -157,7 +157,7 @@ The tool writes this file. You can also edit it, or set `DRONE_<KEY>` environmen
 | `link_prefer` | `auto` | `usb`, `telem2`, or `auto` (USB if plugged in, else TELEM2). The app can also change it (System → Advanced). |
 | `camera_source` | `auto` | `auto` (USB webcam if plugged in, else Pi camera module), `usb`, `csi`, `test` or `off` (live) |
 | `camera_width/height/fps` | 1280/720/30 | Capture size and rate |
-| `stream_fps` | 30 | Frames per second sent to the app (live) |
+| `stream_fps` | 15 | Frames per second sent to the app (live) |
 | `takeoff_alt_m` | 10 | Default take-off height (live) |
 | `max_altitude_m` | 120 | Highest take-off or waypoint allowed (live) |
 | `loiter_time_s` | 10 | Hover time at "loiter" waypoints (live) |

@@ -36,10 +36,10 @@ DEFAULTS = {
     "camera_width": 1280,
     "camera_height": 720,
     "camera_fps": 30,
-    "camera_quality": 80,             # JPEG quality when the Pi has to encode (CSI / fallback)
+    "camera_quality": 55,             # JPEG quality when the Pi has to encode (CSI / fallback); ~33 KB frames at 720p
     "ffmpeg_path": "ffmpeg",
     # ---- Flight safety (live-tunable)
-    "stream_fps": 30,
+    "stream_fps": 15,                 # 15 x ~33 KB fits ordinary Wi-Fi; more piles up delay
     "takeoff_alt_m": 10,
     "max_altitude_m": 120,
     "loiter_time_s": 10,
@@ -64,6 +64,9 @@ TUNABLE = {
     "camera_source": {"type": "str", "options": ["auto", "usb", "csi", "off"],
                       "description": "Which camera: auto (USB webcam if plugged in, else the Pi camera module), "
                                      "usb, csi (Pi camera module) or off. Switches straight away."},
+    "camera_quality": {"type": "int", "min": 30, "max": 95,
+                       "description": "Video picture quality (JPEG). Lower = smaller frames: smoother, less delay on "
+                                      "weak Wi-Fi. Applies to the Pi camera module (and webcams the Pi has to encode)."},
     "stream_fps": {"type": "int", "min": 1, "max": 30,
                    "description": "Video frames per second sent to the app (lower it on a weak link)."},
     "takeoff_alt_m": {"type": "float", "min": 2, "max": 50,
