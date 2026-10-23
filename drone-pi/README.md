@@ -30,7 +30,7 @@ When it's done, it prints the address for the app: System → Connection.
 The same tool can also:
 - **9) Camera test** — takes a picture with the drone camera and opens it on the laptop
 - **13) Camera** — switch between auto-detect, USB webcam and Pi camera module; it sets up the camera module too
-- update the code (this also switches the camera to auto-detect: USB webcam or Pi camera module)
+- update the code (this also switches the camera to auto-detect: USB webcam or Pi camera module, and turns the Pi's Wi-Fi power saving off)
 - show status and live logs
 - restart the service
 - open an SSH terminal
@@ -50,7 +50,7 @@ With `camera_source` = `auto` (the default) the drone uses whichever camera is c
 
 If the camera can't do 720p30, the backend falls back by itself: first to encoding on the Pi, then to 640×480. System → Camera in the app shows the real resolution and fps.
 
-Video at 720p, 15 fps and quality 55 needs about **4 Mbit/s** to the laptop. On a weak link, lower **stream_fps** or **camera_quality** in System → Live tuning; the camera keeps running at 30 fps.
+Video at 720p, 15 fps and quality 55 needs about **4 Mbit/s** to the laptop. On a weak link, lower **stream_fps** or **camera_quality** in System → Live tuning; the camera keeps running at 30 fps. The setup tool turns the Pi's Wi-Fi power saving off (it makes the video stall); the Pi 3B+ also streams more smoothly on 5 GHz Wi-Fi than on 2.4 GHz.
 
 ## Pixhawk (ArduCopter) settings
 

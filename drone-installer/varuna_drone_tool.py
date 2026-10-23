@@ -872,6 +872,7 @@ def action_setup(pi, ctx):
         ("Writing the Pixhawk and camera settings", lambda: step_config(pi, ctx)),
         ("Setting up the serial port for the Pixhawk", lambda: step_uart(pi, ctx)),
         ("Setting up the camera", lambda: step_camera(pi, ctx)),
+        ("Wi-Fi: power saving off (smooth video)", lambda: step_wifi_powersave(pi, ctx)),
         ("Installing the drone service", lambda: step_service(pi, ctx)),
         ("NetBird", lambda: step_netbird(pi, ctx)),
         ("Checking everything works", lambda: step_verify(pi, ctx)),
@@ -912,12 +913,61 @@ def action_update(pi, ctx):
         ("Copying the latest drone backend", lambda: step_copy(pi, ctx)),
         ("Checking the Python libraries", libs),
         ("Camera: auto-detect (USB webcam or Pi camera module)", lambda: step_camera_auto(pi, ctx)),
+        ("Wi-Fi: power saving off (smooth video)", lambda: step_wifi_powersave(pi, ctx)),
         ("Restarting the drone service", restart),
         ("Checking it works", lambda: step_verify(pi, ctx)),
         ("Finishing", lambda: step_reboot(pi, ctx)),
     ])
     say("")
     ok("Drone code updated.")
+
+
+def step_wifi_powersave(pi, ctx):
+    """Keep the Pi's Wi-Fi awake. With power saving on (the Pi's default) the radio
+    dozes between packets: the video stalls for seconds and commands answer late."""
+    _, out = pi.run(f"""
+set +e
+export PATH="$PATH:/usr/sbin:/sbin" DEBIAN_FRONTEND=noninteractive
+command -v iw >/dev/null 2>&1 || apt-get -o DPkg::Lock::Timeout=600 install -y iw >/dev/null 2>&1
+R={ROOT}
+if [ -d "$R/etc/NetworkManager/conf.d" ]; then
+  # Every Wi-Fi network, now and later (2 = power saving off).
+  printf '[connection]\\nwifi.powersave = 2\\n' > "$R/etc/NetworkManager/conf.d/varuna-wifi-powersave.conf"
+  echo HOW=nm
+else
+  # No NetworkManager: turn it off at every boot instead.
+  cat > "$R/etc/systemd/system/varuna-wifi-powersave.service" <<'EOF'
+[Unit]
+Description=VARUNA: keep the Wi-Fi awake (power saving off)
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'for d in /sys/class/net/*/wireless; do d=$${{d%/wireless}}; iw dev $${{d##*/}} set power_save off; done'
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  [ -z "$R" ] && systemctl daemon-reload && systemctl enable varuna-wifi-powersave.service >/dev/null 2>&1
+  echo HOW=service
+fi
+# And straight away, without dropping the connection.
+for d in /sys/class/net/*/wireless; do
+  [ -e "$d" ] || continue
+  dev=$(basename "$(dirname "$d")")
+  iw dev "$dev" set power_save off 2>&1
+  echo "STATE $dev $(iw dev "$dev" get power_save 2>&1)"
+done
+""", sudo=True, timeout=60)
+    states = [line.split(" ", 2)[1:] for line in out.splitlines() if line.startswith("STATE ")]
+    if not states:
+        ok("No Wi-Fi on this Pi — nothing to change")
+        return
+    for dev, state in states:
+        if "off" in state.lower():
+            ok(f"Wi-Fi power saving off on {dev} (smoother video, quicker commands) — stays off after reboots")
+        else:
+            warn(f"Could not turn Wi-Fi power saving off on {dev} now ({state.strip()}); it goes off after a reboot")
 
 
 def step_camera_auto(pi, ctx):
