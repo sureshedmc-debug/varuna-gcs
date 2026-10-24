@@ -468,6 +468,9 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
     while(runningRef.current&&detRef.current&&srcElRef.current){
       const tickStart=performance.now()
       const loopFrame={} // the person filter shares one COCO model pass per loop
+      // The drone's pose when this picture was taken (H.264 from the drone Pi):
+      // the detections are placed from it, not from telemetry that arrived later.
+      const shot=srcElRef.current===streamCanvasRef.current?h264Ref.current?.frame():null
       let faceBoxes=[], personBoxes=[], trashBoxes=[]
       if(trashDetectionRef.current){
         try { trashBoxes=await detRef.current.detect(srcElRef.current,{confThr:Math.max(DETECT_CONF_FLOOR,confRef.current),iouThr:0.40}) }
@@ -543,10 +546,13 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
       // Real-world scale of this frame (drone feed with a known altitude only):
       // the boxes are drawn with their size, and the sighting records it.
       const fovH=getFovSettings().fovHorizontalDeg
-      mppRef.current=sourceRef.current!=='webcam'?metersPerPixel({frameW:fw,altitudeM:geoRef.current.alt,fovHDeg:fovH}):null
+      const fp=shot?.pose
+      const g=sourceRef.current!=='webcam'&&fp&&Number.isFinite(fp.lat)&&Number.isFinite(fp.lng)
+        ?{...geoRef.current,pos:[fp.lat,fp.lng],posSource:'drone',alt:fp.alt,heading:fp.hdg,roll:fp.roll,pitch:fp.pitch}
+        :geoRef.current
+      mppRef.current=sourceRef.current!=='webcam'?metersPerPixel({frameW:fw,altitudeM:g.alt,fovHDeg:fovH}):null
       if(counted.length>0&&now-lastGeoTagRef.current>=500){
         lastGeoTagRef.current=now
-        const g=geoRef.current
         const biggestOf=(bs)=>bs.reduce((m,b)=>((b.x2-b.x1)*(b.y2-b.y1)>(m.x2-m.x1)*(m.y2-m.y1)?b:m))
         const biggest=biggestOf(counted)
         const cls=biggest.label||'plastic'
@@ -606,7 +612,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
       let started=false
       const fail=(why)=>{if(started)return;started=true;h264Ref.current?.close();h264Ref.current=null;reject(new Error(why))}
       const timer=setTimeout(()=>fail('no H.264 picture'),6000)
-      h264Ref.current=playH264({url:api.h264Url(),canvas:cv,
+      h264Ref.current=playH264({url:api.h264Url()+'?pose=1',canvas:cv,
         onFirstFrame:()=>{if(started)return;started=true;clearTimeout(timer);srcElRef.current=cv;resolve()},
         onFatal:(why)=>{
           clearTimeout(timer)

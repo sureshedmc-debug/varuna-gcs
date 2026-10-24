@@ -30,7 +30,7 @@ When it's done, it prints the address for the app: System → Connection.
 The same tool can also:
 - **9) Camera test** — takes a picture with the drone camera and opens it on the laptop
 - **13) Camera** — switch between auto-detect, USB webcam and Pi camera module; it sets up the camera module too
-- update the code (this also switches the camera to auto-detect: USB webcam or Pi camera module, names the connected camera module in the Pi's boot settings so it is found on every boot, and turns the Pi's Wi-Fi power saving off)
+- update the code (this also switches the camera to auto-detect: USB webcam or Pi camera module, names the connected camera module in the Pi's boot settings so it is found on every boot, and turns the Pi's Wi-Fi power saving off; it also switches the Pi's desktop off — the drone doesn't use it, and it takes ~350 MB of memory. To get it back: `sudo systemctl set-default graphical.target`, then reboot)
 - show status and live logs
 - restart the service
 - open an SSH terminal
@@ -51,6 +51,8 @@ The camera module's video goes to the app as **H.264** (`/api/camera/h264`), muc
 With `camera_codec` = `h264` the camera module runs at `stream_fps` (15), not 30: H.264 frames depend on each other, so frames can't be dropped for the stream later.
 
 **Standby:** the camera only runs while someone watches it (the app's video, `/video_feed`, a snapshot). 30 s after the last viewer leaves it switches off — camera and encoder running nonstop is what warms the Pi — and it comes back in about 2 s when the video is opened again. System → Camera shows STANDBY meanwhile.
+
+**Where detections are:** with `/api/camera/h264?pose=1` every frame carries the drone's position, height, heading, roll and pitch at the moment it was taken (telemetry at 10 Hz, interpolated to the frame's capture time). The app's detection places each item on the map from the pose of the very frame it found it in, not from telemetry that arrived up to a second later, so plastic seen while the drone moves or turns lands where it really is. Without a Pixhawk (or with a USB webcam) the app uses the live telemetry as before.
 
 **Camera module not found after a reboot?** With `camera_auto_detect=1` the Pi's firmware probes for the camera at boot and sometimes misses it (Pi 3 with the camera v1 especially). The setup tool's Update finds which camera module is connected (starting it on the spot if it wasn't found) and writes `camera_auto_detect=0` + `dtoverlay=<sensor>` (e.g. `ov5647`) to `/boot/firmware/config.txt`, so it loads on every boot. The original file is kept as `config.txt.before-varuna`.
 

@@ -45,6 +45,9 @@ GCS_SYSID = 255
 GCS_COMPID = mavlink.MAV_COMP_ID_MISSIONPLANNER
 FORCE_DISARM_MAGIC = 21196
 FC_TIMEOUT_S = 3.5
+POSE_HZ = 10            # position + attitude rate asked of the Pixhawk (for placing detections)
+POSE_KEEP = 300         # samples kept of each: 30 s at POSE_HZ
+POSE_MAX_GAP_S = 0.5    # a pose further than this from any sample is not trusted
 SILENT_SWITCH_S = 6.0   # try the next port/baud after this long without a heartbeat
 WORKED_SWITCH_S = 30.0  # ...but stay this long on a link that already worked (in flight!)
 # TELEM2 speeds to try (SERIAL2_BAUD on the Pixhawk): 57, 115, 921, 230, 460, 500, 1500 (x1000).
@@ -71,6 +74,34 @@ def haversine_m(lat1, lng1, lat2, lng2):
     dl = math.radians(lng2 - lng1)
     a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
     return 2 * r * math.asin(math.sqrt(a))
+
+
+def _interp(samples, t, angle_idx=()):
+    """samples: (time, v1, v2, ...) tuples, oldest first. The values at time t,
+    linear between the two samples around it (angles the short way round), or
+    the nearest sample if t is just outside them; None if none is close."""
+    if not samples:
+        return None
+    if t <= samples[0][0]:
+        return samples[0][1:] if samples[0][0] - t <= POSE_MAX_GAP_S else None
+    if t >= samples[-1][0]:
+        return samples[-1][1:] if t - samples[-1][0] <= POSE_MAX_GAP_S else None
+    for i in range(len(samples) - 1, 0, -1):
+        a, b = samples[i - 1], samples[i]
+        if a[0] <= t <= b[0]:
+            break
+    if b[0] - a[0] > 2 * POSE_MAX_GAP_S:        # a hole in the telemetry: the nearer side, if near
+        near = a if t - a[0] < b[0] - t else b
+        return near[1:] if abs(t - near[0]) <= POSE_MAX_GAP_S else None
+    f = (t - a[0]) / (b[0] - a[0]) if b[0] > a[0] else 0.0
+    out = []
+    for k in range(1, len(a)):
+        va, vb = a[k], b[k]
+        if k in angle_idx:
+            out.append((va + ((vb - va + 180) % 360 - 180) * f) % 360)
+        else:
+            out.append(va + (vb - va) * f)
+    return tuple(out)
 
 
 def mission_result_name(code):
@@ -125,6 +156,11 @@ class DroneLink:
         self.link_error = None
         self.messages = deque(maxlen=30)       # recent STATUSTEXT from the Pixhawk
         self.track = deque(maxlen=900)         # recent positions for the map trail
+        # Recent positions (time, lat, lng, relative alt) and attitudes (time, roll,
+        # pitch, yaw): pose_at() gives where the drone was when a video frame was
+        # taken, so detections are placed from that, not from later telemetry.
+        self._positions = deque(maxlen=POSE_KEEP)
+        self._attitudes = deque(maxlen=POSE_KEEP)
         self._last_track = 0.0
         self.state = {
             "lat": None, "lng": None, "relative_alt": 0.0, "alt_msl": None, "climb": 0.0,
@@ -174,6 +210,20 @@ class DroneLink:
 
     def recent_track(self, limit=300):
         return list(self.track)[-limit:]
+
+    def pose_at(self, t):
+        """Position and attitude at time t (time.time()), interpolated between
+        telemetry samples: {"lat", "lng", "alt", "hdg", "roll", "pitch"} with
+        None for what isn't known then (no GPS fix, no recent telemetry)."""
+        with self._state_lock:
+            pos = _interp(self._positions, t)
+            att = _interp(self._attitudes, t, angle_idx=(3,))
+        return {
+            "lat": round(pos[0], 7) if pos else None, "lng": round(pos[1], 7) if pos else None,
+            "alt": round(pos[2], 2) if pos else None,
+            "hdg": round(att[2], 1) if att else None,
+            "roll": round(att[0], 2) if att else None, "pitch": round(att[1], 2) if att else None,
+        }
 
     # ------------------------------------------------------------------ connection
     @staticmethod
@@ -371,6 +421,11 @@ class DroneLink:
     def _request_streams(self):
         self._send(lambda m: m.mav.request_data_stream_send(
             self.target_system, self.target_component, mavlink.MAV_DATA_STREAM_ALL, 5, 1))
+        # Position and attitude faster than the rest, to place detections in the video.
+        for msg_id in (mavlink.MAVLINK_MSG_ID_GLOBAL_POSITION_INT, mavlink.MAVLINK_MSG_ID_ATTITUDE):
+            self._send(lambda m, i=msg_id: m.mav.command_long_send(
+                self.target_system, self.target_component, mavlink.MAV_CMD_SET_MESSAGE_INTERVAL, 0,
+                i, 1_000_000 // POSE_HZ, 0, 0, 0, 0, 0))
         # Landed state (on ground / in air) is not part of the classic streams.
         self._send(lambda m: m.mav.command_long_send(
             self.target_system, self.target_component, mavlink.MAV_CMD_SET_MESSAGE_INTERVAL, 0,
@@ -416,6 +471,8 @@ class DroneLink:
                 if msg.hdg != 65535:
                     s["heading"] = msg.hdg / 100.0
                 s["groundspeed"] = math.hypot(msg.vx, msg.vy) / 100.0
+                if msg.lat or msg.lon:
+                    self._positions.append((now, msg.lat / 1e7, msg.lon / 1e7, msg.relative_alt / 1000.0))
                 if s["lat"] is not None and now - self._last_track >= 1.0:
                     self._last_track = now
                     self.track.append({"t": round(now, 1), "lat": s["lat"], "lng": s["lng"],
@@ -438,6 +495,8 @@ class DroneLink:
                 s["roll"] = round(math.degrees(msg.roll), 2)
                 s["pitch"] = round(math.degrees(msg.pitch), 2)
                 s["yaw"] = round(math.degrees(msg.yaw) % 360, 1)
+                self._attitudes.append((now, math.degrees(msg.roll), math.degrees(msg.pitch),
+                                        math.degrees(msg.yaw) % 360))
             elif t == "HOME_POSITION":
                 s["home_lat"] = msg.latitude / 1e7
                 s["home_lng"] = msg.longitude / 1e7

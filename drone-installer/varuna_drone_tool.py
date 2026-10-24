@@ -934,6 +934,7 @@ def action_setup(pi, ctx):
         ("Setting up the serial port for the Pixhawk", lambda: step_uart(pi, ctx)),
         ("Setting up the camera", lambda: step_camera(pi, ctx)),
         ("Wi-Fi: power saving off (smooth video)", lambda: step_wifi_powersave(pi, ctx)),
+        ("Desktop off (the drone doesn't use it: more memory, less heat)", lambda: step_desktop_off(pi, ctx)),
         ("Installing the drone service", lambda: step_service(pi, ctx)),
         ("NetBird", lambda: step_netbird(pi, ctx)),
         ("Checking everything works", lambda: step_verify(pi, ctx)),
@@ -975,12 +976,45 @@ def action_update(pi, ctx):
         ("Checking the Python libraries", libs),
         ("Camera: auto-detect (USB webcam or Pi camera module)", lambda: step_camera_auto(pi, ctx)),
         ("Wi-Fi: power saving off (smooth video)", lambda: step_wifi_powersave(pi, ctx)),
+        ("Desktop off (the drone doesn't use it: more memory, less heat)", lambda: step_desktop_off(pi, ctx)),
         ("Restarting the drone service", restart),
         ("Checking it works", lambda: step_verify(pi, ctx)),
         ("Finishing", lambda: step_reboot(pi, ctx)),
     ])
     say("")
     ok("Drone code updated.")
+
+
+def step_desktop_off(pi, ctx):
+    """Start the Pi without its desktop. The drone never uses it, and the desktop,
+    its panel, file manager, sound and VNC take ~350 MB of the Pi 3's 1 GB and
+    some CPU (heat). It is switched off straight away, no reboot: SSH, NetBird and
+    the drone service are part of the text-mode system and keep running.
+    Back on: sudo systemctl set-default graphical.target, then reboot."""
+    _, out = pi.run(f"""
+set +e
+R={ROOT}
+if [ -n "$R" ]; then
+  ln -sf /lib/systemd/system/multi-user.target "$R/etc/systemd/system/default.target"
+  echo DESKTOP_OFF_NEXT_BOOT; exit 0
+fi
+if [ "$(systemctl get-default)" = "multi-user.target" ] && ! systemctl is-active -q display-manager; then
+  echo DESKTOP_ALREADY_OFF; exit 0
+fi
+systemctl set-default multi-user.target >/dev/null 2>&1
+systemctl disable wayvnc.service wayvnc-control.service >/dev/null 2>&1
+systemctl isolate multi-user.target >/dev/null 2>&1
+sleep 3
+systemctl is-active -q display-manager && echo DESKTOP_STILL_RUNNING || echo DESKTOP_OFF
+""", sudo=True, timeout=120)
+    if "DESKTOP_ALREADY_OFF" in out:
+        ok("Desktop already off (the Pi starts in text mode)")
+    elif "DESKTOP_OFF_NEXT_BOOT" in out:
+        ok("Desktop off from the next start (text mode)")
+    elif "DESKTOP_OFF" in out:
+        ok("Desktop switched off — the Pi now starts in text mode (more memory, less heat)")
+    else:
+        warn("The desktop is set to stay off from the next reboot, but is still running now.")
 
 
 def step_wifi_powersave(pi, ctx):

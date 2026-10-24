@@ -323,15 +323,29 @@ def video_feed():
                              headers={"Cache-Control": "no-cache, no-store", "X-Accel-Buffering": "no"})
 
 
-# One record per frame: data length (u32), flags (u8, 1 = keyframe), capture time
-# (u64, µs since 1970), then the frame as Annex-B H.264 (SPS/PPS before each keyframe).
+# One record per frame: payload length (u32), flags (u8: 1 = keyframe, 2 = pose
+# included), capture time (u64, µs since 1970), then the payload: with a pose, its
+# JSON length (u16) and the JSON first; then the frame as Annex-B H.264 (SPS/PPS
+# before each keyframe).
 H264_RECORD = struct.Struct(">IBQ")
+POSE_LEN = struct.Struct(">H")
 
 
-def h264_frames():
+def _frame_pose(ts_us):
+    """The drone's pose when a frame was taken, as JSON, if the Pixhawk is there."""
+    if not link.fc_connected:
+        return b""
+    pose = link.pose_at(ts_us / 1e6)
+    if pose["lat"] is None and pose["hdg"] is None:
+        return b""
+    return json.dumps(pose, separators=(",", ":")).encode()
+
+
+def h264_frames(with_pose=False):
     """The camera module's H.264 frames for the app's WebCodecs player, from the
     latest keyframe on. A viewer that falls behind (slow link) or misses frames
-    skips ahead to the newest keyframe instead of piling up delay."""
+    skips ahead to the newest keyframe instead of piling up delay. with_pose:
+    each frame carries the drone's position and attitude when it was taken."""
     max_lag = max(2, int(cfg["stream_fps"]) // 2)
     seq, need_key = -1, True
     last_frame = time.time()
@@ -351,19 +365,24 @@ def h264_frames():
                 continue
             frames, need_key = frames[keys[-1]:], False
         for fseq, key, ts_us, data in frames:
-            yield H264_RECORD.pack(len(data), 1 if key else 0, ts_us) + data
+            flags = 1 if key else 0
+            pose = _frame_pose(ts_us) if with_pose else b""
+            if pose:
+                flags |= 2
+                data = POSE_LEN.pack(len(pose)) + pose + data
+            yield H264_RECORD.pack(len(data), flags, ts_us) + data
             seq = fseq
     # The camera switched to MJPEG (USB webcam, or camera_codec changed): the app
     # reconnects, gets 409 and shows /video_feed.
 
 
 @app.get("/api/camera/h264")
-def camera_h264():
+def camera_h264(pose: bool = Query(default=False)):
     camera.touch()
     if camera.codec != "h264":
         return JSONResponse({"success": False, "codec": camera.codec,
                              "message": "The camera is not sending H.264 now — use /video_feed."}, status_code=409)
-    return StreamingResponse(h264_frames(), media_type="application/octet-stream",
+    return StreamingResponse(h264_frames(pose), media_type="application/octet-stream",
                              headers={"Cache-Control": "no-cache, no-store", "X-Accel-Buffering": "no"})
 
 

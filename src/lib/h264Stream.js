@@ -3,10 +3,12 @@
  * decoded in the browser with WebCodecs. About a third of the bandwidth of
  * the MJPEG stream (/video_feed), so it stays smooth and live on weaker Wi-Fi.
  *
- * The stream is one record per frame: data length (u32), flags (u8, 1 =
- * keyframe), capture time (u64, µs since 1970), then the frame as Annex-B
- * H.264. It starts at a keyframe, and the Pi skips a slow viewer ahead to the
- * newest keyframe instead of letting delay pile up.
+ * The stream is one record per frame: payload length (u32), flags (u8: 1 =
+ * keyframe, 2 = pose included), capture time (u64, µs since 1970), then the
+ * payload: with a pose, its JSON length (u16) and the JSON — the drone's
+ * position and attitude when the frame was taken (?pose=1) — then the frame
+ * as Annex-B H.264. It starts at a keyframe, and the Pi skips a slow viewer
+ * ahead to the newest keyframe instead of letting delay pile up.
  */
 
 const HEADER = 13
@@ -31,13 +33,16 @@ export function codecFromKeyframe(data) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const utf8 = new TextDecoder()
 
 /**
  * Start playing. onFirstFrame() runs when the first picture is drawn.
  * onFatal(reason) means this can't work and the caller should show MJPEG:
  * 'mjpeg' (the camera isn't sending H.264: a USB webcam, or camera_codec =
  * mjpeg) or 'decode' (this browser can't decode the stream). Network drops
- * are retried here. Returns { close() }.
+ * are retried here. Returns { close(), frame() }: frame() is the picture now
+ * on the canvas, { tsUs, pose } (pose null unless the URL asked for ?pose=1
+ * and the drone's Pixhawk is connected).
  */
 export function playH264({ url, canvas, onFirstFrame, onFatal }) {
   const ctx = canvas.getContext('2d')
@@ -50,6 +55,8 @@ export function playH264({ url, canvas, onFirstFrame, onFatal }) {
   let decodeErrors = 0
   let baseline = Infinity     // smallest frame age seen: network delay + the Pi/laptop clock difference
   let behindSince = 0
+  const poses = new Map()     // capture time → pose, for frames in the decoder
+  let shown = null            // { tsUs, pose } of the picture on the canvas
 
   function fatal(reason) {
     if (closed) return
@@ -67,6 +74,8 @@ export function playH264({ url, canvas, onFirstFrame, onFatal }) {
           canvas.height = frame.displayHeight
         }
         ctx.drawImage(frame, 0, 0)
+        shown = { tsUs: frame.timestamp, pose: poses.get(frame.timestamp) ?? null }
+        for (const ts of poses.keys()) { if (ts > frame.timestamp) break; poses.delete(ts) }
         frame.close()
         decodeErrors = 0
         if (++frames === 1) onFirstFrame?.()
@@ -75,6 +84,7 @@ export function playH264({ url, canvas, onFirstFrame, onFatal }) {
         // The decoder closes itself: a new one starts at the next keyframe.
         console.warn('[h264]', e)
         needKey = true
+        poses.clear()
         if (++decodeErrors >= 3 && frames === 0) fatal('decode')
       },
     })
@@ -87,7 +97,7 @@ export function playH264({ url, canvas, onFirstFrame, onFatal }) {
     }
   }
 
-  function frame(data, key, tsUs) {
+  function frame(data, key, tsUs, pose) {
     const age = Date.now() - tsUs / 1000
     baseline = Math.min(baseline, age)
     if (age - baseline > BEHIND_MS) {
@@ -104,6 +114,7 @@ export function playH264({ url, canvas, onFirstFrame, onFatal }) {
     }
     if (needKey || !decoder || decoder.state !== 'configured') return
     if (!key && decoder.decodeQueueSize > MAX_QUEUE) { needKey = true; return } // can't keep up: skip ahead
+    if (pose) poses.set(tsUs, pose)
     decoder.decode(new EncodedVideoChunk({ type: key ? 'key' : 'delta', timestamp: tsUs, data }))
   }
 
@@ -135,7 +146,15 @@ export function playH264({ url, canvas, onFirstFrame, onFatal }) {
             const dv = new DataView(buf.buffer, buf.byteOffset + off, HEADER)
             const len = dv.getUint32(0)
             if (buf.length - off < HEADER + len) break
-            frame(buf.subarray(off + HEADER, off + HEADER + len), (dv.getUint8(4) & 1) === 1, Number(dv.getBigUint64(5)))
+            const flags = dv.getUint8(4)
+            let data = buf.subarray(off + HEADER, off + HEADER + len)
+            let pose = null
+            if (flags & 2) {
+              const n = (data[0] << 8) | data[1]
+              try { pose = JSON.parse(utf8.decode(data.subarray(2, 2 + n))) } catch { /* no pose */ }
+              data = data.subarray(2 + n)
+            }
+            frame(data, (flags & 1) === 1, Number(dv.getBigUint64(5)), pose)
             if (closed) return
             off += HEADER + len
           }
@@ -161,5 +180,5 @@ export function playH264({ url, canvas, onFirstFrame, onFatal }) {
   }
 
   run()
-  return { close }
+  return { close, frame: () => shown }
 }

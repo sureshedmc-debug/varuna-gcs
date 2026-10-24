@@ -47,6 +47,7 @@ SOI, EOI = b"\xff\xd8", b"\xff\xd9"
 STALL_S = 10          # restart a capture process that sends nothing for this long
 IDLE_S = 30           # camera off this long after the last viewer left (less heat); back on in ~2 s
 START_WAIT_S = 8      # how long a snapshot waits for the camera to come out of standby
+ENCODE_LAG_S = 0.1    # camera module: exposure → encoded frame on the pipe (ISP + encoder, roughly)
 CSI_CHECK_S = 30      # how long a "camera module there or not" answer is trusted
 FAILED_SKIP_S = 60    # auto: after a camera fails every setting, prefer the other one this long
 H264_KEEP = 120       # H.264 frames kept for viewers (a few seconds)
@@ -356,11 +357,12 @@ class CameraManager:
         self._failed_at = {}       # source → when every setting of it last failed
         self.codec = None          # "h264" or "mjpeg": what the running capture sends
         self._sizes = deque(maxlen=120)                  # (time, bytes) of recent frames
-        self._h264 = deque(maxlen=H264_KEEP)             # (seq, keyframe, time µs, Annex-B data)
+        self._h264 = deque(maxlen=H264_KEEP)             # (seq, keyframe, capture time µs, Annex-B data)
         self.h264_seq = 0
         self.h264_codec = None     # WebCodecs codec name, from the stream's SPS
         self._jpegs = H264Jpegs(cfg["ffmpeg_path"], self._publish_jpeg)
         self._jpeg_at = 0.0
+        self._capture_lag = 0.0
         # The camera only runs while someone watches (video streams, snapshots):
         # camera + encoder running nonstop is what heats the Pi. It runs for the
         # first IDLE_S after start, so a missing camera shows up in the status.
@@ -586,6 +588,9 @@ class CameraManager:
         if fmt == "h264":
             with self._cond:
                 self._h264.clear()             # frames of an earlier stream can't be mixed in
+            # A frame is complete only when the next one starts arriving (one frame
+            # period later), and it reached the pipe ENCODE_LAG_S after its exposure.
+            self._capture_lag = 1.0 / max(1, min(self.cfg["camera_fps"], self.cfg["stream_fps"])) + ENCODE_LAG_S
             splitter = H264Splitter(self._publish_h264)
             while not self._stop.is_set():
                 chunk = stream.read(65536)
@@ -677,7 +682,8 @@ class CameraManager:
             if sps:
                 self.h264_codec = h264_codec_string(sps)
             self.h264_seq += 1
-            self._h264.append((self.h264_seq, keyframe, int(now * 1e6), data))
+            # Stamped with when it was taken (estimated), to look up the drone's pose then.
+            self._h264.append((self.h264_seq, keyframe, int((now - self._capture_lag) * 1e6), data))
             self._cond.notify_all()
         self._jpegs.offer(data, keyframe)
 
