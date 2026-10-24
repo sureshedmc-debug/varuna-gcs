@@ -11,6 +11,8 @@
   "camera_height": 720,
   "camera_fps": 30,
   "camera_quality": 55,
+  "camera_codec": "h264",
+  "video_bitrate_kbps": 5000,
   "stream_fps": 15,
   "takeoff_alt_m": 10,
   "max_altitude_m": 120,

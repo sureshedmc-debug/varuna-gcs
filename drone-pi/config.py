@@ -37,6 +37,8 @@ DEFAULTS = {
     "camera_height": 720,
     "camera_fps": 30,
     "camera_quality": 55,             # JPEG quality when the Pi has to encode (CSI / fallback); ~33 KB frames at 720p
+    "camera_codec": "h264",           # camera module: h264 (hardware encoder, ~1/3 the bandwidth) | mjpeg
+    "video_bitrate_kbps": 5000,       # H.264 bitrate; 5 Mbit/s is sharp 720p at 15 fps (MJPEG used ~4)
     "ffmpeg_path": "ffmpeg",
     # ---- Flight safety (live-tunable)
     "stream_fps": 15,                 # 15 x ~33 KB fits ordinary Wi-Fi; more piles up delay
@@ -67,6 +69,13 @@ TUNABLE = {
     "camera_quality": {"type": "int", "min": 30, "max": 95,
                        "description": "Video picture quality (JPEG). Lower = smaller frames: smoother, less delay on "
                                       "weak Wi-Fi. Applies to the Pi camera module (and webcams the Pi has to encode)."},
+    "camera_codec": {"type": "str", "options": ["h264", "mjpeg"],
+                     "description": "Pi camera module video: h264 (hardware-encoded, about a third of the bandwidth "
+                                    "of mjpeg; the app plays it when its browser can) or mjpeg. USB webcams always "
+                                    "send MJPEG."},
+    "video_bitrate_kbps": {"type": "int", "min": 300, "max": 15000,
+                           "description": "H.264 video bitrate in kbit/s. Lower = smoother on weak Wi-Fi, "
+                                          "higher = sharper."},
     "stream_fps": {"type": "int", "min": 1, "max": 30,
                    "description": "Video frames per second sent to the app (lower it on a weak link)."},
     "takeoff_alt_m": {"type": "float", "min": 2, "max": 50,
@@ -96,12 +105,13 @@ TUNABLE = {
 }
 
 _INT = {"usb_baud", "telem2_baud", "http_port", "camera_width", "camera_height", "camera_fps",
-        "camera_quality", "stream_fps", "loiter_time_s", "max_waypoints", "operator_lost_s",
+        "camera_quality", "video_bitrate_kbps", "stream_fps", "loiter_time_s", "max_waypoints", "operator_lost_s",
         "kb_yaw_dps", "kb_lost_s"}
 _FLOAT = {"takeoff_alt_m", "max_altitude_m", "max_distance_m", "kb_speed_mps", "kb_climb_mps", "kb_min_alt_m"}
 _CHOICES = {
     "link_prefer": ("auto", "usb", "telem2"),
     "camera_source": ("auto", "usb", "csi", "test", "off"),
+    "camera_codec": ("h264", "mjpeg"),
     "operator_lost_action": ("none", "rtl", "land"),
     "kb_lost_action": ("rtl", "land", "hover"),
 }

@@ -616,6 +616,7 @@ export default function SystemScreen() {
             <Field label="Frames"       value={num(pick(cam.data, ['frames_captured']), 0)} />
             <Field label="Camera"       value={CAMERA_NAMES[pick(cam.data, ['source'])] || '—'} mono={false} />
             <Field label="Choice"       value={CAMERA_NAMES[pick(cam.data, ['camera_source'])] || '—'} mono={false} />
+            <Field label="Video"        value={cam.data?.codec ? `${cam.data.codec === 'h264' ? 'H.264' : 'MJPEG'} · ${num(cam.data.stream_kbps, 0)} kbit/s` : '—'} mono={false} />
           </div>
           {pick(cam.data, ['last_error']) && <div className="mt-2 text-xs text-warn">{cam.data.last_error}</div>}
         </Section>

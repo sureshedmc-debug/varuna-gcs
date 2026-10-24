@@ -514,33 +514,93 @@ def step_camera(pi, ctx):
              "the drone picks up whichever is there by itself.")
 
 
-def _setup_csi(pi, ctx, quiet=False):
-    """Install rpicam-vid and enable the camera module in the boot settings.
-    True if a camera module is detected. quiet: don't warn when there is none."""
-    _, out = pi.run(f"""
+# Camera module sensors the tool can pin (their dtoverlay names).
+CSI_SENSORS = ("ov5647", "imx219", "imx708", "imx477", "imx296", "imx519")
+
+# Install rpicam-vid, find which camera module is connected and pin its overlay
+# in config.txt. With camera_auto_detect=1 the firmware probes for the camera
+# at boot, and on some boots (Pi 3 + camera v1 especially) it misses it: no
+# camera until the next lucky reboot. Naming the sensor (camera_auto_detect=0 +
+# dtoverlay=<sensor>) loads it every time.
+_CSI_SCRIPT = r"""
 set +e
 export DEBIAN_FRONTEND=noninteractive
-command -v rpicam-vid >/dev/null 2>&1 || command -v libcamera-vid >/dev/null 2>&1 || \\
-  apt-get -o DPkg::Lock::Timeout=600 install -y rpicam-apps-lite >/dev/null 2>&1 || \\
+command -v rpicam-vid >/dev/null 2>&1 || command -v libcamera-vid >/dev/null 2>&1 || \
+  apt-get -o DPkg::Lock::Timeout=600 install -y rpicam-apps-lite >/dev/null 2>&1 || \
   apt-get -o DPkg::Lock::Timeout=600 install -y libcamera-apps-lite >/dev/null 2>&1
-R={ROOT}
+R=@ROOT@
 CFG="$R/boot/firmware/config.txt"; [ -f "$CFG" ] || CFG="$R/boot/config.txt"
+SENSORS="@SENSORS@"
+SENSOR_RE="^dtoverlay=($(echo $SENSORS | tr ' ' '|'))([ ,]|$)"
+HELLO=$(command -v rpicam-hello || command -v libcamera-hello)
+cams() { [ -n "$HELLO" ] && timeout 20 "$HELLO" --list-cameras 2>&1; }
+model=""
+if [ -z "$R" ]; then
+  # "0 : ov5647 [2592x1944 ...]" -> ov5647 (imx708_wide -> imx708)
+  model=$(cams | sed -n 's/^ *[0-9][0-9]* : \([a-z0-9]*\).*/\1/p' | head -1)
+  if [ -z "$model" ] && command -v dtoverlay >/dev/null 2>&1; then
+    # Not found at boot: try each sensor's overlay now (lasts until reboot).
+    for m in $SENSORS; do
+      dtoverlay "$m" >/dev/null 2>&1 || continue
+      sleep 2
+      if cams | grep -q "^ *[0-9][0-9]* : $m"; then model=$m; echo CAM_RUNTIME; break; fi
+      dtoverlay -r "$m" >/dev/null 2>&1
+    done
+  fi
+fi
+[ -n "$model" ] && echo "CAM_MODEL=$model"
 before=$(md5sum < "$CFG" 2>/dev/null)
-if [ -f "$CFG" ]; then
-  if grep -q '^camera_auto_detect=0' "$CFG"; then sed -i 's/^camera_auto_detect=0/camera_auto_detect=1/' "$CFG"; fi
-  grep -q '^camera_auto_detect=1' "$CFG" || echo 'camera_auto_detect=1' >> "$CFG"
+if [ -f "$CFG" ] && [ -n "$model" ]; then
+  # camera_auto_detect=0 + dtoverlay=<model> where camera_auto_detect was (or
+  # under [all] at the end); other sensor overlays and repeats removed.
+  [ -f "$CFG.before-varuna" ] || cp "$CFG" "$CFG.before-varuna"
+  awk -v ov="$model" -v re="$SENSOR_RE" '
+    /^camera_auto_detect=/ { if (!done) { print "camera_auto_detect=0"; print "dtoverlay=" ov; done = 1 } next }
+    $0 ~ re { next }
+    { print }
+    END { if (!done) { print "[all]"; print "camera_auto_detect=0"; print "dtoverlay=" ov } }
+  ' "$CFG" > "$CFG.varuna" && cat "$CFG.varuna" > "$CFG"
+  rm -f "$CFG.varuna"
+elif [ -f "$CFG" ]; then
+  pinned=$(grep -E "$SENSOR_RE" "$CFG" | head -1 | sed 's/^dtoverlay=\([a-z0-9]*\).*/\1/')
+  if [ -n "$pinned" ]; then
+    echo "CAM_PINNED_MISSING=$pinned"      # leave it: the cable may just be loose
+  else
+    # No camera now: let the firmware look for any camera at boot.
+    if grep -q '^camera_auto_detect=0' "$CFG"; then sed -i 's/^camera_auto_detect=0/camera_auto_detect=1/' "$CFG"; fi
+    grep -q '^camera_auto_detect=1' "$CFG" || echo 'camera_auto_detect=1' >> "$CFG"
+  fi
 fi
 after=$(md5sum < "$CFG" 2>/dev/null)
 [ "$before" = "$after" ] || echo CAM_CHANGED
-HELLO=$(command -v rpicam-hello || command -v libcamera-hello)
-[ -n "$HELLO" ] && timeout 20 "$HELLO" --list-cameras 2>&1 | head -12
-""", sudo=True, timeout=900)
-    if "CAM_CHANGED" in out:
-        ctx["reboot"] = True
-        ok("Camera module enabled in the Pi's boot settings — needs a reboot")
-    if "Available cameras" in out and "No cameras available" not in out:
-        ok("Camera module found")
+"""
+
+
+def _setup_csi(pi, ctx, quiet=False):
+    """Install rpicam-vid and make the camera module load on every boot.
+    True if a camera module is detected. quiet: don't warn when there is none."""
+    script = _CSI_SCRIPT.replace("@ROOT@", ROOT).replace("@SENSORS@", " ".join(CSI_SENSORS))
+    _, out = pi.run(script, sudo=True, timeout=900)
+    model = next((line.split("=", 1)[1].strip() for line in out.splitlines() if line.startswith("CAM_MODEL=")), "")
+    changed = "CAM_CHANGED" in out
+    if model:
+        if "CAM_RUNTIME" in out:
+            ok(f"Camera module ({model}) was not found at boot — started it now")
+        else:
+            ok(f"Camera module found ({model})")
+        if changed:
+            ok(f"Camera module {model} named in the Pi's boot settings, so it is found on every boot")
         return True
+    pinned = next((line.split("=", 1)[1].strip() for line in out.splitlines()
+                   if line.startswith("CAM_PINNED_MISSING=")), "")
+    if pinned:
+        warn(f"The boot settings load a {pinned} camera module, but none answers. Check the ribbon cable (blue side "
+             "to the Ethernet port on a Pi 3) with the Pi off, then run Update again — a different camera model is "
+             "picked up then too.")
+        return False
+    if changed:
+        ctx["reboot"] = True
+        ok("Camera module detection turned on in the Pi's boot settings — needs a reboot")
     if not quiet:
         warn("No camera module detected yet. Check the ribbon cable (blue side to the Ethernet port on a Pi 3), then reboot.")
     return False
@@ -715,7 +775,8 @@ def step_verify(pi, ctx, label="Checking the drone backend"):
         time.sleep(2)
     if cam and cam.get("camera_connected"):
         fps, res = cam.get("measured_fps", 0), cam.get("resolution")
-        (ok if res == "1280x720" and fps >= 24 else warn)(
+        # H.264 (camera module) runs at the stream rate, 15 fps; MJPEG at 30.
+        (ok if res == "1280x720" and fps >= (12 if cam.get("codec") == "h264" else 24) else warn)(
             f"Camera streaming: {CAMERA_LABEL.get(cam.get('source'), cam.get('source'))}, {res} at {fps} fps "
             f"via {cam.get('pipeline')}")
         ctx["camera_ok"] = True
@@ -1008,7 +1069,9 @@ def action_status(pi, ctx):
     _, out = pi.run(f"curl -s -m 4 http://127.0.0.1:{HTTP_PORT}/api/camera/status || true", check=False)
     try:
         cam = json.loads(out)
-        if cam.get("camera_connected"):
+        if cam.get("standby") and cam.get("camera_connected"):
+            ok(f"Camera ready ({cam.get('pipeline')}), in standby — it switches on when the app shows the video")
+        elif cam.get("camera_connected"):
             ok(f"Camera streaming: {cam.get('resolution')} at {cam.get('measured_fps')} fps ({cam.get('pipeline')})")
         else:
             warn(f"Camera not streaming: {cam.get('last_error') or cam.get('status_text')}")
@@ -1121,7 +1184,8 @@ def action_camera_test(pi, ctx):
         raise InstallError("The drone backend is not answering — try 5) Restart the drone service.")
     if not cam.get("camera_connected"):
         raise InstallError(f"The camera is not streaming: {cam.get('last_error') or cam.get('status_text')}")
-    code, b64 = pi.run(f"curl -s -m 8 http://127.0.0.1:{HTTP_PORT}/api/camera/snapshot | base64 -w0", check=False, timeout=60)
+    # A camera in standby takes a couple of seconds to switch on.
+    code, b64 = pi.run(f"curl -s -m 15 http://127.0.0.1:{HTTP_PORT}/api/camera/snapshot | base64 -w0", check=False, timeout=60)
     import base64
     try:
         jpeg = base64.b64decode(b64.strip().splitlines()[-1])
@@ -1133,6 +1197,7 @@ def action_camera_test(pi, ctx):
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / f"varuna-drone-camera-{datetime.now():%Y%m%d-%H%M%S}.jpg"
     path.write_bytes(jpeg)
+    cam = _drone_api(pi, "/api/camera/status") or cam
     ok(f"Camera: {cam.get('resolution')} at {cam.get('measured_fps')} fps ({cam.get('pipeline')})")
     ok(f"Picture saved: {path}")
     try:

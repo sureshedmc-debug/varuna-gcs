@@ -18,6 +18,7 @@ import { projectBoxes } from '../lib/geoProject'
 import { getAlertSettings } from '../lib/alertSettings'
 import { sendBigDumpEmail } from '../lib/alerts/email'
 import { releaseStream } from './StreamImg'
+import { h264Supported, playH264 } from '../lib/h264Stream'
 import {
   createLearner, boxFeatures, cropInfo, saveFeedback, deleteFeedback, feedbackCount, clearFeedback, exportFeedback,
   learnerEnabled, setLearnerEnabled, showFilteredEnabled, setShowFilteredEnabled,
@@ -107,6 +108,8 @@ const yieldToUI = () =>
 export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam', autoStart = false, onCount, controlsLift = 0 }) {
   const videoRef     = useRef(null)
   const streamImgRef = useRef(null)
+  const streamCanvasRef = useRef(null)   // drone H.264, decoded into it
+  const h264Ref = useRef(null)
   const canvasRef    = useRef(null)
   const srcElRef     = useRef(null)
   const detRef       = useRef(null)
@@ -280,7 +283,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
   }, [defaultSource, autoStart])
 
   function fitCanvas() { const cv=canvasRef.current; if(!cv) return; const r=cv.getBoundingClientRect(); cv.width=Math.max(2,Math.round(r.width)); cv.height=Math.max(2,Math.round(r.height)) }
-  function srcSize(el) { return [el.videoWidth||el.naturalWidth||0, el.videoHeight||el.naturalHeight||0] }
+  function srcSize(el) { return [el.videoWidth||el.naturalWidth||el.width||0, el.videoHeight||el.naturalHeight||el.height||0] }
 
   function drawBoxes(ctx, cw, ch, vw, vh, ox, oy, dw, dh) {
     const fontSize = Math.max(12, Math.round(cw / 52))
@@ -591,7 +594,30 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
     const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:f,width:{ideal:1280},height:{ideal:720}},audio:false})
     const v=videoRef.current; v.srcObject=stream; await v.play(); srcElRef.current=v
   }
+  /** The drone camera: H.264 (camera module, browsers with WebCodecs), else MJPEG. */
   function startStream(){
+    return h264Supported()?startH264().catch(()=>startMjpeg()):startMjpeg()
+  }
+  async function startH264(){
+    const st=await api.cameraStatus().catch(()=>null)
+    if(st?.codec!=='h264') throw new Error('the camera sends MJPEG')
+    return new Promise((resolve,reject)=>{
+      const cv=streamCanvasRef.current
+      let started=false
+      const fail=(why)=>{if(started)return;started=true;h264Ref.current?.close();h264Ref.current=null;reject(new Error(why))}
+      const timer=setTimeout(()=>fail('no H.264 picture'),6000)
+      h264Ref.current=playH264({url:api.h264Url(),canvas:cv,
+        onFirstFrame:()=>{if(started)return;started=true;clearTimeout(timer);srcElRef.current=cv;resolve()},
+        onFatal:(why)=>{
+          clearTimeout(timer)
+          if(!started){fail(why);return}
+          // The camera switched to MJPEG while running (e.g. a webcam was plugged in).
+          h264Ref.current=null
+          if(runningRef.current) startMjpeg().catch(()=>{})
+        }})
+    })
+  }
+  function startMjpeg(){
     return new Promise((resolve,reject)=>{
       const img=streamImgRef.current; img.crossOrigin='anonymous'
       const onLoad=()=>{img.removeEventListener('load',onLoad);srcElRef.current=img;resolve()}
@@ -630,6 +656,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
     stopMissionRecording()
     const v=videoRef.current; if(v?.srcObject){v.srcObject.getTracks().forEach(t=>t.stop());v.srcObject=null}
     releaseStream(streamImgRef.current)
+    h264Ref.current?.close(); h264Ref.current=null
     srcElRef.current=null; boxesRef.current=[]; tileBoxesRef.current.clear()
     tileGridRef.current=null; activeTileRef.current=null; trackerRef.current.reset()
     answeredRef.current.clear(); xformRef.current=null; mppRef.current=null; setAsk(null)
@@ -823,6 +850,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
     <div className="relative h-full w-full overflow-hidden rounded-2xl bg-gradient-to-br from-slate-50 to-blue-50">
       <video ref={videoRef} playsInline muted className="hidden" />
       <img   ref={streamImgRef} alt="" className="hidden" />
+      <canvas ref={streamCanvasRef} className="hidden" />
       <canvas ref={canvasRef} className="h-full w-full" onClick={onCanvasTap} />
 
       {/* ✔ / ✖ for the tapped box — the self-learning filter's reward. Rendered

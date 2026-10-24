@@ -132,6 +132,8 @@ export const api = {
   // snapshot & stream are <img> URLs, not fetched here (absolute, so the browser
   // loads them cross-origin directly from the configured backend):
   streamUrl: () => url('/video_feed'),
+  // H.264 frames for the WebCodecs player (lib/h264Stream.js), when the camera module sends them:
+  h264Url: () => url('/api/camera/h264'),
   snapshotUrl: () => url(`/api/camera/snapshot?t=${Date.now()}`),
 
   // --- AI ---

@@ -6,7 +6,7 @@ System tabs) talks to it over NetBird. It talks to the drone's Pixhawk
 
 ```
  VARUNA app (laptop) ──NetBird──▶ drone Pi: this service ──MAVLink (TELEM2 or USB)──▶ Pixhawk + GPS
-   Live: video + AI detection        /video_feed  (MJPEG 720p30)                   ArduCopter flies:
+   Live: video + AI detection        /api/camera/h264, /video_feed (720p)          ArduCopter flies:
    Missions: plan → upload → start   missions → ArduCopter mission                   take-off, waypoints,
    flight commands, telemetry         arm / take-off / RTH / land / STOP              loiter, land, RTL
 ```
@@ -30,7 +30,7 @@ When it's done, it prints the address for the app: System → Connection.
 The same tool can also:
 - **9) Camera test** — takes a picture with the drone camera and opens it on the laptop
 - **13) Camera** — switch between auto-detect, USB webcam and Pi camera module; it sets up the camera module too
-- update the code (this also switches the camera to auto-detect: USB webcam or Pi camera module, and turns the Pi's Wi-Fi power saving off)
+- update the code (this also switches the camera to auto-detect: USB webcam or Pi camera module, names the connected camera module in the Pi's boot settings so it is found on every boot, and turns the Pi's Wi-Fi power saving off)
 - show status and live logs
 - restart the service
 - open an SSH terminal
@@ -44,13 +44,21 @@ The same tool can also:
 |---|---|---|
 | **USB webcam with MJPEG 720p30** (recommended) | ffmpeg asks the camera for its own JPEG frames and passes them through untouched | very low |
 | USB webcam without MJPEG | ffmpeg encodes the raw frames on the Pi | high: may drop below 30 fps |
-| Pi camera module | `rpicam-vid` encodes MJPEG | moderate |
+| Pi camera module | `rpicam-vid` with the Pi's hardware H.264 encoder | low |
+
+The camera module's video goes to the app as **H.264** (`/api/camera/h264`), much sharper than MJPEG for the same bandwidth: 720p at 15 fps and 5 Mbit/s by default (`video_bitrate_kbps`, up to 15000). The app decodes it in the browser (WebCodecs); browsers that can't — the app opened over plain `http://` from another computer — get MJPEG from `/video_feed` instead, which the Pi then decodes from the H.264 (more CPU). USB webcams always send MJPEG. `camera_codec` = `mjpeg` in System → Live tuning switches the camera module back to MJPEG.
+
+With `camera_codec` = `h264` the camera module runs at `stream_fps` (15), not 30: H.264 frames depend on each other, so frames can't be dropped for the stream later.
+
+**Standby:** the camera only runs while someone watches it (the app's video, `/video_feed`, a snapshot). 30 s after the last viewer leaves it switches off — camera and encoder running nonstop is what warms the Pi — and it comes back in about 2 s when the video is opened again. System → Camera shows STANDBY meanwhile.
+
+**Camera module not found after a reboot?** With `camera_auto_detect=1` the Pi's firmware probes for the camera at boot and sometimes misses it (Pi 3 with the camera v1 especially). The setup tool's Update finds which camera module is connected (starting it on the spot if it wasn't found) and writes `camera_auto_detect=0` + `dtoverlay=<sensor>` (e.g. `ov5647`) to `/boot/firmware/config.txt`, so it loads on every boot. The original file is kept as `config.txt.before-varuna`.
 
 With `camera_source` = `auto` (the default) the drone uses whichever camera is connected: the USB webcam if one is plugged in, else the Pi camera module. If the camera in use fails or is unplugged, it switches to the other one by itself. You can also pick the camera in the app: System → Live tuning → `camera_source` (it switches straight away; "Save to disk" keeps it after a restart).
 
 If the camera can't do 720p30, the backend falls back by itself: first to encoding on the Pi, then to 640×480. System → Camera in the app shows the real resolution and fps.
 
-Video at 720p, 15 fps and quality 55 needs about **4 Mbit/s** to the laptop. On a weak link, lower **stream_fps** or **camera_quality** in System → Live tuning; the camera keeps running at 30 fps. The setup tool turns the Pi's Wi-Fi power saving off (it makes the video stall); the Pi 3B+ also streams more smoothly on 5 GHz Wi-Fi than on 2.4 GHz.
+MJPEG video at 720p, 15 fps and quality 55 needs about **4 Mbit/s** to the laptop (H.264: 5 by default). On a weak link, lower **stream_fps**, **video_bitrate_kbps** (H.264) or **camera_quality** (MJPEG) in System → Live tuning. The setup tool turns the Pi's Wi-Fi power saving off (it makes the video stall); the Pi 3B+ also streams more smoothly on 5 GHz Wi-Fi than on 2.4 GHz.
 
 ## Pixhawk (ArduCopter) settings
 
@@ -139,7 +147,7 @@ python test_e2e.py
 ```
 
 `test_e2e.py` covers 37 checks:
-- camera at 720p30, snapshot, MJPEG stream
+- camera at 720p, H.264 stream, snapshot, MJPEG stream
 - take-off, RTL, a land-at-point mission
 - emergency stop, the link-loss failsafe
 - live tuning, link switching, WebSocket
@@ -157,6 +165,8 @@ The tool writes this file. You can also edit it, or set `DRONE_<KEY>` environmen
 | `link_prefer` | `auto` | `usb`, `telem2`, or `auto` (USB if plugged in, else TELEM2). The app can also change it (System → Advanced). |
 | `camera_source` | `auto` | `auto` (USB webcam if plugged in, else Pi camera module), `usb`, `csi`, `test` or `off` (live) |
 | `camera_width/height/fps` | 1280/720/30 | Capture size and rate |
+| `camera_codec` | `h264` | Pi camera module video: `h264` (hardware encoder) or `mjpeg` (live) |
+| `video_bitrate_kbps` | 5000 | H.264 bitrate (live) |
 | `stream_fps` | 15 | Frames per second sent to the app (live) |
 | `takeoff_alt_m` | 10 | Default take-off height (live) |
 | `max_altitude_m` | 120 | Highest take-off or waypoint allowed (live) |

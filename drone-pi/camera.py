@@ -1,16 +1,24 @@
 """
-Drone camera: 1280x720 at 30 fps, served to the app as MJPEG.
+Drone camera: 1280x720, served to the app as H.264 (camera module) or MJPEG.
 
-One capture process feeds every viewer. It is the lightest way to get 720p30
+One capture process feeds every viewer. It is the lightest way to get 720p
 out of a Raspberry Pi 3:
 
+  * Pi camera module (CSI) → rpicam-vid (or libcamera-vid on older OS) with the
+    Pi's hardware H.264 encoder (camera_codec = h264, the default): about a
+    third of MJPEG's bandwidth and half its CPU. The app decodes it in the
+    browser (WebCodecs) from /api/camera/h264. camera_codec = mjpeg makes
+    rpicam-vid encode MJPEG instead.
   * USB webcam  → ffmpeg asks the camera for its own MJPEG at 1280x720/30 and
     copies the frames through untouched (no decoding or re-encoding on the Pi).
     If the camera can't do MJPEG at that size, it falls back to raw YUYV that
     ffmpeg encodes (heavier), then to 640x480.
-  * Pi camera module (CSI) → rpicam-vid (or libcamera-vid on older OS) encodes
-    MJPEG at 1280x720/30.
-  * test → a generated test picture (laptop testing / no camera).
+  * test → a generated test picture (laptop testing / no camera), in H.264 or
+    MJPEG like the camera module.
+
+With H.264, /video_feed and /api/camera/snapshot still get JPEGs: while
+someone watches /video_feed (browsers without WebCodecs) ffmpeg decodes the
+stream to JPEGs, and a snapshot decodes the latest keyframe.
 
 camera_source "auto" (the default) uses whichever camera is there: the USB
 webcam if one is plugged in, else the camera module. If the one in use fails
@@ -18,10 +26,10 @@ or is unplugged it switches to the other by itself, and changing
 camera_source or camera_quality live (System → Live tuning in the app)
 restarts the capture with the new setting.
 
-The process's output is a stream of JPEGs; each frame is cut out at its start
-(FFD8) and end (FFD9) markers. The latest frame is kept for /video_feed (all
-viewers) and /api/camera/snapshot. If the process dies (camera unplugged), it
-is restarted every few seconds.
+An MJPEG process's output is a stream of JPEGs; each frame is cut out at its
+start (FFD8) and end (FFD9) markers. An H.264 one is cut into frames at its NAL
+units (H264Splitter). The latest frames are kept for every viewer. If the
+process dies (camera unplugged), it is restarted every few seconds.
 """
 
 import glob
@@ -37,8 +45,13 @@ log = logging.getLogger("drone.camera")
 
 SOI, EOI = b"\xff\xd8", b"\xff\xd9"
 STALL_S = 10          # restart a capture process that sends nothing for this long
+IDLE_S = 30           # camera off this long after the last viewer left (less heat); back on in ~2 s
+START_WAIT_S = 8      # how long a snapshot waits for the camera to come out of standby
 CSI_CHECK_S = 30      # how long a "camera module there or not" answer is trusted
 FAILED_SKIP_S = 60    # auto: after a camera fails every setting, prefer the other one this long
+H264_KEEP = 120       # H.264 frames kept for viewers (a few seconds)
+JPEG_DEMAND_S = 10    # H.264: keep decoding it to JPEG for /video_feed this long after the last request
+START4 = b"\x00\x00\x00\x01"
 
 # Standard JPEG Huffman tables (ITU-T T.81, Annex K.3). Many USB webcams leave
 # them out of their MJPEG frames ("AVI1" style); browsers usually cope, but
@@ -82,6 +95,195 @@ def ensure_dht(frame):
     if sos == -1 or frame.find(b"\xff\xc4", 0, sos) != -1:
         return frame
     return frame[:2] + DHT + frame[2:]
+
+
+def iter_jpegs(stream, stop):
+    """JPEG frames from an MJPEG byte stream, cut at their FFD8 / FFD9 markers."""
+    buf = bytearray()
+    while not stop.is_set():
+        chunk = stream.read(65536)
+        if not chunk:
+            return
+        buf += chunk
+        while True:
+            start = buf.find(SOI)
+            if start == -1:
+                buf.clear()
+                break
+            end = buf.find(EOI, start + 2)
+            if end == -1:
+                if start:
+                    del buf[:start]
+                if len(buf) > 8_000_000:   # garbage; resync
+                    buf.clear()
+                break
+            frame = bytes(buf[start:end + 2])
+            del buf[:end + 2]
+            yield frame
+
+
+def h264_codec_string(sps):
+    """The WebCodecs name of the stream ("avc1.PPCCLL") from its SPS NAL unit
+    (without start code): profile, constraint flags and level."""
+    return "avc1." + bytes(sps[1:4]).hex().upper()
+
+
+class H264Splitter:
+    """Cuts an Annex-B H.264 byte stream into frames (access units) and calls
+    on_frame(data, keyframe, sps) for each, data with 4-byte start codes. A
+    frame is only known to be complete when the next one starts, so each is
+    handed on one frame late."""
+
+    def __init__(self, on_frame):
+        self.on_frame = on_frame
+        self.buf = bytearray()
+        self.scan = 3            # where the search for the next start code resumes
+        self.synced = False
+        self.nals = []           # the frame being collected
+        self.has_slice = False
+        self.key = False
+        self.sps = None
+        self.frames = 0
+
+    def feed(self, chunk):
+        buf = self.buf
+        buf += chunk
+        if not self.synced:
+            i = buf.find(b"\x00\x00\x01")
+            if i == -1:
+                del buf[:max(0, len(buf) - 2)]
+                return
+            del buf[:i]
+            self.synced, self.scan = True, 3
+        # buf starts at a 3-byte start code; each one after it ends a NAL unit.
+        while True:
+            j = buf.find(b"\x00\x00\x01", self.scan)
+            if j == -1:
+                self.scan = max(3, len(buf) - 3)
+                if len(buf) > 8_000_000:              # garbage: resync
+                    buf.clear()
+                    self.synced = False
+                return
+            # Trailing zeros belong to the next start code (00 00 00 01) or are padding.
+            self._nal(bytes(buf[3:j]).rstrip(b"\x00"))
+            del buf[:j]
+            self.scan = 3
+
+    def _nal(self, nal):
+        if not nal:
+            return
+        kind = nal[0] & 0x1F
+        is_slice = kind in (1, 5)
+        # A new frame starts at an SEI / SPS / PPS / AUD, or at a slice that begins
+        # a picture (first_mb_in_slice = 0, so its first bit is 1).
+        if self.has_slice and (kind in (6, 7, 8, 9) or (is_slice and len(nal) > 1 and nal[1] & 0x80)):
+            self._emit()
+        if kind == 9:
+            return                                    # AUDs are dropped
+        if kind == 7:
+            self.sps = nal
+        self.nals.append(START4 + nal)
+        if is_slice:
+            self.has_slice = True
+            self.key = self.key or kind == 5
+
+    def _emit(self):
+        self.frames += 1
+        self.on_frame(b"".join(self.nals), self.key, self.sps if self.key else None)
+        self.nals, self.has_slice, self.key = [], False, False
+
+
+# ffmpeg input options for H.264 piped in frame by frame. Small reads (-blocksize)
+# and minimal probing get each frame out one frame late; the defaults, or
+# -fflags nobuffer, hold back ~16 frames (a second).
+FF_H264_IN = ["-blocksize", "512", "-flags", "low_delay", "-threads", "1", "-probesize", "32",
+              "-analyzeduration", "0", "-f", "h264", "-i", "pipe:0"]
+
+
+def h264_to_jpeg(ffmpeg, keyframe, timeout=5):
+    """One JPEG from one H.264 keyframe (with its SPS/PPS), or None."""
+    try:
+        r = subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "h264", "-i", "pipe:0",
+                            "-frames:v", "1", "-q:v", "3", "-f", "mjpeg", "pipe:1"],
+                           input=keyframe, capture_output=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout if r.stdout.startswith(SOI) else None
+
+
+class H264Jpegs:
+    """JPEGs decoded from the H.264 stream for /video_feed (browsers without
+    WebCodecs). ffmpeg runs only while someone watches it."""
+
+    def __init__(self, ffmpeg, publish):
+        self.ffmpeg, self.publish = ffmpeg, publish
+        self.wanted_at = 0.0
+        self._queue = deque()
+        self._skip = True          # decoding must start at a keyframe
+        self._event = threading.Event()
+        self._lock = threading.Lock()
+        self._thread = None
+
+    def want(self):
+        self.wanted_at = time.time()
+        with self._lock:
+            if self._thread is None or not self._thread.is_alive():
+                self._queue.clear()
+                self._skip = True
+                self._thread = threading.Thread(target=self._run, name="camera-jpeg", daemon=True)
+                self._thread.start()
+
+    def wanted(self):
+        return time.time() - self.wanted_at < JPEG_DEMAND_S
+
+    def offer(self, data, keyframe):
+        if not self.wanted():
+            return
+        with self._lock:
+            if len(self._queue) >= 8:          # ffmpeg can't keep up: drop to the next keyframe
+                self._queue.clear()
+                self._skip = True
+            if self._skip and not keyframe:
+                return
+            self._skip = False
+            self._queue.append(data)
+        self._event.set()
+
+    def _next(self):
+        with self._lock:
+            return self._queue.popleft() if self._queue else None
+
+    def _run(self):
+        cmd = [self.ffmpeg, "-hide_banner", "-loglevel", "error"] + FF_H264_IN + \
+              ["-f", "mjpeg", "-q:v", "5", "-flush_packets", "1", "pipe:1"]
+        try:
+            proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                    stderr=subprocess.DEVNULL, bufsize=0)
+        except OSError as exc:
+            log.warning("Camera: cannot start ffmpeg to make JPEGs: %s", exc)
+            return
+        stop = threading.Event()
+
+        def read():
+            for jpeg in iter_jpegs(proc.stdout, stop):
+                self.publish(jpeg)
+
+        threading.Thread(target=read, name="camera-jpeg-out", daemon=True).start()
+        try:
+            while self.wanted() and proc.poll() is None:
+                if not self._event.wait(1.0):
+                    continue
+                self._event.clear()
+                while (data := self._next()) is not None:
+                    proc.stdin.write(data)
+        except OSError:
+            pass
+        finally:
+            stop.set()
+            try:
+                proc.kill()
+            except Exception:
+                pass
 
 
 def _is_usb_node(dev):
@@ -150,8 +352,21 @@ class CameraManager:
         self.pipeline = None
         self.resolution = None
         self.started_at = None
-        self._setting = None       # (camera_source, camera_quality) the capture was started with
+        self._setting = None       # the settings the capture was started with (_setting_key)
         self._failed_at = {}       # source → when every setting of it last failed
+        self.codec = None          # "h264" or "mjpeg": what the running capture sends
+        self._sizes = deque(maxlen=120)                  # (time, bytes) of recent frames
+        self._h264 = deque(maxlen=H264_KEEP)             # (seq, keyframe, time µs, Annex-B data)
+        self.h264_seq = 0
+        self.h264_codec = None     # WebCodecs codec name, from the stream's SPS
+        self._jpegs = H264Jpegs(cfg["ffmpeg_path"], self._publish_jpeg)
+        self._jpeg_at = 0.0
+        # The camera only runs while someone watches (video streams, snapshots):
+        # camera + encoder running nonstop is what heats the Pi. It runs for the
+        # first IDLE_S after start, so a missing camera shows up in the status.
+        self._demand_at = time.time()
+        self._demand = threading.Event()
+        self._was_ok = False       # the last capture delivered pictures (standby still counts as connected)
 
     # ------------------------------------------------------------------ lifecycle
     def start(self):
@@ -180,7 +395,8 @@ class CameraManager:
 
     # ------------------------------------------------------------------ pipelines
     def _attempts(self):
-        """Capture commands to try, best first, for the configured source."""
+        """Capture commands to try, best first, for the configured source:
+        (name, resolution, command, "h264" or "mjpeg")."""
         w, h, fps = self.cfg["camera_width"], self.cfg["camera_height"], self.cfg["camera_fps"]
         q = self.cfg["camera_quality"]
         ff = self.cfg["ffmpeg_path"]
@@ -188,43 +404,74 @@ class CameraManager:
         out = ["-f", "mjpeg", "-flush_packets", "1", "pipe:1"]
         # ffmpeg's -q:v runs 2 (best) … 31 (worst); map quality 0-100 onto it.
         qv = str(max(2, min(31, round(31 - q * 0.29))))
+        # H.264 frames can't be skipped for a slow viewer the way JPEGs can, so the
+        # camera itself runs at the stream rate. A keyframe every second lets a
+        # viewer join or recover from a lost frame quickly without spending much
+        # of the bitrate on keyframes (they are several times bigger).
+        h264 = self.cfg["camera_codec"] == "h264"
+        sfps = max(1, min(fps, self.cfg["stream_fps"]))
+        intra = max(5, sfps)
+        kbps = self.cfg["video_bitrate_kbps"]
         source = self.cfg["camera_source"]
         if source == "auto":
             source = self._auto_source()
             if not source:
                 return "none", None, []
         if source == "test":
+            mjpeg = ("test pattern", f"{w}x{h}",
+                     base + ["-re", "-f", "lavfi", "-i", f"testsrc2=size={w}x{h}:rate={fps}",
+                             "-c:v", "mjpeg", "-q:v", qv] + out, "mjpeg")
+            if not h264:
+                return "test", "testsrc", [mjpeg]
             return "test", "testsrc", [
-                ("test pattern", f"{w}x{h}", base + ["-re", "-f", "lavfi", "-i", f"testsrc2=size={w}x{h}:rate={fps}",
-                                                      "-c:v", "mjpeg", "-q:v", qv] + out),
+                ("test pattern H.264", f"{w}x{h}",
+                 base + ["-re", "-f", "lavfi", "-i", f"testsrc2=size={w}x{h}:rate={sfps}", "-c:v", "libx264",
+                         "-preset", "ultrafast", "-tune", "zerolatency", "-profile:v", "high", "-g", str(intra),
+                         "-bf", "0", "-b:v", f"{kbps}k", "-x264-params", "repeat-headers=1",
+                         "-f", "h264", "-flush_packets", "1", "pipe:1"], "h264"),
+                mjpeg,
             ]
         if source == "csi":
             tool = find_csi_tool()
             if not tool:
                 return "csi", None, []
-            return "csi", "camera module", [
-                ("camera module MJPEG", f"{w}x{h}", [tool, "-t", "0", "-n", "--codec", "mjpeg", "--width", str(w),
-                                                     "--height", str(h), "--framerate", str(fps),
-                                                     "--quality", str(q), "--flush", "-o", "-"]),
-                ("camera module MJPEG", "640x480", [tool, "-t", "0", "-n", "--codec", "mjpeg", "--width", "640",
-                                                    "--height", "480", "--framerate", str(fps), "--flush", "-o", "-"]),
+
+            def vid(codec, width, height, extra):
+                return [tool, "-t", "0", "-n", "--codec", codec, "--width", str(width), "--height", str(height)] \
+                    + extra + ["--flush", "-o", "-"]
+
+            h264_args = ["--framerate", str(sfps), "--bitrate", str(kbps * 1000), "--intra", str(intra),
+                         "--inline", "--profile", "high", "--level", "4.1"]
+            mjpegs = [
+                ("camera module MJPEG", f"{w}x{h}",
+                 vid("mjpeg", w, h, ["--framerate", str(fps), "--quality", str(q)]), "mjpeg"),
+                ("camera module MJPEG", "640x480", vid("mjpeg", 640, 480, ["--framerate", str(fps)]), "mjpeg"),
             ]
+            if not h264:
+                return "csi", "camera module", mjpegs
+            # If the hardware encoder won't start, MJPEG still works.
+            return "csi", "camera module", [
+                ("camera module H.264", f"{w}x{h}", vid("h264", w, h, h264_args), "h264"),
+                ("camera module H.264", "640x480", vid("h264", 640, 480, h264_args), "h264"),
+            ] + mjpegs
         dev = self.cfg["camera_device"]
         dev = find_usb_camera() if dev in ("", "auto") else dev
         if not dev:
             return "usb", None, []
         v4l = base + ["-f", "v4l2", "-thread_queue_size", "64"]
+        # USB webcams stay MJPEG: their own JPEGs pass through with no work on the Pi,
+        # and the Pi 3's encoder couldn't keep up with re-encoding them as well.
         return "usb", dev, [
             ("USB camera MJPEG (pass-through)", f"{w}x{h}",
              v4l + ["-input_format", "mjpeg", "-video_size", f"{w}x{h}", "-framerate", str(fps), "-i", dev,
-                    "-c:v", "copy"] + out),
+                    "-c:v", "copy"] + out, "mjpeg"),
             ("USB camera raw → MJPEG", f"{w}x{h}",
              v4l + ["-input_format", "yuyv422", "-video_size", f"{w}x{h}", "-framerate", str(fps), "-i", dev,
-                    "-c:v", "mjpeg", "-q:v", qv] + out),
+                    "-c:v", "mjpeg", "-q:v", qv] + out, "mjpeg"),
             ("USB camera MJPEG (pass-through)", "640x480",
-             v4l + ["-input_format", "mjpeg", "-video_size", "640x480", "-i", dev, "-c:v", "copy"] + out),
+             v4l + ["-input_format", "mjpeg", "-video_size", "640x480", "-i", dev, "-c:v", "copy"] + out, "mjpeg"),
             ("USB camera raw → MJPEG", "640x480",
-             v4l + ["-video_size", "640x480", "-i", dev, "-c:v", "mjpeg", "-q:v", qv] + out),
+             v4l + ["-video_size", "640x480", "-i", dev, "-c:v", "mjpeg", "-q:v", qv] + out, "mjpeg"),
         ]
 
     def _auto_source(self):
@@ -247,16 +494,20 @@ class CameraManager:
             setting = self.cfg["camera_source"]
             self._setting = self._setting_key()
             if setting == "off":
-                self.source = self.device = self.pipeline = self.resolution = None
+                self.source = self.device = self.pipeline = self.resolution = self.codec = None
                 self.status_text = "OFF"
                 self.last_error = "The camera is turned off (camera_source = off)."
                 self._stop.wait(2)
+                continue
+            if self._idle():
+                self._standby()
                 continue
             source, device, attempts = self._attempts()
             if (setting, source) != last:          # another camera: start from its best setting
                 attempt_index, last = 0, (setting, source)
             self.source, self.device = source, device
             if not attempts:
+                self._was_ok = False
                 self.status_text = "NO CAMERA"
                 self.last_error = {
                     "none": "No camera found. Plug in a USB webcam or connect the Pi camera module — whichever is there is used automatically.",
@@ -265,31 +516,55 @@ class CameraManager:
                 }.get(source, "No camera found.")
                 self._stop.wait(5)
                 continue
-            name, res, cmd = attempts[attempt_index % len(attempts)]
-            ok = self._capture(name, res, cmd)
+            name, res, cmd, fmt = attempts[attempt_index % len(attempts)]
+            self.codec = fmt
+            self._setting = self._setting_key()
+            ok = self._capture(name, res, cmd, fmt)
             if self._stop.is_set():
                 break
-            if self._setting_changed():
-                continue                           # camera choice or quality changed in the app
+            if self._setting_changed() or self._idle():
+                continue                           # settings changed in the app, or nobody watching
             if not ok:
                 attempt_index += 1                 # this setting doesn't work: try the next one
                 if attempt_index % len(attempts) == 0:
                     self._failed_at[source] = time.time()
                     if source == "csi":
                         _csi_cache["present"] = None   # re-check: maybe it was unplugged
+                    self._was_ok = False
                     self.status_text = "ERROR"
                     self._stop.wait(5)             # all failed: wait, then start over
             else:
                 _csi_cache["present"] = None       # it was streaming and stopped: re-check, retry
                 self._stop.wait(2)
 
+    def touch(self):
+        """A viewer wants pictures: keep the camera on (start it if in standby)."""
+        self._demand_at = time.time()
+        self._demand.set()
+
+    def _idle(self):
+        return time.time() - self._demand_at > IDLE_S
+
+    def _standby(self):
+        if self.status_text != "STANDBY":
+            log.info("Camera: nobody watching for %d s — camera off until someone does", IDLE_S)
+            with self._cond:
+                self._h264.clear()             # old frames must not reach the next viewer
+                self.frame = None
+            self.status_text = "STANDBY"
+        self._demand.wait(2)
+        self._demand.clear()
+
     def _setting_key(self):
-        return self.cfg["camera_source"], self.cfg["camera_quality"]
+        key = (self.cfg["camera_source"], self.cfg["camera_quality"], self.cfg["camera_codec"])
+        if self.codec == "h264":
+            key += (self.cfg["video_bitrate_kbps"], self.cfg["stream_fps"])
+        return key
 
     def _setting_changed(self):
         return self._setting_key() != self._setting
 
-    def _capture(self, name, res, cmd):
+    def _capture(self, name, res, cmd, fmt):
         """Run one capture process until it ends. True if it produced frames."""
         log.info("Camera: starting %s at %s", name, res)
         self.pipeline, self.resolution = name, res
@@ -303,32 +578,24 @@ class CameraManager:
         proc = self._proc
         errlines = deque(maxlen=6)
         threading.Thread(target=self._drain_stderr, args=(proc, errlines), daemon=True).start()
-        got = 0
-        buf = bytearray()
         self.started_at = time.time()
         # A capture process can hang without exiting (camera unplugged mid-stream):
         # the read below would then block forever and the video never come back.
         threading.Thread(target=self._watchdog, args=(proc,), daemon=True).start()
         stream = proc.stdout
-        while not self._stop.is_set():
-            chunk = stream.read(65536)
-            if not chunk:
-                break
-            buf += chunk
-            while True:
-                start = buf.find(SOI)
-                if start == -1:
-                    buf.clear()
+        if fmt == "h264":
+            with self._cond:
+                self._h264.clear()             # frames of an earlier stream can't be mixed in
+            splitter = H264Splitter(self._publish_h264)
+            while not self._stop.is_set():
+                chunk = stream.read(65536)
+                if not chunk:
                     break
-                end = buf.find(EOI, start + 2)
-                if end == -1:
-                    if start:
-                        del buf[:start]
-                    if len(buf) > 8_000_000:   # garbage; resync
-                        buf.clear()
-                    break
-                frame = bytes(buf[start:end + 2])
-                del buf[:end + 2]
+                splitter.feed(chunk)
+            got = splitter.frames
+        else:
+            got = 0
+            for frame in iter_jpegs(stream, self._stop):
                 self._publish(ensure_dht(frame))
                 got += 1
         self._kill()
@@ -346,8 +613,14 @@ class CameraManager:
         _capture's blocking read returns and the camera is restarted."""
         while proc.poll() is None and not self._stop.is_set():
             time.sleep(1)
+            if self._idle():
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                return
             if self._setting_changed():
-                log.info("Camera: settings changed to %s / quality %s — restarting the capture", *self._setting_key())
+                log.info("Camera: settings changed to %s — restarting the capture", self._setting_key())
                 try:
                     proc.kill()
                 except Exception:
@@ -373,16 +646,40 @@ class CameraManager:
         except Exception:
             pass
 
+    def _captured(self, now, size):
+        """Bookkeeping for a frame from the camera (called holding _cond)."""
+        self._was_ok = True
+        self.frames_captured += 1
+        self._stamps.append(now)
+        self._sizes.append((now, size))
+        self.status_text = "STREAMING"
+        self.last_error = None
+
     def _publish(self, frame):
-        now = time.time()
         with self._cond:
+            self._captured(time.time(), len(frame))
             self.frame = frame
             self.frame_seq += 1
-            self.frames_captured += 1
-            self._stamps.append(now)
-            self.status_text = "STREAMING"
-            self.last_error = None
             self._cond.notify_all()
+
+    def _publish_jpeg(self, frame):
+        """A JPEG decoded from the H.264 stream."""
+        with self._cond:
+            self._jpeg_at = time.time()
+            self.frame = frame
+            self.frame_seq += 1
+            self._cond.notify_all()
+
+    def _publish_h264(self, data, keyframe, sps):
+        now = time.time()
+        with self._cond:
+            self._captured(now, len(data))
+            if sps:
+                self.h264_codec = h264_codec_string(sps)
+            self.h264_seq += 1
+            self._h264.append((self.h264_seq, keyframe, int(now * 1e6), data))
+            self._cond.notify_all()
+        self._jpegs.offer(data, keyframe)
 
     # ------------------------------------------------------------------ consumers
     def wait_frame(self, after_seq, timeout=2.0):
@@ -394,12 +691,58 @@ class CameraManager:
                 return self.frame_seq, self.frame
             return after_seq, None
 
+    def want_jpeg(self):
+        """With H.264, JPEGs for /video_feed are only made while it is watched:
+        call this at least every JPEG_DEMAND_S while you need them."""
+        if self.codec == "h264":
+            self._jpegs.want()
+
+    def _latest_keyframe(self):
+        with self._cond:
+            return next((f[3] for f in reversed(self._h264) if f[1]), None)
+
+    def wait_h264(self, after_seq, timeout=2.0):
+        """H.264 frames newer than after_seq, oldest first, waiting up to timeout
+        for one: a list of (seq, keyframe, time µs, data)."""
+        with self._cond:
+            if not self._h264 or self._h264[-1][0] <= after_seq:
+                self._cond.wait(timeout)
+            out = []
+            for f in reversed(self._h264):
+                if f[0] <= after_seq:
+                    break
+                out.append(f)
+            out.reverse()
+            return out
+
     def snapshot(self):
-        return self.frame if self.connected else None
+        self.touch()
+        deadline = time.time() + START_WAIT_S
+        while not self._live() and time.time() < deadline and self.status_text not in ("NO CAMERA", "ERROR", "OFF"):
+            time.sleep(0.2)                    # coming out of standby
+        if not self._live():
+            return None
+        if self.codec != "h264":
+            return self.frame
+        if self._jpegs.wanted() and self.frame is not None and time.time() - self._jpeg_at < 1.0:
+            return self.frame                  # /video_feed is being decoded: its latest picture
+        key = self._latest_keyframe()
+        return h264_to_jpeg(self.cfg["ffmpeg_path"], key) if key else None
+
+    def _live(self):
+        return bool(self._stamps) and (time.time() - self._stamps[-1]) < 3.0
 
     @property
     def connected(self):
-        return self.frame is not None and self._stamps and (time.time() - self._stamps[-1]) < 3.0
+        """Pictures now, or in standby after a capture that worked."""
+        return self._live() or (self._was_ok and self.status_text in ("STANDBY", "STARTING"))
+
+    def stream_kbps(self):
+        now = time.time()
+        recent = [(t, n) for t, n in self._sizes if now - t < 3.0]
+        if len(recent) < 2:
+            return 0
+        return round(sum(n for _, n in recent) * 8 / 1000 / max(recent[-1][0] - recent[0][0], 1.0))
 
     def measured_fps(self):
         now = time.time()
@@ -418,11 +761,15 @@ class CameraManager:
         connected = bool(self.connected)
         return {
             "camera_connected": connected,
-            "status_text": self.status_text if not connected else "STREAMING",
+            "status_text": "STREAMING" if self._live() else self.status_text,
+            "standby": self.status_text == "STANDBY",
             "measured_fps": self.measured_fps(),
             "target": f"{self.cfg['camera_width']}x{self.cfg['camera_height']} @ {self.cfg['camera_fps']} fps",
             "resolution": self.resolution,
             "pipeline": self.pipeline,
+            "codec": self.codec,
+            "h264_codec": self.h264_codec if self.codec == "h264" else None,
+            "stream_kbps": self.stream_kbps() if connected else 0,
             "camera_source": self.cfg["camera_source"],
             "source": self.source,
             "device": self.device,

@@ -5,7 +5,8 @@ Serves everything the VARUNA app expects from the drone:
   * live telemetry (/api/telemetry, WebSocket /api/ws) from the Pixhawk (ArduCopter)
   * flight commands: arm/disarm, take-off, RTL, land, mode, emergency stop
   * missions from the Missions tab, uploaded to the Pixhawk and flown in AUTO
-  * the camera at 1280x720 / 30 fps as MJPEG (/video_feed) plus snapshots
+  * the camera at 1280x720 as H.264 (/api/camera/h264, camera module) and
+    MJPEG (/video_feed), plus snapshots
   * keyboard flight from the app's Control tab (WebSocket /api/control, see control.py)
   * Pi health, live tuning, MAVLink link preference (USB / TELEM2), PIN check
   * optionally the built VARUNA web app itself (web_root)
@@ -22,6 +23,7 @@ import json
 import logging
 import os
 import socket
+import struct
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -287,9 +289,14 @@ def camera_snapshot():
 
 def mjpeg_frames():
     """Multipart MJPEG for <img src="/video_feed">, at up to stream_fps."""
-    seq, last_sent = 0, 0.0
+    # With H.264 the JPEGs are decoded from it while someone watches; the one
+    # left from earlier would be old.
+    seq = camera.frame_seq if camera.codec == "h264" else 0
+    last_sent = 0.0
     last_frame = time.time()
     while True:
+        camera.touch()
+        camera.want_jpeg()
         seq, jpeg = camera.wait_frame(seq, timeout=2.0)
         if jpeg is None:
             # No pictures (camera unplugged / missing): end the stream so the app
@@ -311,7 +318,52 @@ def mjpeg_frames():
 
 @app.get("/video_feed")
 def video_feed():
+    camera.touch()
     return StreamingResponse(mjpeg_frames(), media_type="multipart/x-mixed-replace; boundary=frame",
+                             headers={"Cache-Control": "no-cache, no-store", "X-Accel-Buffering": "no"})
+
+
+# One record per frame: data length (u32), flags (u8, 1 = keyframe), capture time
+# (u64, µs since 1970), then the frame as Annex-B H.264 (SPS/PPS before each keyframe).
+H264_RECORD = struct.Struct(">IBQ")
+
+
+def h264_frames():
+    """The camera module's H.264 frames for the app's WebCodecs player, from the
+    latest keyframe on. A viewer that falls behind (slow link) or misses frames
+    skips ahead to the newest keyframe instead of piling up delay."""
+    max_lag = max(2, int(cfg["stream_fps"]) // 2)
+    seq, need_key = -1, True
+    last_frame = time.time()
+    while camera.codec == "h264":
+        camera.touch()
+        frames = camera.wait_h264(seq, timeout=2.0)
+        if not frames:
+            if time.time() - last_frame > 15:      # no pictures: end, the app retries
+                return
+            continue
+        last_frame = time.time()
+        if need_key or frames[0][0] != seq + 1 or len(frames) > max_lag:
+            keys = [i for i, f in enumerate(frames) if f[1]]
+            seq = frames[-1][0]
+            if not keys:
+                need_key = True                    # wait for the next keyframe
+                continue
+            frames, need_key = frames[keys[-1]:], False
+        for fseq, key, ts_us, data in frames:
+            yield H264_RECORD.pack(len(data), 1 if key else 0, ts_us) + data
+            seq = fseq
+    # The camera switched to MJPEG (USB webcam, or camera_codec changed): the app
+    # reconnects, gets 409 and shows /video_feed.
+
+
+@app.get("/api/camera/h264")
+def camera_h264():
+    camera.touch()
+    if camera.codec != "h264":
+        return JSONResponse({"success": False, "codec": camera.codec,
+                             "message": "The camera is not sending H.264 now — use /video_feed."}, status_code=409)
+    return StreamingResponse(h264_frames(), media_type="application/octet-stream",
                              headers={"Cache-Control": "no-cache, no-store", "X-Accel-Buffering": "no"})
 
 

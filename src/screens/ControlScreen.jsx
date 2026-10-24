@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { api } from '../api/client'
 import { useSystem } from '../components/SystemContext'
 import { useToast } from '../components/Toast'
-import StreamImg from '../components/StreamImg'
+import DroneVideo from '../components/DroneVideo'
 import { StaleBadge, StatusOrb, CommandButton, CommandPanel } from '../components/ui'
 import { pick, num, DASH } from '../lib/format'
 import { cmd, isOk } from '../lib/commands'
@@ -165,7 +165,7 @@ export default function ControlScreen() {
       {/* ── Plain live view (no detection) ── */}
       <div className="absolute inset-0 z-0 overflow-hidden rounded-2xl border border-line" style={{ background: '#05070B' }}>
         {piUp && videoOk ? (
-          <StreamImg src={api.streamUrl()} alt="Drone camera" className="h-full w-full object-contain"
+          <DroneVideo alt="Drone camera" className="h-full w-full object-contain"
             onError={() => setVideoOk(false)} onLoad={() => setVideoOk(true)} />
         ) : (
           <div className="flex h-full w-full flex-col items-center justify-center gap-2 text-center text-sm text-muted">

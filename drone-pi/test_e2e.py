@@ -77,9 +77,21 @@ def main():
         check(True, "backend answers /api/ping as the drone")
 
         # ---------------------------------------------------------- camera
-        st = wait_for(lambda: (lambda s: s if s["measured_fps"] >= 20 else None)(c.get("/api/camera/status").json()),
+        # H.264 (the default) runs the camera at stream_fps (15); MJPEG at 30.
+        st = wait_for(lambda: (lambda s: s if s["measured_fps"] >= 12 else None)(c.get("/api/camera/status").json()),
                       20, "camera streaming")
-        check(st["resolution"] == "1280x720", f"camera at {st['resolution']}, {st['measured_fps']} fps (target 720p30)")
+        h264 = st["codec"] == "h264"
+        min_fps = 12 if h264 else 20
+        check(st["resolution"] == "1280x720", f"camera at {st['resolution']}, {st['measured_fps']} fps, {st['codec']}")
+        if h264:
+            with httpx.stream("GET", BASE + "/api/camera/h264", timeout=10) as r:
+                buf = b""
+                for chunk in r.iter_bytes():
+                    buf += chunk
+                    if len(buf) >= 13 and len(buf) >= 13 + int.from_bytes(buf[:4], "big"):
+                        break
+            check(buf[4] & 1 == 1 and buf[13:17] == b"\x00\x00\x00\x01" and st["h264_codec"].startswith("avc1."),
+                  f"/api/camera/h264 starts at a keyframe ({st['h264_codec']})")
         snap = c.get("/api/camera/snapshot")
         body = snap.content
         check(snap.status_code == 200 and body[:2] == b"\xff\xd8" and body[-2:] == b"\xff\xd9" and b"\xff\xc4" in body,
@@ -94,7 +106,7 @@ def main():
                     break
             frames = buf.count(b"--frame")
         fps = frames / (time.time() - t0)
-        check(ctype.startswith("multipart/x-mixed-replace") and fps >= 20, f"/video_feed streams MJPEG at {fps:.1f} fps")
+        check(ctype.startswith("multipart/x-mixed-replace") and fps >= min_fps, f"/video_feed streams MJPEG at {fps:.1f} fps")
 
         # ---------------------------------------------------------- health / config / misc
         h = wait_for(lambda: (lambda d: d if d["pixhawk_connected"] else None)(c.get("/api/health").json()), 60, "Pixhawk")
