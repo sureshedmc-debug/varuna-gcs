@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { api } from '../api/client'
 import { useSystem } from '../components/SystemContext'
@@ -9,9 +9,12 @@ import { ViewToggle, EYE, EYE_OFF, SWAP } from '../components/ViewToggle'
 import VideoHUD from '../components/VideoHUD'
 import MapCanvas from '../components/MapCanvas'
 import LiveDetectionMarkers from '../components/LiveDetectionMarkers'
+import LiveBoatMarkers from '../components/LiveBoatMarkers'
+import { BoatLiveCollectCard } from '../components/BoatLiveCollectCard'
+import { useBoat } from '../components/BoatContext'
+import { useRecommendedConf } from '../components/BackgroundDetect'
 import { pick, num, bool, fmtCoord, DASH } from '../lib/format'
 import { cmd } from '../lib/commands'
-import { getDetectModel } from '../lib/detector'
 
 const WebcamDetect = lazy(() => import('../components/WebcamDetect'))
 const AI_CAM = <path d="M4 7h3l1.5-2h7L17 7h3a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V8a1 1 0 011-1zm8 3a3.5 3.5 0 100 7 3.5 3.5 0 000-7z" fill="currentColor" />
@@ -63,20 +66,11 @@ export default function LiveScreen() {
   const [busy, setBusy]               = useState(null)
   const [hideWidgets, setHideWidgets] = useState(false)
   const [mainView, setMainView]       = useState('video') // 'video' | 'map' | 'webcam'
-  const [conf, setConf]               = useState(0.25)
-  // Start the slider at the confidence the model's training run found best
-  // (public/models/<selected model>.json), snapped to the slider's 5% steps.
-  useEffect(() => {
-    let alive = true
-    fetch(`/models/${getDetectModel()}.json`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((m) => {
-        const rec = Number(m?.recommended_conf)
-        if (alive && rec > 0) setConf(Math.min(0.9, Math.max(0.1, Math.round(rec * 20) / 20)))
-      })
-      .catch(() => {})
-    return () => { alive = false }
-  }, [])
+  // The slider starts at the confidence the model's training run found best.
+  const [conf, setConf]               = useRecommendedConf()
+  // The boat's live collect, on the same screen as the drone's finds.
+  const boat     = useBoat()
+  const boatLive = boat.reachable === true && !!boat.telemetry.data && !!boat.live
 
   const t         = readTelemetry(telemetry.data)
   const connected = telemetry.status === 'live' || telemetry.status === 'polling'
@@ -92,7 +86,14 @@ export default function LiveScreen() {
   const hasFix = t.lat != null && t.lng != null && Number(t.lat) !== 0
   const cLat   = hasFix ? Number(t.lat) : null
   const cLng   = hasFix ? Number(t.lng) : null
-  const center = useMemo(() => (cLat != null && cLng != null ? [cLat, cLng] : null), [cLat, cLng])
+  // No drone fix: follow the boat, so the map still shows the collecting.
+  const bt     = boat.reachable === true ? boat.telemetry.data : null
+  const bLat   = !hasFix && bt && Number.isFinite(bt.lat) && bt.lat !== 0 ? bt.lat : null
+  const bLng   = bLat != null && Number.isFinite(bt.lng) ? bt.lng : null
+  const center = useMemo(
+    () => (cLat != null && cLng != null ? [cLat, cLng] : bLat != null && bLng != null ? [bLat, bLng] : null),
+    [cLat, cLng, bLat, bLng],
+  )
 
   async function run(key, fn, okMsg) {
     setBusy(key)
@@ -140,6 +141,7 @@ export default function LiveScreen() {
               <div className="absolute inset-0 z-10">
                 <MapCanvas center={center} hasFix={hasFix}>
                   <LiveDetectionMarkers />
+                  <LiveBoatMarkers />
                 </MapCanvas>
               </div>
             )}
@@ -229,7 +231,7 @@ export default function LiveScreen() {
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 20 }}
             transition={{ type: 'spring', stiffness: 260, damping: 26 }}
-            className={`absolute right-3 ${mainView === 'video' ? 'top-14' : 'top-3'} z-20 w-[240px]`}
+            className={`absolute right-3 ${mainView === 'video' ? 'top-14' : 'top-3'} z-20 max-h-[calc(100%-6rem)] w-[240px] overflow-y-auto`}
           >
             <div
               className="rounded-2xl p-4"
@@ -281,6 +283,21 @@ export default function LiveScreen() {
                   : 'No GPS position'}
               </div>
             </div>
+
+            {/* The boat collecting what the drone finds, live */}
+            {boatLive && (
+              <div
+                className="mt-2 rounded-2xl p-2 [&>div]:mb-0"
+                style={{
+                  background: 'rgba(13,17,26,0.88)',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  backdropFilter: 'blur(16px)',
+                  boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+                }}
+              >
+                <BoatLiveCollectCard />
+              </div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
@@ -298,7 +315,7 @@ export default function LiveScreen() {
             title="Tap to swap main view"
           >
             {mainView === 'video'
-              ? <MapCanvas center={center} hasFix={hasFix} zoom={15}><LiveDetectionMarkers small /></MapCanvas>
+              ? <MapCanvas center={center} hasFix={hasFix} zoom={15}><LiveDetectionMarkers small /><LiveBoatMarkers small /></MapCanvas>
               : <VideoHUD speed={t.speed} altitude={t.alt} heading={t.heading} aiOn={aiOn} fill />
             }
             <span

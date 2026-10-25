@@ -2,7 +2,7 @@ import { useEffect, useState, lazy, Suspense } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { ToastProvider } from './components/Toast'
 import { SystemProvider, useSystem } from './components/SystemContext'
-import { BoatProvider } from './components/BoatContext'
+import { BoatProvider, useBoat } from './components/BoatContext'
 import { BoatVisionProvider } from './components/BoatVisionContext'
 import { BoatDriveProvider } from './components/BoatDriveContext'
 import { WarningBanner, deriveWarnings } from './components/WarningBanner'
@@ -14,6 +14,7 @@ import { ErrorBoundary } from './components/ErrorBoundary'
 import { wakeWordEnabled } from './lib/assistant/wakeWord'
 
 const VoiceAssistant = lazy(() => import('./components/VoiceAssistant'))
+const BackgroundDetect = lazy(() => import('./components/BackgroundDetect'))
 import IntroScreen from './screens/IntroScreen'
 import MissionControlScreen from './screens/MissionControlScreen'
 import SystemScreen from './screens/SystemScreen'
@@ -48,6 +49,19 @@ const SCREENS = {
 function SystemWarnings() {
   const { pi, backendReachable } = useSystem()
   return <WarningBanner warnings={deriveWarnings({ pi: pi.data, backendReachable })} />
+}
+
+// While the boat's live collect runs, the drone's AI keeps finding plastic for
+// it on every tab (the Live tab runs its own detection, so not there).
+function LiveCollectDetect({ tab, onOpen }) {
+  const boat = useBoat()
+  const state = boat.reachable === true ? boat.live?.state : null
+  if (tab === 'live' || (state !== 'running' && state !== 'returning')) return null
+  return (
+    <Suspense fallback={null}>
+      <BackgroundDetect onOpen={onOpen} />
+    </Suspense>
+  )
 }
 
 function Shell({ onLock }) {
@@ -132,6 +146,7 @@ function Shell({ onLock }) {
           </motion.div>
         </AnimatePresence>
       </main>
+      <LiveCollectDetect tab={tab} onOpen={() => setTab('live')} />
       <Suspense fallback={null}>
         <VoiceAssistant tab={tab} wakeSignal={wakeSignal} wakeWordOn={wakeWordOn} onWakeState={setWakeState} />
       </Suspense>
