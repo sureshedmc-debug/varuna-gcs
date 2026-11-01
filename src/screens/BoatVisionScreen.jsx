@@ -256,7 +256,12 @@ export default function BoatVisionScreen({ onNavigate }) {
           </svg>
           <span className="nl-title">Boat Vision</span>
           <Chip tone={online ? 'ok' : 'bad'} dot>{online ? 'BOAT LINK' : 'NO BOAT LINK'}</Chip>
-          {online && <Chip tone={bv.cameraUp ? 'ok' : 'bad'} dot>{bv.cameraUp ? `CAMERA · ${e.fps || 0} FPS` : 'NO CAMERA'}</Chip>}
+          {online && (
+            <Chip tone={bv.cameraUp ? 'ok' : 'bad'} dot
+              title={bv.cameraUp && boat.telemetry.data?.camera?.stream_mbps != null ? `${boat.telemetry.data.camera.stream_mbps} Mbit/s from the boat` : undefined}>
+              {bv.cameraUp ? `CAMERA · ${e.frame?.h ? `${e.frame.h}p · ` : ''}${e.fps || 0} FPS` : 'NO CAMERA'}
+            </Chip>
+          )}
           {online && bv.enabled && (
             <Chip tone={linkAlive ? 'ok' : 'warn'} dot pulse={!linkAlive} title="The boat receives what this app's AI sees">
               {linkAlive ? 'BOAT SEES AI' : 'AI NOT REACHING BOAT'}

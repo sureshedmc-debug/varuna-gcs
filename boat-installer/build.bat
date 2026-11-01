@@ -16,6 +16,9 @@ python -m PyInstaller --noconfirm --clean --onefile --console ^
   --add-data "..\boat-pi\vision.py;boat-pi" ^
   --add-data "..\boat-pi\turbidity.py;boat-pi" ^
   --add-data "..\boat-pi\drive.py;boat-pi" ^
+  --add-data "..\boat-pi\live_collect.py;boat-pi" ^
+  --add-data "..\boat-pi\collector.py;boat-pi" ^
+  --add-data "..\boat-pi\setup_wifi.sh;boat-pi" ^
   --add-data "..\boat-pi\sim_world.py;boat-pi" ^
   --add-data "..\boat-pi\requirements.txt;boat-pi" ^
   --add-data "..\boat-pi\README.md;boat-pi" ^

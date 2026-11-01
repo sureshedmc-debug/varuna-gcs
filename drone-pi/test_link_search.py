@@ -114,6 +114,30 @@ def main():
         check("data but no MAVLink" in msg and "SERIAL2_PROTOCOL" in msg, "garbage on TELEM2 → 'wrong baud/protocol' explanation")
     finally:
         link2.stop()
+
+    # USB preferred, Pixhawk plugged in while the search is cycling through TELEM2:
+    # it must switch to USB at once, not after every TELEM2 speed has had its turn.
+    sim3 = SimBoat(17.4239, 78.4738, f"tcpin:127.0.0.1:{PIXHAWK_PORT + 1}")
+    sim3.start()
+    cfg3 = Cfg(mav_connection="", link_prefer="usb", telem2_device=f"tcp:127.0.0.1:{GARBAGE_PORT}",
+               telem2_baud=57600, usb_device="/dev/ttyACM0", usb_baud=115200)
+    link3 = mav_link.DroneLink(cfg3)
+    plugged = []
+    link3._usb_devices = staticmethod(lambda: list(plugged))
+    link3.start()
+    try:
+        time.sleep(4)
+        check(not link3.fc_connected and link3.link_name == "telem2", "no USB yet: searching TELEM2")
+        plugged.append(f"tcp:127.0.0.1:{PIXHAWK_PORT + 1}")
+        t0 = time.time()
+        while time.time() - t0 < 15 and not link3.fc_connected:
+            time.sleep(0.2)
+        took = time.time() - t0
+        check(link3.fc_connected and link3.link_name == "usb" and took < 4,
+              f"plugged in over USB mid-search: connected after {took:.1f}s")
+    finally:
+        link3.stop()
+        sim3.stop()
     print("\nLINK SEARCH TESTS PASSED")
 
 

@@ -28,6 +28,7 @@ import json
 import logging
 import os
 import platform
+import socket
 import time
 from contextlib import asynccontextmanager
 from typing import Optional, Union
@@ -39,8 +40,10 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from pydantic import BaseModel, Field
 
 from camera import CameraManager
+from collector import Collector
 from config import DATA_DIR, TUNABLE, load_config, save_settings, tune
 from drive import DriveManager
+from live_collect import LiveCollect
 from mav_link import BoatLink, LinkError
 from mission import ACTIVE_STATES, MissionManager
 from turbidity import Turbidity
@@ -97,6 +100,13 @@ else:
     camera = CameraManager(cfg)
 turbidity = Turbidity(cfg, DATA_DIR, link, sim=SIM, save_settings=save_settings)
 vision = VisionManager(link, missions, cfg, DATA_DIR, turbidity)
+live = LiveCollect(link, missions, cfg, DATA_DIR)
+vision.live, live.vision = live, vision
+collector = Collector(link, cfg)
+collector.missions, collector.vision, collector.live = missions, vision, live
+live.collector = collector
+if sim_world:
+    live.on_targets_added = sim_world.add_objects_near   # the simulated river gets the plastic
 drive = DriveManager(link, cfg, vision)
 operator = {"last": time.time(), "ws": 0, "acted": False}
 
@@ -192,9 +202,12 @@ def telemetry():
         "messages": s["messages"],
         "mission": m,
         "vision": vision.summary(),
+        "live": live.summary(),
+        "collector": collector.summary(),
         "water": turbidity.summary(),
         "drive": drive.status(),
-        "camera": {"connected": bool(camera.connected), "fps": camera.measured_fps()},
+        "camera": {"connected": bool(camera.connected), "fps": camera.measured_fps(),
+                   "stream_mbps": camera.data_rate()[2] if hasattr(camera, "data_rate") else None},
         "simulated": SIM,
         "t": round(time.time(), 2),
     }
@@ -227,8 +240,11 @@ async def operator_watchdog():
         quiet = time.time() - operator["last"]
         if quiet < cfg["operator_lost_s"] or operator["acted"]:
             continue
-        if missions.status()["state"] in ("running",) and link.snapshot()["armed"]:
+        live_on = live.state in ("running", "returning")
+        if (missions.status()["state"] in ("running",) or live_on) and link.snapshot()["armed"]:
             operator["acted"] = True
+            if live_on:
+                live.operator("no contact from the VARUNA app")
             mode = "RTL" if action == "rtl" else "HOLD"
             log.warning("No contact from the VARUNA app for %.0f s — switching to %s", quiet, mode)
             try:
@@ -246,6 +262,8 @@ async def lifespan(app):
     camera.start()
     turbidity.start()
     vision.start()
+    live.start_thread()
+    collector.start()
     drive.start()
     tasks = [asyncio.create_task(broadcast_loop()), asyncio.create_task(operator_watchdog())]
     log.info("VARUNA boat backend %s ready on port %s (Pixhawk: %s)", VERSION, cfg["http_port"], cfg["mav_connection"])
@@ -259,6 +277,8 @@ async def lifespan(app):
     for t in tasks:
         t.cancel()
     drive.stop()
+    collector.stop()
+    live.stop_thread()
     vision.stop()
     turbidity.stop()
     camera.stop()
@@ -386,7 +406,8 @@ async def ws_endpoint(ws: WebSocket):
 @app.websocket("/api/drive")
 async def drive_endpoint(ws: WebSocket):
     """The app's game controller: {"s": steering -1..1, "t": throttle -1..1, "pad": name}
-    about 20 times a second. Closing the socket centres the sticks at once."""
+    about 20 times a second, or {"brake": true} (L1 + R1). Closing the socket
+    centres the sticks at once."""
     await ws.accept()
     drive.connected(True)
     try:
@@ -395,7 +416,9 @@ async def drive_endpoint(ws: WebSocket):
                 msg = json.loads(await ws.receive_text())
             except ValueError:
                 continue
-            if isinstance(msg, dict):
+            if isinstance(msg, dict) and msg.get("brake"):
+                asyncio.get_running_loop().run_in_executor(None, brake)
+            elif isinstance(msg, dict):
                 drive.input(msg.get("s"), msg.get("t"), msg.get("pad"))
     except WebSocketDisconnect:
         pass
@@ -411,16 +434,28 @@ FS_ACTIONS = {0: "do nothing", 1: "return home", 2: "hold (stop)", 3: "smart ret
 
 
 def failsafe_report():
-    """The Pixhawk's radio failsafe, read back: with a game controller instead of a
-    transmitter it is what stops the boat if the boat Pi dies."""
+    """The Pixhawk's failsafe, read back.
+
+    Game controller (no transmitter): there is no radio, so the radio failsafe
+    stays off (FS_THR_ENABLE 0) and the Pi's heartbeat is the failsafe instead
+    (FS_GCS_ENABLE): if the boat Pi dies, the Pixhawk acts after FS_GCS_TIMEOUT.
+    The Pi itself centres the sticks when the PC's controller goes quiet.
+    Transmitter: the radio failsafe (FS_THR_ENABLE) stops the boat if the
+    transmitter is lost."""
     values = {name: link.get_param(name) for name in FAILSAFE_PARAMS}
     problems = []
-    if values["FS_THR_ENABLE"] == 0:
-        problems.append("FS_THR_ENABLE is 0: if the boat Pi stopped, the Pixhawk would carry on with the last command.")
+    if cfg["rc_source"] == "gamepad":
+        needed = ("FS_GCS_ENABLE", "FS_ACTION")
+        if values["FS_GCS_ENABLE"] == 0:
+            problems.append("FS_GCS_ENABLE is 0: if the boat Pi stopped, the Pixhawk would carry on with the last command.")
+    else:
+        needed = ("FS_THR_ENABLE", "FS_ACTION")
+        if values["FS_THR_ENABLE"] == 0:
+            problems.append("FS_THR_ENABLE is 0: if the transmitter was lost, the Pixhawk would carry on with the last command.")
     if values["FS_ACTION"] == 0:
-        problems.append("FS_ACTION is 0 (do nothing): the radio failsafe would not stop the boat.")
+        problems.append("FS_ACTION is 0 (do nothing): the failsafe would not stop the boat.")
     return {"values": values, "action": FS_ACTIONS.get(int(values["FS_ACTION"] or 0)) if values["FS_ACTION"] is not None else None,
-            "ok": not problems and None not in (values["FS_THR_ENABLE"], values["FS_ACTION"]), "problems": problems,
+            "ok": not problems and None not in (values[n] for n in needed), "problems": problems,
             "rc_source": cfg["rc_source"]}
 
 
@@ -432,14 +467,394 @@ def pixhawk_failsafe():
         return fail(str(exc))
 
 
+class ParamsRequest(BaseModel):
+    values: dict[str, float]
+
+
+_PARAM_NAME = __import__("re").compile(r"^[A-Z0-9_]{1,16}$")
+
+
+@app.get("/api/pixhawk/params")
+def pixhawk_params_get(names: str = Query(..., description="Comma-separated parameter names")):
+    """Read Pixhawk parameters. A name the Pixhawk doesn't have reads as null."""
+    wanted = [n.strip().upper() for n in names.split(",") if n.strip()]
+    bad = [n for n in wanted if not _PARAM_NAME.match(n)]
+    if bad or not wanted or len(wanted) > 60:
+        return fail("Give 1–60 parameter names (letters, digits, _), e.g. ?names=FRAME_CLASS,WP_SPEED")
+    try:
+        return {"values": {n: link.get_param(n) for n in wanted}}
+    except LinkError as exc:
+        return fail(str(exc))
+
+
+@app.post("/api/pixhawk/params")
+def pixhawk_params_set(body: ParamsRequest):
+    """Set Pixhawk parameters (only while disarmed). Each one is confirmed by the
+    Pixhawk echoing the stored value; reports what changed and what didn't."""
+    bad = [n for n in body.values if not _PARAM_NAME.match(n)]
+    if bad or not body.values or len(body.values) > 60:
+        return fail("Give 1–60 parameters by their exact names.")
+    try:
+        if link.snapshot()["armed"]:
+            return fail("Disarm the boat before changing Pixhawk parameters.")
+        changed, same, failed = {}, {}, {}
+        for name, value in body.values.items():
+            before = link.get_param(name)
+            if before is None:
+                failed[name] = "the Pixhawk has no such parameter"
+                continue
+            if abs(before - value) < 1e-4:
+                same[name] = before
+                continue
+            try:
+                link.set_param(name, value)
+                changed[name] = {"from": before, "to": value}
+                log.info("Pixhawk parameter %s: %g → %g", name, before, value)
+            except LinkError as exc:
+                failed[name] = str(exc)
+        msg = f"{len(changed)} changed, {len(same)} already set" + (f", {len(failed)} failed" if failed else "")
+        return (ok if not failed else fail)(msg, changed=changed, same=same, failed=failed)
+    except LinkError as exc:
+        return fail(str(exc))
+
+
+@app.post("/api/pixhawk/reboot")
+def pixhawk_reboot():
+    """Restart the Pixhawk (needed after FRAME_CLASS or SERIAL changes). Disarmed only."""
+    try:
+        if link.snapshot()["armed"]:
+            return fail("Disarm the boat before restarting the Pixhawk.")
+        link.command_long(246, [1, 0, 0, 0, 0, 0, 0])      # MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN
+        return ok("Pixhawk restarting; it reconnects in about 10 s.")
+    except LinkError as exc:
+        return fail(str(exc))
+
+
+# ---------------------------------------------------------------------------- motor matching
+# Forward-only ESCs don't start turning at their lowest signal: each has a dead
+# band, and two ESCs rarely start at the same point. That dead band is the jerk
+# when the throttle comes in (nothing… then a surge), and different start points
+# pull the boat sideways. The Pixhawk's motor test spins one motor at an exact
+# signal and stops it itself after a few seconds; the operator finds where each
+# motor just starts, and that output's stopped point (SERVOn_TRIM/MIN) is set
+# just below it, so both motors start together from the first bit of throttle.
+MOTOR_TEST_SEQ = {"left": 3, "right": 4}                   # ArduRover: throttle left / right
+MOTOR_FUNCTION = {"left": 73, "right": 74}
+MOTOR_TEST_MAX_PWM = 1500                                  # finding the start point needs no more
+START_MARGIN_US = 15                                       # stopped point this far below the start
+
+
+class MotorTestRequest(BaseModel):
+    motor: str = Field(..., description="left | right")
+    pwm: int = Field(..., ge=900, le=MOTOR_TEST_MAX_PWM)
+    seconds: float = Field(2.0, ge=0.5, le=3.0)
+
+
+class MotorStartRequest(BaseModel):
+    motor: str = Field(..., description="left | right")
+    pwm: int = Field(..., ge=900, le=MOTOR_TEST_MAX_PWM, description="Signal where the motor just starts turning")
+
+
+def _motor_output(motor):
+    """Which output (1–8) drives this thruster, from SERVOn_FUNCTION."""
+    want = MOTOR_FUNCTION[motor]
+    for n in range(1, 9):
+        if link.get_param(f"SERVO{n}_FUNCTION") == want:
+            return n
+    raise LinkError(f"No output is set as the {motor} thruster (SERVOn_FUNCTION {want}).")
+
+
+@app.post("/api/pixhawk/motor_test")
+def pixhawk_motor_test(body: MotorTestRequest):
+    """Spin one thruster at an exact signal; the Pixhawk stops it after `seconds`. Disarmed only."""
+    motor = body.motor.lower()
+    if motor not in MOTOR_TEST_SEQ:
+        return fail("motor must be left or right.")
+    try:
+        if link.snapshot()["armed"]:
+            return fail("Disarm the boat before a motor test.")
+        if _esc["active"]:
+            return fail("An ESC calibration is running.")
+        # MAV_CMD_DO_MOTOR_TEST: motor, throttle type 1 = PWM, value, timeout s
+        result = link.command_long(209, [MOTOR_TEST_SEQ[motor], 1, body.pwm, body.seconds, 0, 0])
+        if result != 0:
+            return fail(f"The Pixhawk refused the motor test (result {result}).")
+        log.info("Motor test: %s at %d µs for %.1f s", motor, body.pwm, body.seconds)
+        return ok(f"{motor.capitalize()} motor at {body.pwm} µs for {body.seconds:g} s.")
+    except LinkError as exc:
+        return fail(str(exc))
+
+
+@app.post("/api/pixhawk/motor_start")
+def pixhawk_motor_start(body: MotorStartRequest):
+    """Save where this thruster starts turning: its stopped point goes just below it."""
+    motor = body.motor.lower()
+    if motor not in MOTOR_FUNCTION:
+        return fail("motor must be left or right.")
+    try:
+        if link.snapshot()["armed"]:
+            return fail("Disarm the boat first.")
+        n = _motor_output(motor)
+        stop = body.pwm - START_MARGIN_US
+        link.set_param(f"SERVO{n}_MIN", stop)
+        link.set_param(f"SERVO{n}_TRIM", stop)
+        link.set_param(f"SERVO{n}_MAX", 2000)
+        log.info("Motor matching: %s motor (output %d) starts at %d µs → stopped at %d µs", motor, n, body.pwm, stop)
+        return ok(f"{motor.capitalize()} motor (output {n}): stopped at {stop} µs, starts at {body.pwm} µs, full at 2000 µs.",
+                  output=n, stop=stop)
+    except LinkError as exc:
+        return fail(str(exc))
+
+
+@app.get("/api/pixhawk/motors")
+def pixhawk_motors():
+    """Each thruster's output and its stopped / full signal."""
+    try:
+        out = {}
+        for motor in MOTOR_FUNCTION:
+            try:
+                n = _motor_output(motor)
+            except LinkError:
+                out[motor] = None
+                continue
+            out[motor] = {"output": n, "stop": link.get_param(f"SERVO{n}_TRIM"), "max": link.get_param(f"SERVO{n}_MAX")}
+        return {"motors": out}
+    except LinkError as exc:
+        return fail(str(exc))
+
+
+# ---------------------------------------------------------------------------- ESC calibration
+# Teaches an ESC the Pixhawk's throttle range (1000–2000 µs), the classic way:
+# full signal when the ESC gets power, then minimum. Forward-only ESCs give a
+# short window for that: after power-up they beep twice (top learned) and want
+# the minimum within ~5 s — later, they go into their programming menu (endless
+# beeping). Far too quick to do by hand over chat, so the Pi times it:
+#
+#   1. Refused unless the battery is unplugged: the Pixhawk runs off the
+#      battery, so its 5 V rail (POWER_STATUS Vcc) reads ~4.2 V on the Pi's USB
+#      alone and ~5 V with the battery in. Full signal to a powered ESC would
+#      just run the motor flat out.
+#   2. The chosen outputs are taken off their thruster functions (DO_SET_SERVO
+#      only drives a free output) and set to full signal.
+#   3. The operator plugs the battery in; the Pi sees the rail jump, waits
+#      ESC_TOP_WAIT_S (the ESC's start-up tune + "beep-beep"), sets minimum,
+#      waits for the confirmation beeps, and puts the thrusters back with the
+#      range 1000–2000 saved.
+#
+# The outputs always go back: at the end, on cancel, if no battery is seen in
+# ESC_WAIT_BATTERY_S, by a timeout, and — if the Pi restarted in the middle —
+# when the backend next sees the Pixhawk.
+ESC_CAL_FILE = DATA_DIR / "esc_calibration.json"
+ESC_CAL_TIMEOUT_S = 180
+ESC_WAIT_BATTERY_S = 120
+ESC_TOP_WAIT_S = 4.0                  # battery in → minimum (after the "beep-beep", before the menu)
+ESC_CONFIRM_S = 5.0                   # minimum → done (the ESC's confirmation beeps)
+BOARD_V_UNPLUGGED_MAX = 4.6           # Pixhawk 5 V rail at or below this: running off the Pi's USB
+BOARD_V_BATTERY_IN = 4.7              # …at or above this: the battery is in
+ESC_PWM_LOW, ESC_PWM_HIGH = 1000, 2000
+_esc = {"active": False, "outputs": [], "functions": {}, "phase": None, "message": None, "t": 0.0, "cancel": False}
+_esc_lock = __import__("threading").Lock()
+
+
+class EscCalRequest(BaseModel):
+    step: str = Field(..., description="auto | cancel")
+    outputs: list[int] = [1, 3]
+    trim: int = Field(ESC_PWM_LOW, description="Stopped: 1000 for forward-only ESCs, 1500 for forward/reverse")
+
+
+def _set_output(n, pwm):
+    result = link.command_long(183, [n, pwm])             # MAV_CMD_DO_SET_SERVO
+    if result != 0:
+        raise LinkError(f"The Pixhawk refused to set output {n} to {pwm} µs (result {result}).")
+
+
+def _board_v():
+    """The Pixhawk's 5 V rail (volts), or None if no fresh POWER_STATUS."""
+    s = link.snapshot()
+    return s.get("board_v") if s.get("board_v") and time.time() - (s.get("board_v_t") or 0) < 5 else None
+
+
+def _esc_restore(trim=ESC_PWM_LOW, why="finished"):
+    """Outputs to minimum, thruster functions back (and, finished, the range saved). Lock held."""
+    for n in _esc["outputs"]:
+        try:
+            _set_output(n, ESC_PWM_LOW)
+        except LinkError:
+            pass
+    for n, fn in _esc["functions"].items():
+        link.set_param(f"SERVO{n}_FUNCTION", fn)
+    if why == "finished":
+        for n in _esc["outputs"]:
+            link.set_param(f"SERVO{n}_MIN", ESC_PWM_LOW)
+            link.set_param(f"SERVO{n}_MAX", ESC_PWM_HIGH)
+            link.set_param(f"SERVO{n}_TRIM", trim)
+    log.info("ESC calibration %s: outputs %s restored to functions %s", why, _esc["outputs"], _esc["functions"])
+    _esc.update(active=False, outputs=[], functions={})
+    try:
+        ESC_CAL_FILE.unlink()
+    except OSError:
+        pass
+
+
+def _esc_phase(phase, message):
+    _esc.update(phase=phase, message=message, t=time.time())
+    log.info("ESC calibration: %s", message)
+
+
+def _esc_auto(trim):
+    """The timed part, in its own thread (see above)."""
+    def wait(secs):
+        end = time.time() + secs
+        while time.time() < end:
+            if _esc["cancel"]:
+                return False
+            _esc["t"] = time.time()
+            time.sleep(0.1)
+        return True
+
+    try:
+        link.command_long(511, [125, 200000])         # SET_MESSAGE_INTERVAL: POWER_STATUS at 5 Hz
+    except LinkError:
+        pass
+    end = time.time() + ESC_WAIT_BATTERY_S
+    plugged = False
+    while time.time() < end and not _esc["cancel"]:
+        _esc["t"] = time.time()
+        v = _board_v()
+        if v is not None and v >= BOARD_V_BATTERY_IN:
+            plugged = True
+            break
+        time.sleep(0.1)
+    with _esc_lock:
+        if not _esc["active"]:
+            return
+        if not plugged:
+            why = "cancelled" if _esc["cancel"] else "no battery"
+            try:
+                _esc_restore(why=why)
+            except LinkError as exc:
+                log.warning("ESC calibration: could not restore the outputs yet: %s", exc)
+            _esc_phase(why, "Cancelled — thrusters back on their outputs." if why == "cancelled" else
+                       f"No battery seen in {ESC_WAIT_BATTERY_S} s — cancelled, thrusters back on their outputs.")
+            return
+        _esc_phase("top", f"Battery in (Pixhawk {_board_v():.2f} V). Holding full signal {ESC_TOP_WAIT_S:g} s for the ESC's beep-beep…")
+    done_top = wait(ESC_TOP_WAIT_S)
+    with _esc_lock:
+        try:
+            for n in _esc["outputs"]:
+                _set_output(n, ESC_PWM_LOW)
+        except LinkError as exc:
+            log.warning("ESC calibration: could not set minimum: %s", exc)
+        if not done_top:
+            _esc_restore(why="cancelled")
+            _esc_phase("cancelled", "Cancelled — minimum sent, thrusters back on their outputs.")
+            return
+        _esc_phase("low", f"Minimum signal sent. Waiting {ESC_CONFIRM_S:g} s for the ESC's confirmation beeps…")
+    wait(ESC_CONFIRM_S)
+    with _esc_lock:
+        try:
+            outs = list(_esc["outputs"])
+            _esc_restore(trim, "finished")
+            _esc_phase("done", f"Done: output{'s' if len(outs) > 1 else ''} {', '.join(map(str, outs))} calibrated "
+                               f"to {ESC_PWM_LOW}–{ESC_PWM_HIGH} µs, stopped at {trim} µs, thruster back on.")
+        except LinkError as exc:
+            _esc_phase("failed", f"Calibrated, but the thruster settings could not be put back yet: {exc}")
+
+
+def _esc_watchdog():
+    """Put the outputs back if a calibration is left half done (timeout, or a Pi restart)."""
+    while True:
+        time.sleep(2)
+        with _esc_lock:
+            if not _esc["active"] and ESC_CAL_FILE.exists() and link.fc_connected:
+                try:
+                    saved = json.loads(ESC_CAL_FILE.read_text())
+                    _esc.update(active=True, outputs=saved["outputs"], functions={int(k): v for k, v in saved["functions"].items()})
+                    _esc_restore(why="restored after a restart")
+                except (OSError, ValueError, KeyError, LinkError) as exc:
+                    log.warning("Could not restore the motor outputs after an ESC calibration: %s", exc)
+            elif _esc["active"] and time.time() - _esc["t"] > ESC_CAL_TIMEOUT_S:
+                try:
+                    _esc_restore(why="timed out")
+                    _esc_phase("timed out", "Timed out — thrusters back on their outputs.")
+                except LinkError as exc:
+                    log.warning("ESC calibration timeout: could not restore the outputs yet: %s", exc)
+
+
+__import__("threading").Thread(target=_esc_watchdog, name="esc-cal", daemon=True).start()
+
+
+@app.get("/api/pixhawk/esc_calibration")
+def esc_calibration_status():
+    v = _board_v()
+    return {"active": _esc["active"], "phase": _esc["phase"], "message": _esc["message"], "outputs": _esc["outputs"],
+            "board_v": v, "battery_in": None if v is None else v >= BOARD_V_BATTERY_IN}
+
+
+@app.post("/api/pixhawk/esc_calibration")
+def esc_calibration(body: EscCalRequest):
+    """auto: with the battery UNPLUGGED, the outputs go to full signal; plug the
+    battery in and the Pi does the rest (see above). cancel: stop, put back."""
+    step = body.step.lower()
+    if step == "cancel":
+        if not _esc["active"]:
+            return ok("No ESC calibration is running.")
+        _esc["cancel"] = True
+        return ok("Cancelling — the outputs go to minimum and the thrusters back on.")
+    if step != "auto":
+        return fail("step must be auto or cancel.")
+    try:
+        with _esc_lock:
+            if link.snapshot()["armed"]:
+                return fail("Disarm the boat first.")
+            if _esc["active"]:
+                return fail("A calibration is already running (cancel it first).")
+            v = _board_v()
+            if v is None:
+                return fail("Can't read the Pixhawk's board voltage, so I can't check the battery is unplugged. Not starting.")
+            if v > BOARD_V_UNPLUGGED_MAX:
+                return fail(f"The battery looks connected (Pixhawk at {v:.2f} V). Unplug it first: full signal to a "
+                            "powered ESC runs the motor flat out.")
+            outputs = sorted({int(n) for n in body.outputs if 1 <= int(n) <= 8})
+            if not outputs:
+                return fail("Give the motor outputs, e.g. [1].")
+            functions = {}
+            for n in outputs:
+                fn = link.get_param(f"SERVO{n}_FUNCTION")
+                if fn is None:
+                    return fail(f"Could not read SERVO{n}_FUNCTION.")
+                functions[n] = fn
+            ESC_CAL_FILE.write_text(json.dumps({"outputs": outputs, "functions": functions}))
+            _esc.update(active=True, outputs=outputs, functions=functions, cancel=False)
+            _esc_phase("waiting", f"Outputs {', '.join(map(str, outputs))} at full signal. Plug the battery in now "
+                                  f"(within {ESC_WAIT_BATTERY_S} s).")
+            for n in outputs:
+                link.set_param(f"SERVO{n}_FUNCTION", 0)
+            for n in outputs:
+                _set_output(n, ESC_PWM_HIGH)
+            trim = max(ESC_PWM_LOW, min(1500, int(body.trim)))
+            __import__("threading").Thread(target=_esc_auto, args=(trim,), name="esc-auto", daemon=True).start()
+            return ok(_esc["message"], board_v=v)
+    except LinkError as exc:
+        with _esc_lock:
+            if _esc["active"]:
+                try:
+                    _esc_restore(why="failed to start")
+                except LinkError:
+                    pass
+        return fail(str(exc))
+
+
 @app.post("/api/pixhawk/failsafe/fix")
 def pixhawk_failsafe_fix():
-    """Radio failsafe on, and HOLD (stop) as its action if it was set to do nothing."""
+    """The failsafe on (game controller: the Pi's heartbeat; transmitter: the radio),
+    and HOLD (stop) as its action if it was set to do nothing."""
     try:
         changed = []
-        if link.get_param("FS_THR_ENABLE") == 0:
-            link.set_param("FS_THR_ENABLE", 1)
-            changed.append("FS_THR_ENABLE = 1")
+        name = "FS_GCS_ENABLE" if cfg["rc_source"] == "gamepad" else "FS_THR_ENABLE"
+        if link.get_param(name) == 0:
+            link.set_param(name, 1)
+            changed.append(f"{name} = 1")
         if link.get_param("FS_ACTION") == 0:
             link.set_param("FS_ACTION", 2)
             changed.append("FS_ACTION = 2 (hold)")
@@ -452,25 +867,31 @@ def pixhawk_failsafe_fix():
 @app.post("/api/mavlink/arm")
 def mavlink_arm(body: ArmRequest):
     want = (not link.snapshot()["armed"]) if body.arm is None else body.arm
+    if want and _esc["active"]:
+        return fail("An ESC calibration is running: finish or cancel it first.")
     vision.operator("arm" if want else "disarm")
+    live.operator("arm" if want else "disarm")
     return run(lambda: link.arm(want))
 
 
 @app.post("/api/mavlink/mode")
 def mavlink_mode(body: ModeRequest):
     vision.operator(f"mode {body.mode.upper()}")
+    live.operator(f"mode {body.mode.upper()}")
     return run(lambda: link.set_mode(body.mode))
 
 
 @app.post("/api/mavlink/hold")
 def mavlink_hold():
     vision.operator("hold")
+    live.operator("hold")
     return run(lambda: link.set_mode("HOLD"), "Holding position.")
 
 
 @app.post("/api/mavlink/rtl")
 def mavlink_rtl():
     vision.operator("return home")
+    live.operator("return home")
     return run(lambda: link.set_mode("RTL"), "Returning to launch.")
 
 
@@ -478,7 +899,12 @@ def mavlink_rtl():
 def mavlink_stop():
     """Emergency stop: HOLD (motors stop) and disarm. Tries both even if one fails."""
     vision.operator("emergency stop")
+    live.operator("emergency stop")
     notes, okay = [], True
+    try:
+        collector.set(False, "safety")
+    except LinkError:
+        pass
     try:
         notes.append(link.set_mode("HOLD"))
     except LinkError as exc:
@@ -495,6 +921,38 @@ def mavlink_stop():
     return (ok if okay else fail)("Emergency stop: " + " ".join(notes))
 
 
+def brake():
+    """Instant brake (L1 + R1 on the controller): sticks to neutral and force-disarm
+    first, so the motors stop at once; then the roller off and HOLD."""
+    notes, okay = [], True
+    drive.brake()
+    try:
+        if link.brake_disarm():
+            notes.append("Disarmed.")
+        else:
+            okay = False
+            notes.append("The Pixhawk did not report disarmed.")
+    except LinkError as exc:
+        okay = False
+        notes.append(str(exc))
+    vision.operator("brake")
+    live.operator("brake")
+    try:
+        collector.set(False, "safety")
+    except LinkError:
+        pass
+    try:
+        link.set_mode("HOLD")
+    except LinkError:
+        pass                                 # disarmed is what matters
+    return (ok if okay else fail)("Brake: " + " ".join(notes))
+
+
+@app.post("/api/mavlink/brake")
+def mavlink_brake():
+    return brake()
+
+
 @app.get("/api/mavlink/status")
 def mavlink_status():
     s = link.snapshot()
@@ -502,6 +960,86 @@ def mavlink_status():
 
 
 # ---------------------------------------------------------------------------- missions
+# ---------------------------------------------------------------------------- live collect
+class LiveTarget(BaseModel):
+    id: str
+    lat: float
+    lng: float
+    source: Optional[str] = None
+    confidence: Optional[float] = None
+
+
+class LiveTargetsRequest(BaseModel):
+    targets: list[LiveTarget]
+
+
+class LiveStartRequest(BaseModel):
+    when_empty: str = "wait"            # wait (hold here for more) | return (home after live_return_after_s)
+    speed_mps: Optional[float] = None
+
+
+class LiveStopRequest(BaseModel):
+    rtl: bool = False
+
+
+class LiveSkipRequest(BaseModel):
+    id: str
+
+
+class CollectorRequest(BaseModel):
+    on: Optional[bool] = None            # None: toggle (the controller's R1)
+
+
+@app.post("/api/collector")
+def collector_set(body: CollectorRequest):
+    """Run / stop the intake roller (R1 on the game controller toggles it)."""
+    return run(lambda: collector.toggle() if body.on is None else collector.set(body.on))
+
+
+@app.get("/api/live/status")
+def live_status():
+    return live.summary(full=True)
+
+
+@app.post("/api/live/targets")
+def live_targets(body: LiveTargetsRequest):
+    if len(body.targets) > 200:
+        return fail("Send at most 200 items at a time.")
+    items = [t.model_dump() if hasattr(t, "model_dump") else t.dict() for t in body.targets]
+    res = live.add_targets(items)
+    n = len(res["added"])
+    return ok(f"{n} new item{'s' if n != 1 else ''}"
+              + (f", {len(res['merged'])} merged" if res["merged"] else "")
+              + (f", {len(res['rejected'])} refused" if res["rejected"] else ""), **res)
+
+
+@app.post("/api/live/start")
+def live_start(body: LiveStartRequest):
+    return run(lambda: live.start(body.when_empty, body.speed_mps))
+
+
+@app.post("/api/live/pause")
+def live_pause():
+    vision.operator("live collect paused")
+    return run(live.pause)
+
+
+@app.post("/api/live/stop")
+def live_stop(body: LiveStopRequest):
+    vision.operator("live collect stopped")
+    return run(lambda: live.stop(body.rtl))
+
+
+@app.post("/api/live/skip")
+def live_skip(body: LiveSkipRequest):
+    return run(lambda: live.skip(body.id))
+
+
+@app.post("/api/live/clear")
+def live_clear():
+    return run(lambda: f"Cleared {live.clear()} items.")
+
+
 @app.post("/api/mission/upload")
 def mission_upload(body: MissionUploadRequest):
     # .model_dump() is pydantic 2; .dict() pydantic 1 (older OS packages on 32-bit Pis).
@@ -523,6 +1061,8 @@ def mission_upload(body: MissionUploadRequest):
 
 @app.post("/api/mission/start")
 def mission_start():
+    if live.state in ("running", "returning"):
+        return fail("Live collect is running. Pause or stop it before starting a planned mission.")
     vision.operator_start()
     res = run(missions.start)
     if res["success"]:
@@ -725,6 +1265,14 @@ def water_calibrate(body: CalibrateRequest):
 
 
 # ---------------------------------------------------------------------------- simulator only
+@app.get("/api/sim/servo")
+def sim_servo():
+    """SIM only: the signal on each free output (set with DO_SET_SERVO), e.g. the roller."""
+    if not sim_boat:
+        return JSONResponse({"success": False, "message": "Only available in the simulator."}, status_code=404)
+    return {"outputs": {str(k): v for k, v in sim_boat.servo_out.items()}}
+
+
 @app.get("/api/sim/detections")
 def sim_detections(frame_time: float = Query(...)):
     """SIM only: where the simulated items and ducks are in a given frame (the
@@ -765,7 +1313,27 @@ def main():
     import uvicorn
     # No access log: the app makes several requests a second (vision, telemetry),
     # and logging each one costs a Pi Zero CPU time and wears its SD card.
-    uvicorn.run("main:app", host=args.host, port=port, log_level="info", access_log=False)
+    server = uvicorn.Server(uvicorn.Config("main:app", host=args.host, port=port, log_level="info",
+                                           access_log=False, timeout_graceful_shutdown=3))
+    server.run(sockets=[listen_socket(args.host, port)])
+
+
+# Linux lets a connection queue up to 4 MB of unsent data. On the boat's Wi-Fi
+# that is many seconds of old video waiting to go out, so the live view falls
+# further and further behind. A small send buffer keeps at most a couple of
+# frames in flight: the stream skips stale frames and stays live. Small API
+# replies don't notice.
+SEND_BUFFER = 64 * 1024
+
+
+def listen_socket(host, port):
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    sock = socket.socket(family, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, SEND_BUFFER)
+    sock.bind((host, port))
+    sock.listen(128)
+    return sock
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")

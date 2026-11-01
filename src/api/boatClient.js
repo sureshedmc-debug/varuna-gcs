@@ -66,6 +66,27 @@ export const boatApi = {
   hold: () => post('/api/mavlink/hold', undefined, 15000),
   rtl: () => post('/api/mavlink/rtl', undefined, 15000),
   emergencyStop: () => post('/api/mavlink/stop', undefined, 20000),
+  // Instant brake (L1 + R1): force-disarm first, then roller off and HOLD.
+  brake: () => post('/api/mavlink/brake', undefined, 15000),
+
+  // Live collect: the boat goes after the drone's finds as they come, in GUIDED,
+  // with no planned mission (boat-pi/live_collect.py).
+  liveStatus: () => req('/api/live/status', { timeout: 10000 }),
+  liveTargets: (targets) => post('/api/live/targets', { targets }, 15000),
+  liveStart: ({ whenEmpty = 'wait', speedMps } = {}) => post('/api/live/start', { when_empty: whenEmpty, speed_mps: speedMps }, 30000),
+  livePause: () => post('/api/live/pause', undefined, 15000),
+  liveStop: (rtl = false) => post('/api/live/stop', { rtl }, 15000),
+  liveSkip: (id) => post('/api/live/skip', { id }, 10000),
+  liveClear: () => post('/api/live/clear', undefined, 10000),
+
+  // The intake roller: on = true / false, or no argument to toggle (R1 on the controller).
+  collector: (on) => post('/api/collector', on === undefined ? {} : { on }, 10000),
+
+  // Motor matching: spin one thruster at an exact signal (the Pixhawk stops it
+  // itself), then save where it starts turning.
+  motors: () => req('/api/pixhawk/motors', { timeout: 30000 }),
+  motorTest: (motor, pwm, seconds = 2) => post('/api/pixhawk/motor_test', { motor, pwm, seconds }, 15000),
+  motorStart: (motor, pwm) => post('/api/pixhawk/motor_start', { motor, pwm }, 30000),
 
   // Collection missions. Upload runs the MAVLink mission protocol on the Pi,
   // which can take a few seconds over a 57600-baud telemetry link.

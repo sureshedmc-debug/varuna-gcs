@@ -3,7 +3,7 @@ import { boatApi, boatDriveUrl } from '../api/boatClient'
 import { useBoat } from './BoatContext'
 import { useToast } from './Toast'
 import { isOk } from '../lib/commands'
-import { BUTTON, HOLD_MS, gamepadSupported, padName, pressed, readPad, sticks } from '../lib/gamepad'
+import { BUTTON, HOLD_MS, gamepadSupported, nextMode, padName, pressed, readPad, sticks } from '../lib/gamepad'
 
 const Ctx = createContext(null)
 export const useBoatDrive = () => useContext(Ctx)
@@ -47,6 +47,8 @@ export function BoatDriveProvider({ children }) {
   const viewRef = useRef(view)
   const armedRef = useRef(false)
   armedRef.current = online && t.armed === true
+  const modeRef = useRef({ mode: null, gpsOk: false })
+  modeRef.current = { mode: online ? t.flight_mode : null, gpsOk: online && (Number(t.gps_fix) || 0) >= 3 }
 
   const act = useCallback(async (label, fn) => {
     if (busyRef.current) return
@@ -60,6 +62,22 @@ export function BoatDriveProvider({ children }) {
       setLast({ text: `${label}: ${e?.message || e}`, ok: false, t: Date.now() })
     } finally {
       busyRef.current = false
+    }
+  }, [toast])
+
+  // Instant brake: never waits behind another button's command. Sent over the
+  // open drive socket (fastest) and over HTTP (for the result).
+  const brake = useCallback(async (ws) => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      try { ws.send(JSON.stringify({ brake: true })) } catch { /* HTTP below still goes */ }
+    }
+    try {
+      const res = await boatApi.brake()
+      const okay = isOk(res)
+      setLast({ text: `BRAKE: ${res?.message || (okay ? 'done' : 'failed')}`, ok: okay, t: Date.now() })
+      if (!okay) toast.push({ level: 'bad', title: 'Controller — BRAKE', msg: res?.message || 'The boat refused.' })
+    } catch (e) {
+      setLast({ text: `BRAKE: ${e?.message || e}`, ok: false, t: Date.now() })
     }
   }, [toast])
 
@@ -93,10 +111,21 @@ export function BoatDriveProvider({ children }) {
         ws.send(JSON.stringify({ s: +st.s.toFixed(3), t: +st.t.toFixed(3), pad: padName(pad) }))
       }
 
-      // Buttons: A/B/X/Y on press, START/BACK held for a second.
+      // Buttons: L1 + R1 brake, A/B/X/Y/R1/MODE on press, START/BACK held for a second.
       if (active) {
         const now = Date.now()
         const edge = (b) => { const p = pressed(pad, b); const e = p && !prevRef.current[b]; prevRef.current[b] = p; return e }
+        const l1 = pressed(pad, BUTTON.L1)
+        const r1Press = edge(BUTTON.R1)
+        const both = l1 && pressed(pad, BUTTON.R1)
+        const brakePress = both && !prevRef.current.brake
+        prevRef.current.brake = both
+        if (brakePress) brake(ws)
+        else if (r1Press && !l1) act('Roller', () => boatApi.collector())
+        if (edge(BUTTON.MODE)) {
+          const m = nextMode(modeRef.current.mode, modeRef.current.gpsOk)
+          act(`Mode ${m}`, () => boatApi.setMode(m))
+        }
         if (edge(BUTTON.A)) act('MANUAL', () => boatApi.setMode('MANUAL'))
         if (edge(BUTTON.B)) act('HOLD', boatApi.hold)
         if (edge(BUTTON.X)) act('Resume mission', boatApi.missionStart)
@@ -135,7 +164,7 @@ export function BoatDriveProvider({ children }) {
       wsRef.current = null
       if (ws) { ws.onclose = null; try { ws.close() } catch { /* closed */ } }
     }
-  }, [want, act])
+  }, [want, act, brake])
 
   const setEnabled = useCallback((on) => {
     setEnabledState(on)

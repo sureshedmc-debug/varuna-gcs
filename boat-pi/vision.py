@@ -9,6 +9,7 @@ boat is decided here, on the boat, so it behaves sensibly when the link drops:
 
   * wildlife guard    animal in the danger zone → HOLD; zone clear 5 s → carry on
   * last-metre homing near a plastic point → GUIDED onto the item → back to AUTO
+                      (or, in live collect, back to the live queue — live_collect.py)
   * water measurement HOLD, average the turbidity sensor, carry on
   * vision watchdog   the app's vision stopped arriving → slow down / hold / continue
 
@@ -127,6 +128,7 @@ class VisionManager:
     def __init__(self, link, missions, cfg, data_dir, turbidity):
         self.link = link
         self.missions = missions
+        self.live = None                     # live_collect.LiveCollect, set by main.py
         self.cfg = cfg
         self.turbidity = turbidity
         self.catch = PhotoLog(data_dir, "catch")
@@ -356,6 +358,8 @@ class VisionManager:
             return False
 
     def _plan_speed(self):
+        if self.live is not None and self.live.state in ("running", "returning"):
+            return self.live._speed()
         flags = self.missions.plan_flags() or {}
         return flags.get("speed_mps") or self.cfg["default_speed_mps"]
 
@@ -506,6 +510,15 @@ class VisionManager:
             if self.hm["state"] != "idle":
                 self._end_wildlife(now, None)
                 self._finish_homing(now, False, "skipped by the operator (wildlife)")
+            elif self.live is not None and self.live.state == "running":
+                if self.live.current:
+                    try:
+                        self.live.skip(self.live.current)
+                    except LinkError:
+                        pass
+                self._resume_mode("Resume", "GUIDED")
+                self._end_wildlife(now, None)
+                self._event("Skipped this item because of wildlife")
             else:
                 wp = self.missions.waypoint_at(s["mission_seq"])
                 if wp:
@@ -618,6 +631,8 @@ class VisionManager:
             self._event(f"Homing stopped: the boat left GUIDED ({s['flight_mode']})")
             if h["wid"]:
                 self.hm_skip.add(h["wid"])
+            if h.get("source") == "live" and self.live is not None:
+                self.live.homing_aborted(h["wid"])
             self.hm = self._idle_homing()
             return
         if not alive:
@@ -677,6 +692,9 @@ class VisionManager:
                 self._finish_homing(now, False, "nothing came up the ramp")
 
     def _maybe_start_homing(self, now, s, alive):
+        if self.live is not None and self.live.state == "running":
+            self._maybe_start_live_homing(now, s, alive)
+            return
         flags = self.missions.plan_flags()
         if not (self.cfg["homing_enabled"] and flags and flags["homing"]) or self.operator_paused or not alive:
             return
@@ -704,6 +722,25 @@ class VisionManager:
         self.stats["attempts"] += 1
         self._event(f"Homing: taking over for item {item}")
 
+    def _maybe_start_live_homing(self, now, s, alive):
+        """Live collect: the boat is already in GUIDED, heading to the item; take
+        over for the last metres when it is close and the camera is watching."""
+        if not self.cfg["homing_enabled"] or self.operator_paused or not alive:
+            return
+        if not s["armed"] or s["flight_mode"] != "GUIDED" or s["lat"] is None:
+            return
+        wp = self.live.wants_homing(s)
+        if not wp:
+            return
+        wid, lat, lng = wp
+        item = self.live.item_number(wid)
+        self.hm = {**self._idle_homing(), "state": "search", "wid": wid, "seq": None, "source": "live",
+                   "wp": (lat, lng), "t_state": now, "item": item}
+        self._cmd("Homing: slow down", self.link.set_speed, self.cfg["homing_speed_mps"])
+        self._goto(now, (lat, lng))
+        self.stats["attempts"] += 1
+        self._event(f"Homing: taking over for item {item}")
+
     def _goto(self, now, point):
         self.hm["last_goto"] = now
         self._cmd("Homing target", self.link.goto, point[0], point[1])
@@ -711,6 +748,15 @@ class VisionManager:
     def _finish_homing(self, now, collected, reason):
         h = self.hm
         wid, seq = h["wid"], h["seq"]
+        if h.get("source") == "live":
+            self.stats["collected" if collected else "missed"] += 1
+            self._event(f"Homing: item {h.get('item')} {'collected' if collected else 'missed'} — {reason}",
+                        "info" if collected else "warn")
+            self.hm["state"] = "resuming"
+            self._cmd("Live collect speed", self.link.set_speed, self._plan_speed())
+            self.live.homing_finished(wid, collected, "camera")
+            self.hm = self._idle_homing()
+            return
         self.missions.mark_item(wid, collected, how="camera" if collected else "missed")
         self.stats["collected" if collected else "missed"] += 1
         self._event(f"Homing: item {self._item_number(wid)} {'collected' if collected else 'missed'} — {reason}",
@@ -725,11 +771,20 @@ class VisionManager:
     def _abort_homing(self, reason):
         self._event(f"Homing stopped: {reason} — continuing by GPS", "warn")
         self.stats["aborted"] = self.stats.get("aborted", 0) + 1
+        if self.hm.get("source") == "live":
+            wid = self.hm["wid"]
+            self.hm["state"] = "resuming"
+            self._cmd("Live collect speed", self.link.set_speed, self._plan_speed())
+            self.live.homing_aborted(wid)
+            self.hm = self._idle_homing()
+            return
         self.hm["state"] = "resuming"
         self._resume_mode("Back to the mission", "AUTO")
         self.hm = self._idle_homing()
 
     def _item_number(self, wid):
+        if self.hm.get("source") == "live" and self.live is not None:
+            return self.live.item_number(wid)
         st = self.missions.status()
         for i, w in enumerate(st.get("waypoints") or [], 1):
             if w["id"] == wid:

@@ -2,11 +2,14 @@
 Driving the boat with a game controller instead of an RC transmitter.
 
 Part 1 (in-process: simulated Pixhawk with NO transmitter + the boat's link and
-drive manager): arming works only because the Pi streams RC overrides; MANUAL
-driving follows the sticks with the throttle limit; a closed controller socket
-centres the sticks at once; a silent controller link puts the boat in HOLD; if
-the boat Pi dies, the Pixhawk's own radio failsafe stops the boat; Pixhawk
-parameters can be read and set; with a transmitter nothing is sent.
+drive manager), set up as the real boat is: radio failsafe off, the Pi's
+heartbeat failsafe on (FS_GCS_ENABLE 1, FS_GCS_TIMEOUT 3, FS_ACTION Hold).
+It arms with no transmitter; MANUAL driving follows the sticks with the
+throttle limit; a closed controller socket centres the sticks at once; a silent
+controller link puts the boat in HOLD; Pixhawk parameters can be read and set;
+if the boat Pi dies mid-throttle (the last stick value stays in force, as on a
+Pixhawk with no receiver), the heartbeat failsafe stops the boat; with a
+transmitter nothing is sent.
 
 Part 2 (the real backend over HTTP): the /api/drive WebSocket the app uses,
 telemetry, and the failsafe check endpoints.
@@ -59,7 +62,8 @@ def moved(sim, start):
 
 def part1():
     print("Part 1 — no transmitter, simulated Pixhawk")
-    sim = SimBoat(*HOME, "tcpin:127.0.0.1:5841", sim_rate=1.0, no_transmitter=True)
+    sim = SimBoat(*HOME, "tcpin:127.0.0.1:5841", sim_rate=1.0, no_transmitter=True,
+                  params={"FS_THR_ENABLE": 0, "FS_GCS_ENABLE": 1, "FS_GCS_TIMEOUT": 3, "FS_ACTION": 2})
     sim.start()
     link = mav_link.BoatLink("tcp:127.0.0.1:5841", 115200)
     link.start()
@@ -67,19 +71,14 @@ def part1():
     drive = drive_mod.DriveManager(link, cfg)
     try:
         wait_for(lambda: link.fc_connected, 20, "link")
-        # Without the Pi's overrides the Pixhawk has no radio: arming is refused.
-        try:
-            link.arm(True)
-            armed_without = True
-        except mav_link.LinkError as exc:
-            armed_without = False
-            why = str(exc)
-        check(not armed_without and "Radio failsafe" in why, f"no transmitter, no overrides → arming refused ({why})")
-
         drive.start()
-        wait_for(lambda: not sim.rc_failsafe, 5, "radio failsafe cleared by the Pi's overrides")
-        check(True, "the Pi's neutral overrides clear the radio failsafe")
-        check(link.arm(True).startswith("Armed"), "arms with no transmitter")
+        wait_for(lambda: sim.rc["t"] > 0, 5, "the Pi's overrides")
+        check(sim.rc["thr"] == 1500 and sim.rc["steer"] == 1500, "the Pi sends neutral (1500 µs) when nobody drives")
+        check(link.arm(True).startswith("Armed"), "arms with no transmitter (radio failsafe off)")
+        drive.input(0, 0.5)
+        half = drive.pwm()[1]
+        drive.input(0, 0)
+        check(half == 1562, f"throttle curve: half stick at a 50% limit → {half} µs (1562 with expo 0.5, 1600 linear)")
         link.set_mode("MANUAL")
 
         drive.connected(True)
@@ -115,20 +114,27 @@ def part1():
         check(any("Controller link lost" in e["text"] for e in drive.events),
               f"controller link lost while driving → HOLD after {time.time() - t_quiet:.1f} s")
 
-        # The boat Pi dies: no more overrides. The Pixhawk's radio failsafe must stop it.
+        check(link.get_param("FS_ACTION") == 2.0, "reads Pixhawk parameters (FS_ACTION = 2)")
+        check(link.set_param("FS_ACTION", 1) == 1.0 and link.get_param("FS_ACTION") == 1.0, "sets a parameter and confirms it")
+        link.set_param("FS_ACTION", 2)
+
+        # The boat Pi dies mid-throttle: no more overrides and no more heartbeats.
+        # The last stick value stays in force (no receiver), so the boat keeps
+        # going until the Pixhawk's heartbeat failsafe holds it.
         link.set_mode("MANUAL")
         end = time.time() + 1.5
         while time.time() < end:
             drive.input(0, 1.0)
             time.sleep(0.05)
         drive.stop()
+        link.stop()
         t_dead = time.time()
-        wait_for(lambda: sim.mode == mav_link.ROVER_MODES["HOLD"], 6, "Pixhawk radio failsafe")
-        check(sim.rc_failsafe, f"Pi dead → the Pixhawk's radio failsafe holds the boat after {time.time() - t_dead:.1f} s")
-
-        check(link.get_param("FS_ACTION") == 2.0, "reads Pixhawk parameters (FS_ACTION = 2)")
-        check(link.set_param("FS_ACTION", 1) == 1.0 and link.get_param("FS_ACTION") == 1.0, "sets a parameter and confirms it")
-        link.set_param("FS_ACTION", 2)
+        check(sim.speed > 0.5, f"Pi dead: the boat is still driving on the last stick value ({sim.speed:.1f} m/s)")
+        wait_for(lambda: sim.mode == mav_link.ROVER_MODES["HOLD"], 8, "Pixhawk heartbeat failsafe")
+        took = time.time() - t_dead
+        check(sim.gcs_failsafe and took < 5.5, f"Pi dead → the heartbeat failsafe holds the boat after {took:.1f} s")
+        wait_for(lambda: sim.speed == 0.0, 2, "stopped in HOLD")
+        check(True, "…and it stops")
     finally:
         link.stop()
         sim.stop()
@@ -160,7 +166,11 @@ def part2():
     print("Part 2 — the backend's /api/drive socket and failsafe endpoints")
     here = os.path.dirname(os.path.abspath(__file__))
     port = 8851
+    board = os.path.join(tempfile.gettempdir(), "test_gamepad_board_mv.txt")
+    with open(board, "w") as f:
+        f.write("5100")                            # battery in
     env = dict(os.environ, BOAT_RC_SOURCE="gamepad", BOAT_SIM_TCP_PORT="5843", PYTHONUNBUFFERED="1",
+               BOAT_SIM_BOARD_FILE=board,
                PYTHONIOENCODING="utf-8", BOAT_CAMERA_SOURCE="off",
                BOAT_SIM_PARAMS=json.dumps({"FS_THR_ENABLE": 0, "FS_ACTION": 0}))   # a badly set-up Pixhawk
     log = open(os.path.join(tempfile.gettempdir(), "test_gamepad_backend.log"), "w", encoding="utf-8")
@@ -173,11 +183,61 @@ def part2():
         check(t["drive"]["source"] == "gamepad", "telemetry reports driving by game controller")
         check(c.get("/api/boat/info").json()["rc_source"] == "gamepad", "/api/boat/info reports it too")
         fs = c.get("/api/pixhawk/failsafe").json()
-        check(not fs["ok"] and len(fs["problems"]) == 2, f"failsafe check flags FS_THR_ENABLE=0 and FS_ACTION=0: {fs['problems']}")
+        check(not fs["ok"] and len(fs["problems"]) == 2, f"failsafe check flags FS_GCS_ENABLE=0 and FS_ACTION=0: {fs['problems']}")
         r = c.post("/api/pixhawk/failsafe/fix").json()
         check(r["success"] and r["report"]["ok"], f"failsafe fix: {r['message']}")
         fs = c.get("/api/pixhawk/failsafe").json()
         check(fs["ok"] and fs["action"] == "hold (stop)", f"failsafe now: {fs['values']}")
+        # ESC calibration (automatic): refused with the battery in; with it out, output 1
+        # goes to full signal, and when the battery goes in the Pi waits, sets minimum,
+        # and puts the thruster back with the range 1000–2000.
+        esc = lambda step, **kw: c.post("/api/pixhawk/esc_calibration", json={"step": step, **kw}, timeout=60).json()
+        status = lambda: c.get("/api/pixhawk/esc_calibration").json()
+        wait_for(lambda: status()["board_v"], 10, "board voltage from POWER_STATUS")
+        r = esc("auto", outputs=[1])
+        check(not r["success"] and "battery looks connected" in r["message"], f"refused with the battery in: {r['message'][:70]}")
+        with open(board, "w") as f:
+            f.write("4200")                        # battery unplugged: Pixhawk on USB
+        wait_for(lambda: status()["battery_in"] is False, 5, "battery out seen")
+        r = esc("auto", outputs=[1])
+        p = c.get("/api/pixhawk/params?names=SERVO1_FUNCTION,SERVO3_FUNCTION").json()["values"]
+        check(r["success"] and p == {"SERVO1_FUNCTION": 0.0, "SERVO3_FUNCTION": 74.0},
+              "battery out → output 1 freed at full signal, output 3 untouched")
+        check(not c.post("/api/mavlink/arm", json={"arm": True}).json()["success"], "arming is refused during an ESC calibration")
+        time.sleep(1.5)
+        check(status()["phase"] == "waiting", "…waiting for the battery")
+        t_in = time.time()
+        with open(board, "w") as f:
+            f.write("5100")                        # battery plugged in
+        wait_for(lambda: status()["phase"] == "low", 8, "minimum after the battery goes in")
+        took = time.time() - t_in
+        check(3.9 <= took <= 6.0, f"minimum sent {took:.1f} s after the battery went in (top held ~4 s)")
+        wait_for(lambda: status()["phase"] == "done", 10, "calibration done")
+        p = c.get("/api/pixhawk/params?names=SERVO1_FUNCTION,SERVO1_MIN,SERVO1_TRIM,SERVO1_MAX").json()["values"]
+        check(p == {"SERVO1_FUNCTION": 73.0, "SERVO1_MIN": 1000.0, "SERVO1_TRIM": 1000.0, "SERVO1_MAX": 2000.0},
+              f"done: thruster back on output 1, range 1000–2000, stopped at 1000 — {status()['message']}")
+        # Cancel while waiting: the thruster goes straight back.
+        with open(board, "w") as f:
+            f.write("4200")
+        wait_for(lambda: status()["battery_in"] is False, 5, "battery out seen")
+        check(esc("auto", outputs=[1])["success"], "second run started")
+        check(esc("cancel")["success"], "cancel")
+        wait_for(lambda: not status()["active"], 5, "cancelled")
+        p = c.get("/api/pixhawk/params?names=SERVO1_FUNCTION").json()["values"]
+        check(p["SERVO1_FUNCTION"] == 73.0 and status()["phase"] == "cancelled", "cancel → thruster back on output 1")
+        with open(board, "w") as f:
+            f.write("5100")
+
+        # Motor matching: spin one thruster at an exact signal, save where it starts.
+        r = c.post("/api/pixhawk/motor_test", json={"motor": "left", "pwm": 1150, "seconds": 2}).json()
+        check(r["success"], f"motor test: {r['message']}")
+        check(not c.post("/api/pixhawk/motor_test", json={"motor": "left", "pwm": 1900}).json().get("success", False),
+              "motor test above 1500 µs is refused")
+        r = c.post("/api/pixhawk/motor_start", json={"motor": "right", "pwm": 1130}).json()
+        m = c.get("/api/pixhawk/motors").json()["motors"]
+        check(r["success"] and m["right"] == {"output": 3, "stop": 1115.0, "max": 2000.0} and m["left"]["output"] == 1,
+              f"motor start saved: right (output 3) stopped at 1115 µs, starts at 1130 — {m}")
+
         r = c.post("/api/mavlink/arm", json={"arm": True}).json()
         check(r["success"], f"arm through the API with no transmitter: {r['message']}")
         r = c.post("/api/mavlink/mode", json={"mode": "MANUAL"}).json()
@@ -201,6 +261,31 @@ def part2():
               "max throttle is a live setting (0.3)")
         t = asyncio.run(drive_for(2.5, 0, 1))
         check(abs(t["groundspeed"] - 0.6) < 0.15, f"…and limits the speed: {t['groundspeed']:.2f} m/s")
+
+        # Instant brake (L1 + R1): sent over the drive socket while driving.
+        async def brake_while_driving():
+            async with websockets.connect(f"ws://127.0.0.1:{port}/api/drive") as ws:
+                for _ in range(40):
+                    await ws.send(json.dumps({"s": 0, "t": 1, "pad": "Test Pad"}))
+                    await asyncio.sleep(0.05)
+                t0 = time.time()
+                await ws.send(json.dumps({"brake": True}))
+                while c.get("/api/telemetry").json()["armed"] and time.time() - t0 < 3:
+                    await ws.send(json.dumps({"s": 0, "t": 1, "pad": "Test Pad"}))   # stick still pushed
+                    await asyncio.sleep(0.02)
+                return time.time() - t0
+
+        took = asyncio.run(brake_while_driving())
+        check(took < 1.0, f"brake over the drive socket disarmed in {took:.2f} s")
+        wait_for(lambda: c.get("/api/telemetry").json()["flight_mode"] == "HOLD", 4, "HOLD after the brake")
+        check(c.get("/api/telemetry").json()["collector"]["on"] is False, "roller off after the brake")
+        check(c.post("/api/mavlink/arm", json={"arm": True}).json()["success"], "re-arm after the brake")
+        t0 = time.time()
+        r = c.post("/api/mavlink/brake").json()
+        took = time.time() - t0
+        t = c.get("/api/telemetry").json()
+        check(r["success"] and not t["armed"] and t["flight_mode"] == "HOLD",
+              f"brake over HTTP: {r['message']} ({took:.2f} s)")
     finally:
         proc.terminate()
         proc.wait(10)

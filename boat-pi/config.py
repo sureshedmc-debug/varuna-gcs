@@ -30,10 +30,14 @@ DEFAULTS = {
     "disarm_on_complete": True,
     # Safety: reject any target farther than this from the boat (metres).
     "max_distance_m": 1500,
-    # Optional collector motor/servo switched on for the mission (0 = none).
+    # The intake roller (collector.py): the Pixhawk output its ESC is on (0 = none;
+    # that output's SERVOn_FUNCTION must be 0). Runs near each item and on R1.
     "collector_servo": 0,
-    "collector_pwm_on": 1900,
-    "collector_pwm_off": 1100,
+    "collector_pwm_on": 1800,         # roller running (a forward/reverse brushed ESC: >1500 = forward)
+    "collector_pwm_off": 1500,        # roller stopped: 1500 for a forward/reverse ESC, 1000 for forward-only
+    # ...or a relay module on a Pi GPIO pin (BCM number, 0 = none; overrides the ESC output).
+    "collector_relay_gpio": 0,
+    "collector_relay_active_low": True,   # most relay modules: IN pulled low = on
     # What to do if the VARUNA app stops talking to the boat during a mission
     # (e.g. NetBird drops): "none" keeps collecting, "hold" stops, "rtl" comes home.
     "operator_lost_action": "none",
@@ -44,13 +48,22 @@ DEFAULTS = {
 
     # ---- Camera (USB webcam over the intake ramp, looking forward and down).
     # 640x360 at 15 fps keeps a Pi Zero's software JPEG encoder within budget.
-    "camera_source": "auto",          # auto | csi | usb | test | sim | off
+    "camera_source": "auto",          # auto | csi | usb | phone | test | sim | off
     "camera_device": "auto",
     "camera_width": 640,
     "camera_height": 360,
     "camera_fps": 15,
     "camera_quality": 75,
     "stream_fps": 15,
+    # An Android phone on the USB cable (camera_source "phone"): captured at the
+    # phone's full 1080p / 30 fps and passed straight through (no re-encoding);
+    # the app is sent stream_fps of those frames, as Wi-Fi + NetBird allow.
+    # Phones with USB webcam mode (Android 14+) are used directly; others run the
+    # IP Webcam app, reached over USB debugging (adb) on phone_app_port.
+    "phone_width": 1920,
+    "phone_height": 1080,
+    "phone_fps": 30,
+    "phone_app_port": 8080,
     "ffmpeg_path": "ffmpeg",
     "telemetry_hz": 4.0,              # live telemetry pushes to the app per second
     # Pi Zero: lighter defaults (LITE_PROFILE) so a single slow core keeps up.
@@ -65,6 +78,7 @@ DEFAULTS = {
     #   missions, and if the Pi dies its own radio failsafe stops the boat (FS_ACTION).
     "rc_source": "transmitter",
     "gamepad_max_throttle": 0.6,      # full stick = this share of full throttle
+    "gamepad_throttle_expo": 0.5,     # 0 = linear; higher = gentler near the centre, full at the end
     "gamepad_timeout_s": 0.5,         # no controller input this long → sticks centred
     "gamepad_lost_s": 3.0,            # …this long while driving in MANUAL → HOLD
     # Where the camera sits: used to turn a spot in the picture into a spot on the water.
@@ -87,6 +101,13 @@ DEFAULTS = {
     "homing_capture_m": 1.5,          # this close (just before the ramp hides it): drive straight through
     "homing_drive_through_m": 1.5,
     "homing_confirm_s": 4.0,          # wait this long for the catch counter after a capture
+    # ---- Live collect (live_collect.py): the boat goes after the drone's finds, no planned mission.
+    "live_arrive_m": 1.5,             # this close to an item (no camera homing): drive through it
+    "live_roller_on_m": 5.0,          # intake roller on this close to an item
+    "live_dwell_s": 4.0,              # after driving through: wait this long for the ramp
+    "live_merge_m": 2.0,              # a new find this close to a queued one is the same item
+    "live_return_after_s": 30.0,      # "return when empty": nothing new for this long → home
+    "live_target_timeout_s": 180.0,   # give up on an item not reached in this time
 
     # ---- Wildlife-safe mode
     "wildlife_enabled": True,
@@ -115,19 +136,24 @@ DEFAULTS = {
     "measure_s": 20.0,                # "Measure here": hold and average this long
 }
 
-_BOOL_KEYS = {"disarm_on_complete", "homing_enabled", "wildlife_enabled", "turbidity_enabled"}
+_BOOL_KEYS = {"disarm_on_complete", "homing_enabled", "wildlife_enabled", "turbidity_enabled",
+              "collector_relay_active_low"}
 _INT_KEYS = {"mav_baud", "http_port", "max_waypoints", "collector_servo", "collector_pwm_on", "collector_pwm_off",
+             "collector_relay_gpio",
              "operator_lost_s", "camera_width", "camera_height", "camera_fps", "camera_quality", "stream_fps",
-             "bin_capacity_items", "turb_i2c_bus", "turb_i2c_addr", "turb_channel"}
+             "bin_capacity_items", "turb_i2c_bus", "turb_i2c_addr", "turb_channel",
+             "phone_width", "phone_height", "phone_fps", "phone_app_port"}
 _FLOAT_KEYS = {"default_hold_s", "default_speed_mps", "max_distance_m", "sim_home_lat", "sim_home_lng",
                "camera_height_m", "camera_tilt_deg", "camera_hfov_deg", "ramp_top", "count_line",
                "zone_x1", "zone_x2", "zone_y1",
                "homing_start_m", "homing_speed_mps", "homing_accept_m", "homing_search_s", "homing_lost_s",
                "homing_capture_m", "homing_drive_through_m", "homing_confirm_s",
+               "live_arrive_m", "live_roller_on_m", "live_dwell_s", "live_merge_m", "live_return_after_s",
+               "live_target_timeout_s",
                "wildlife_clear_s", "wildlife_alert_s", "vision_timeout_s", "vision_lost_speed_mps",
                "motion_sensitivity", "turb_divider", "turb_clear_volts", "turb_ref_volts", "turb_ref_ntu",
                "turb_log_every_s", "measure_s", "telemetry_hz",
-               "gamepad_max_throttle", "gamepad_timeout_s", "gamepad_lost_s"}
+               "gamepad_max_throttle", "gamepad_throttle_expo", "gamepad_timeout_s", "gamepad_lost_s"}
 
 # Pi Zero defaults: the camera's JPEG encoding is done in software, on one slow
 # core, and the video goes over NetBird; 10 fps at quality 70 is about half the
@@ -157,6 +183,13 @@ TUNABLE = {
     "zone_x1": ("float", 0, 0.5), "zone_x2": ("float", 0.5, 1), "zone_y1": ("float", 0, 0.95),
     "measure_s": ("float", 5, 120), "turb_divider": ("float", 1, 3),
     "gamepad_max_throttle": ("float", 0.1, 1),
+    "gamepad_throttle_expo": ("float", 0, 0.9),
+    "live_arrive_m": ("float", 0.5, 5), "live_roller_on_m": ("float", 1, 20), "live_dwell_s": ("float", 0, 30),
+    "live_merge_m": ("float", 0.5, 10), "live_return_after_s": ("float", 5, 600),
+    "live_target_timeout_s": ("float", 30, 900),
+    "collector_servo": ("int", 0, 16),
+    "collector_pwm_on": ("int", 1000, 2000), "collector_pwm_off": ("int", 1000, 2000),
+    "collector_relay_gpio": ("int", 0, 27), "collector_relay_active_low": ("bool",),
 }
 
 
@@ -242,6 +275,7 @@ def load_config():
     if cfg["rc_source"] not in ("transmitter", "gamepad"):
         cfg["rc_source"] = "transmitter"
     cfg["gamepad_max_throttle"] = max(0.1, min(1.0, float(cfg["gamepad_max_throttle"])))
+    cfg["gamepad_throttle_expo"] = max(0.0, min(0.9, float(cfg["gamepad_throttle_expo"])))
     return cfg
 
 

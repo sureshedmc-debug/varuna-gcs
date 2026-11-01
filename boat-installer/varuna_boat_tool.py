@@ -19,7 +19,11 @@ once, then offers:
  11. Calibrate the turbidity sensor in clear water.
  12. Find the Pixhawk: what the boat tried on each port and speed.
  13. Driving by hand: a game controller on the PC (no RC transmitter) or an
-     RC transmitter; checks the Pixhawk's radio failsafe.
+     RC transmitter; checks the Pixhawk's failsafe (the Pi's heartbeat with a
+     controller, the radio with a transmitter).
+ 14. Boat camera: a USB webcam or an Android phone on the USB cable (1080p /
+     30 fps; USB webcam mode, or the IP Webcam app for phones without it), how
+     many frames a second go to the app, and the data rate.
 
 Works on 64-bit and 32-bit Raspberry Pi OS (Pi Zero, Pi 3/4/5). On 32-bit,
 FastAPI and pydantic come from the OS packages, because building pydantic
@@ -47,22 +51,24 @@ from pathlib import Path
 
 import paramiko
 
-VERSION = "1.3.0"
+VERSION = "1.7.0"
 APP_DIR_NAME = "varuna-boat"
 SERVICE = "varuna-boat"
 HTTP_PORT = 8000
 PAYLOAD_FILES = [
     "main.py", "config.py", "mav_link.py", "mission.py", "sim_vehicle.py",
     "camera.py", "camera_model.py", "vision.py", "turbidity.py", "sim_world.py", "drive.py",
+    "live_collect.py", "collector.py", "setup_wifi.sh",
     "requirements.txt", "README.md", "boat_config.example.json", "test_e2e.py",
 ]
-APT_PACKAGES = "python3-venv python3-dev python3-pip libxml2-dev libxslt1-dev curl i2c-tools"
+APT_PACKAGES = "python3-venv python3-dev python3-pip libxml2-dev libxslt1-dev curl i2c-tools usb-modeswitch"
 # 32-bit Pis: the web framework comes from the OS (no compiling pydantic on a Pi Zero).
 APT_PACKAGES_32 = ("python3-fastapi python3-uvicorn python3-pydantic python3-psutil python3-serial "
                    "python3-smbus2 python3-websockets python3-lxml")
 # The boat camera is a USB webcam: ffmpeg passes its MJPEG through to the app,
 # v4l-utils lists the camera and what it can send.
-CAMERA_PACKAGES = "ffmpeg v4l-utils"
+# adb: phones without USB webcam mode stream through the IP Webcam app over USB debugging.
+CAMERA_PACKAGES = "ffmpeg v4l-utils adb"
 
 
 def is_32bit(ctx):
@@ -596,18 +602,76 @@ if command -v i2cdetect >/dev/null 2>&1 && [ -e /dev/i2c-1 ]; then i2cdetect -y 
         warn("I2C isn't active yet — it will be after the reboot.")
 
 
+CAMERA_LABEL = {"usb": "USB webcam", "phone": "Android phone on USB"}
+PHONE_HELP = ("Connect the phone through a POWERED USB hub (a Pi Zero cannot charge a phone). On the phone: "
+              "USB preferences → Webcam (Android 14+). No Webcam option? Turn on Developer options → "
+              "USB debugging, install the IP Webcam app, open it and tap Start server.")
+
+
+def _report_phone_app(pi, ctx):
+    """A phone without USB webcam mode: check the IP Webcam route (adb over the USB cable).
+    The boat backend does the rest by itself (forwards the port, opens the app, sets 1080p)."""
+    _, out = pi.run("command -v adb >/dev/null || { echo NO_ADB; exit 0; }; "
+                    "timeout 20 adb devices 2>/dev/null | tail -n +2", check=False)
+    if "NO_ADB" in out:
+        warn("adb isn't installed, so a phone without USB webcam mode can't be used. "
+             "Run 2) Update (it installs adb), or on the Pi: sudo apt install adb")
+        return False
+    states = [line.split("\t")[1].strip() for line in out.splitlines() if "\t" in line]
+    if "device" in states:
+        ok("Phone found over USB debugging: the boat uses the IP Webcam app on it (1080p, set by the boat)")
+        return True
+    if "unauthorized" in states:
+        warn("The phone is asking \"Allow USB debugging?\" — tap Allow on the phone "
+             "(tick \"Always allow from this computer\"), then run 9) Camera test.")
+    else:
+        warn("No phone camera found. " + PHONE_HELP)
+    return False
+
+
+def _boat_config(pi, ctx):
+    """The boat's boat_config.json as a dict ({} if missing or unreadable)."""
+    _, out = pi.run(f"cat {shlex.quote(ctx['app'])}/boat_config.json 2>/dev/null || true", check=False)
+    try:
+        data = json.loads(out.strip() or "{}")
+        return data if isinstance(data, dict) else {}
+    except ValueError:
+        return {}
+
+
 def _report_usb_camera(pi, ctx, out):
-    """What the camera check found; tells the boat to use the USB camera directly."""
+    """What the camera check found; tells the boat which camera it has (a USB webcam,
+    or an Android phone in USB webcam mode), so it opens it directly."""
     info = dict(line.split("=", 1) for line in out.splitlines() if line.startswith(("USBCAM=", "USBNAME=")))
     sizes = [line[5:].strip() for line in out.splitlines() if line.startswith("SIZE=")]
+    kind = ctx.get("camera") or ("phone" if _boat_config(pi, ctx).get("camera_source") == "phone" else "usb")
     if "NO_FFMPEG" in out:
         warn("ffmpeg isn't installed, so the boat camera can't stream. Run 1) Full setup again "
              "(it installs ffmpeg), or on the Pi: sudo apt install ffmpeg v4l-utils")
     if "USBCAM" not in info:
+        if kind == "phone":
+            _report_phone_app(pi, ctx)
+            _patch_config(pi, ctx, {"camera_source": "phone"})
+            return
         warn("No USB camera found. Plug it into the Pi — on a Pi Zero, the micro-USB port marked USB "
              "(not PWR) through an OTG adapter — then run 9) Camera test.")
         return
-    ok(f"USB camera found: {info.get('USBNAME') or 'USB camera'} ({info['USBCAM']})")
+    ok(f"{'Phone camera' if kind == 'phone' else 'USB camera'} found: {info.get('USBNAME') or 'camera'} ({info['USBCAM']})")
+    if kind == "phone":
+        conf = _boat_config(pi, ctx)
+        want = f"{conf.get('phone_width', 1920)}x{conf.get('phone_height', 1080)}"
+        if "MJPEG_YES" in out and want in sizes:
+            ok(f"The phone sends MJPEG at {want}: captured at 30 fps and passed straight through (no encoding on the Pi)")
+        elif "MJPEG_YES" in out:
+            warn(f"The phone doesn't offer MJPEG at {want} (it offers {', '.join(sizes[:6]) or 'no sizes'}); "
+                 "the boat falls back to 1280x720, then 640x480.")
+        else:
+            warn("The phone offers no MJPEG video, which a Pi Zero cannot encode at this size. "
+                 "Check it is in USB preferences → Webcam.")
+        _patch_config(pi, ctx, {"camera_source": "phone"})
+        say("  Set the phone camera's horizontal field of view (main cameras: about 65–75°) in the app: "
+            "Boat Vision → Settings. Lock focus and exposure if the phone offers it.", "dim")
+        return
     if "MJPEG_YES" in out:
         size = "640x360" if "640x360" in sizes else "640x480" if "640x480" in sizes else None
         if size:
@@ -682,6 +746,20 @@ def step_lite(pi, ctx):
     else:
         warn("Desktop kept. For a lag-free boat, use Raspberry Pi OS Lite or switch later with: "
              "sudo systemctl set-default multi-user.target")
+
+
+def step_wifi(pi, ctx):
+    """USB Wi-Fi adapters that start as a fake "DISK" are switched at once (on a
+    Pi Zero the stock switch can take minutes, or never happen), NetworkManager
+    keeps retrying every saved network and the radio stays awake, and a
+    watchdog brings the Wi-Fi back if it drops (boat-pi/setup_wifi.sh)."""
+    app = shlex.quote(ctx["app"])
+    _, out = pi.run(f'[ -n "${{VARUNA_ROOT:-}}" ] && echo "OK sandbox" || bash {app}/setup_wifi.sh',
+                    sudo=True, timeout=120, check=False)
+    if "OK " in out:
+        ok("Wi-Fi: adapter switched at once on boot, retries forever, power saving off, watchdog every minute")
+    else:
+        warn("Could not set up the Wi-Fi fixes: " + out.strip()[-300:])
 
 
 def step_netbird(pi, ctx):
@@ -916,12 +994,18 @@ def action_setup(pi, ctx):
     say("  2) RC transmitter on the Pixhawk")
     ctx["rc_source"] = "gamepad" if ask("Choose 1 or 2", "1").strip() == "1" else "transmitter"
     say("")
+    say("Which camera is on the boat?")
+    say("  1) USB webcam")
+    say("  2) Android phone in USB webcam mode (1080p, 30 fps)")
+    ctx["camera"] = "phone" if ask("Choose 1 or 2", "1").strip() == "2" else "usb"
+    say("")
     say("NetBird lets the VARUNA app reach the boat from anywhere (optional).", "dim")
     say("Paste a setup key from app.netbird.io → Setup Keys, or press Enter to skip.", "dim")
     ctx["netbird_key"] = ask("NetBird setup key", "", secret=True)
     say("")
     say(f"  Pixhawk:  {ctx['link']['label']}")
     say(f"  By hand:  {DRIVE_LABEL[ctx['rc_source']]}")
+    say(f"  Camera:   {CAMERA_LABEL[ctx['camera']]}")
     say(f"  NetBird:  {'join with the setup key' if ctx['netbird_key'] else 'skip'}")
     say("  Takes 10–30 minutes on a Pi 3 (mostly downloading libraries).", "dim")
     if not ask_yes("Start the full setup?", True):
@@ -937,6 +1021,7 @@ def action_setup(pi, ctx):
         ("Setting up the camera and the turbidity sensor", lambda: step_camera_sensor(pi, ctx)),
         ("Installing the boat service", lambda: step_service(pi, ctx)),
         ("Pi Zero tune-up", lambda: step_lite(pi, ctx)),
+        ("Wi-Fi: connect every boot, never give up", lambda: step_wifi(pi, ctx)),
         ("NetBird", lambda: step_netbird(pi, ctx)),
         ("Checking everything works", lambda: step_verify(pi, ctx)),
         ("Driving by hand", lambda: step_drive(pi, ctx)),
@@ -988,6 +1073,7 @@ def action_update(pi, ctx):
         ("Camera and turbidity sensor", lambda: step_camera_sensor(pi, ctx)),
         ("Updating and restarting the boat service", lambda: step_service(pi, ctx)),
         ("Pi Zero tune-up", lambda: step_lite(pi, ctx)),
+        ("Wi-Fi: connect every boot, never give up", lambda: step_wifi(pi, ctx)),
         ("Checking it works", lambda: step_verify(pi, ctx)),
         ("Finishing", lambda: step_reboot(pi, ctx)),
     ])
@@ -1136,6 +1222,7 @@ def action_camera_test(pi, ctx):
     path = folder / f"varuna-boat-camera-{datetime.now():%Y%m%d-%H%M%S}.jpg"
     path.write_bytes(jpeg)
     ok(f"Camera: {cam.get('resolution')} at {cam.get('measured_fps')} fps ({cam.get('pipeline')})")
+    _report_data_rate(cam)
     ok(f"Picture saved: {path}")
     say("  Check the ramp fills the bottom of the picture and the horizon sits near the top "
         "(tilt about 15° down). Fine-tune in the app: Boat Vision → Settings.", "dim")
@@ -1190,8 +1277,9 @@ DRIVE_LABEL = {"gamepad": "game controller on the PC (no RC transmitter)", "tran
 
 
 def _check_failsafe(pi, ctx, offer_fix=True):
-    """With no transmitter the Pixhawk's radio failsafe is what stops the boat if
-    the boat Pi dies (the Pi's stick commands stop). Read it back, offer a fix."""
+    """Read back the failsafe that stops the boat if the boat Pi dies, offer a fix.
+    With a game controller there is no radio: it is the Pi's heartbeat
+    (FS_GCS_ENABLE). With a transmitter it is the radio failsafe (FS_THR_ENABLE)."""
     fs = _api(pi, "/api/pixhawk/failsafe", timeout=40)
     if not fs or fs.get("success") is False:
         warn("Couldn't read the Pixhawk's failsafe settings"
@@ -1199,20 +1287,25 @@ def _check_failsafe(pi, ctx, offer_fix=True):
              + ". Check again later with 13) Driving by hand.")
         return
     v = fs.get("values") or {}
+    gamepad = fs.get("rc_source") == "gamepad"
     if fs.get("ok"):
-        ok(f"Pixhawk radio failsafe on: if the boat Pi stops, the boat will {fs.get('action')} "
-           f"(after about {v.get('RC_OVERRIDE_TIME') or 3:g} s)")
+        if gamepad:
+            ok(f"Pixhawk failsafe on: if the boat Pi stops, the boat will {fs.get('action')} (no radio failsafe needed)")
+        else:
+            ok(f"Pixhawk radio failsafe on: if the transmitter is lost, the boat will {fs.get('action')}")
         return
     for problem in fs.get("problems") or ["The failsafe settings could not all be read."]:
         warn(problem)
-    if offer_fix and ask_yes("Turn the radio failsafe on, with HOLD (stop) as its action?", True):
+    what = "the Pi-heartbeat failsafe" if gamepad else "the radio failsafe"
+    if offer_fix and ask_yes(f"Turn {what} on, with HOLD (stop) as its action?", True):
         res = _api(pi, "/api/pixhawk/failsafe/fix", method="POST", timeout=40) or {}
         (ok if res.get("success") else warn)(res.get("message") or "No answer from the boat backend.")
 
 
 def _drive_help():
     say("  In the VARUNA app → Boat tab → Game controller: plug the controller into the PC and press any button.", "dim")
-    say("  Left stick = throttle, right stick = steering (only in MANUAL).", "dim")
+    say("  Left stick = throttle, right stick = steering (only in MANUAL or ACRO).", "dim")
+    say("  Boat tab → Flight mode switches modes; MANUAL, ACRO and HOLD need no GPS or compass.", "dim")
     say("  A = MANUAL   B = HOLD (stop)   X = resume mission   Y = return home", "dim")
     say("  Hold START 1 s = arm, hold BACK 1 s = disarm. Controller lost 3 s while driving → the boat holds.", "dim")
 
@@ -1227,7 +1320,7 @@ def step_drive(pi, ctx):
 
 
 def action_drive(pi, ctx):
-    """Choose how the boat is driven by hand, and check the Pixhawk's radio failsafe."""
+    """Choose how the boat is driven by hand, and check the Pixhawk's failsafe."""
     if not ctx.get("installed"):
         warn("The boat backend isn't installed on this Pi yet — run 1) Full setup first.")
         return
@@ -1259,6 +1352,62 @@ def action_drive(pi, ctx):
             h = _api(pi, "/api/health") or {}
         _check_failsafe(pi, ctx)
         _drive_help()
+
+
+def _report_data_rate(cam):
+    if not cam.get("frame_kb"):
+        return
+    say(f"  Data: {cam['frame_kb']} KB a frame · {cam.get('capture_mbps')} Mbit/s from the camera · "
+        f"{cam.get('stream_mbps')} Mbit/s to the app at {cam.get('stream_fps')} frames a second", "c")
+    if (cam.get("stream_mbps") or 0) > 15:
+        warn("That is a lot for a Pi Zero's Wi-Fi and NetBird. If the app's boat video lags, send fewer "
+             "frames a second or use 720p (14. Boat camera).")
+
+
+def action_camera(pi, ctx):
+    """Which camera the boat uses, its size, and how many frames a second go to the app."""
+    if not ctx.get("installed"):
+        warn("The boat backend isn't installed on this Pi yet — run 1) Full setup first.")
+        return
+    cam = _api(pi, "/api/camera/status")
+    if cam is None:
+        raise InstallError("The boat backend is not answering — try 5) Restart the boat service.")
+    conf = _boat_config(pi, ctx)
+    now = "phone" if conf.get("camera_source") == "phone" else "usb"
+    say(f"Now: {CAMERA_LABEL[now]} — {cam.get('resolution') or 'not streaming'}"
+        + (f" at {cam.get('measured_fps')} fps" if cam.get("camera_connected") else ""))
+    say("  1) USB webcam (640x360)")
+    say("  2) Android phone, 1080p at 30 fps")
+    say("  3) Android phone, 720p at 30 fps (lighter on the Wi-Fi)")
+    choice = ask("Choose 1, 2 or 3", "2" if now == "phone" else "1").strip()
+    patch = {"camera_source": "usb"} if choice == "1" else {
+        "camera_source": "phone", "phone_fps": 30,
+        "phone_width": 1280 if choice == "3" else 1920, "phone_height": 720 if choice == "3" else 1080}
+    say("How many frames a second should go to the app? The camera still captures all of them.", "dim")
+    say("10 suits a Pi Zero (the AI checks 3 a second, the catch counter needs about 8); up to 30 on a strong link.", "dim")
+    try:
+        patch["stream_fps"] = max(1, min(30, int(ask("Frames a second to the app", str(conf.get("stream_fps", 10))))))
+    except ValueError:
+        patch["stream_fps"] = 10
+    _patch_config(pi, ctx, patch)
+    pi.run(f"systemctl restart {SERVICE}", sudo=True, timeout=120)
+    ok(f"Boat camera set: {CAMERA_LABEL[patch['camera_source']]}"
+       + (f", {patch['phone_width']}x{patch['phone_height']} at 30 fps" if patch["camera_source"] == "phone" else "")
+       + f", {patch['stream_fps']} frames a second to the app")
+    if patch["camera_source"] == "phone":
+        say("  " + PHONE_HELP, "dim")
+    say("  Waiting for the camera…", "dim")
+    cam = None
+    for _ in range(15):
+        time.sleep(2)
+        cam = _api(pi, "/api/camera/status")
+        if cam and cam.get("camera_connected") and cam.get("frame_kb"):
+            break
+    if cam and cam.get("camera_connected"):
+        ok(f"Streaming {cam.get('resolution')} at {cam.get('measured_fps')} fps ({cam.get('pipeline')})")
+        _report_data_rate(cam)
+    else:
+        warn(f"Not streaming yet: {(cam or {}).get('last_error') or 'no answer'}. Run 9) Camera test in a moment.")
 
 
 def action_find_pixhawk(pi, ctx):
@@ -1293,6 +1442,7 @@ MENU = [
     ("11", "Calibrate the turbidity sensor in clear water", action_calibrate),
     ("12", "Find the Pixhawk (what the boat tried)", action_find_pixhawk),
     ("13", "Driving by hand: game controller or RC transmitter", action_drive),
+    ("14", "Boat camera: USB webcam or Android phone (1080p)", action_camera),
     ("0", "Exit", None),
 ]
 

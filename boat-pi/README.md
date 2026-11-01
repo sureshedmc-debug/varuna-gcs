@@ -110,7 +110,10 @@ baud in turn. It saves the one that answers to `boat_config.json`. Until then,
 
 ## 3. Pixhawk (ArduRover) parameters
 
-Set these with Mission Planner or QGroundControl:
+Set these with Mission Planner or QGroundControl, or from the Pi: the backend
+reads and sets parameters itself (`GET /api/pixhawk/params?names=A,B`,
+`POST /api/pixhawk/params {"values": {...}}`, disarmed only, each confirmed by
+the Pixhawk) and restarts the Pixhawk (`POST /api/pixhawk/reboot`).
 
 | Parameter | Value | Why |
 |---|---|---|
@@ -121,7 +124,8 @@ Set these with Mission Planner or QGroundControl:
 | `WP_SPEED` | 0.8 | Default cruise speed in m/s (each mission sets its own as well) |
 | `MIS_DONE_BEHAVE` | 0 | Hold once the mission is done |
 | `FS_GCS_ENABLE` | 1 | If the Pi stops sending heartbeats, the failsafe triggers |
-| `FS_ACTION` | 1 | Failsafe = RTL |
+| `FS_GCS_TIMEOUT` | 3 | …after 3 s without one |
+| `FS_ACTION` | 2 | Failsafe = Hold (stop) |
 | `FENCE_ENABLE` | 1 | Draw a fence around the water so the boat can never reach the bank |
 
 ### Driving by hand with a game controller (no RC transmitter)
@@ -136,21 +140,38 @@ drives the boat through the VARUNA app (Boat tab → Game controller):
 | Right stick left / right | Steering |
 | A / B / X / Y | MANUAL (drive) / HOLD (stop) / resume mission / return home |
 | Hold START / BACK 1 s | Arm / disarm |
+| R1 (RB) | Intake roller run / stop |
+| L1 + R1 together | **Brake**: motors stop and the boat disarms at once (force-disarm), then roller off and HOLD |
+| MODE (HOME / GUIDE) | Next flight mode: MANUAL → ACRO → (LOITER with a GPS fix) → HOLD |
 
-How it stays safe without a transmitter (tested on ArduRover SITL with its RC
-input cut, `SIM_RC_FAIL=1`):
+Pixhawk parameters for driving with no transmitter (set on the VARUNA boat):
+
+| Parameter | Value | Why |
+|---|---|---|
+| `FS_THR_ENABLE` | 0 | No radio receiver, so no radio failsafe |
+| `RC1_MIN` / `RC1_TRIM` / `RC1_MAX` | 1100 / 1500 / 1900 | Steering: the Pi's range, 1500 = straight |
+| `RC3_MIN` / `RC3_TRIM` / `RC3_MAX` | 1100 / 1500 / 1900 | Throttle: the Pi's range, **1500 = stopped**. With `RC3_TRIM` at 1000, the Pi's "stopped" would read as half throttle forward |
+| `ARMING_SKIPCHK` | 4172 | Skip the RC (no receiver), compass, GPS-lock and GPS-config arming checks, so MANUAL arms with no GPS and no compass calibration. Modes that need a position still refuse without a GPS fix |
+| `COMPASS_USE` / `EK3_SRC1_YAW` | 0 / 8 | No compass: the heading comes from GPS while moving (GSF), for GUIDED/AUTO. Restart the Pixhawk after changing |
+| `FS_GCS_ENABLE` / `FS_GCS_TIMEOUT` / `FS_ACTION` | 1 / 3 / 2 | The failsafe is the Pi's heartbeat: Hold if the Pi goes quiet for 3 s |
+
+How it stays safe without a transmitter:
 
 * The Pi sends the Pixhawk RC override values (steering ch 1, throttle ch 3)
-  ten times a second, **always** — neutral when nobody drives. That is the
-  Pixhawk's "radio": with none at all ArduRover refuses to arm (*Radio failsafe*).
-* If the **boat Pi dies**, the overrides stop and the Pixhawk's own radio
-  failsafe acts after ~3 s (`RC_OVERRIDE_TIME`): `FS_THR_ENABLE` must be 1 and
-  `FS_ACTION` 1 (RTL) or 2 (Hold). The tool's menu 13 checks and can fix this.
+  ten times a second, **always** — neutral (1500) when nobody drives.
+* If the **boat Pi dies**, its heartbeats stop and the Pixhawk's GCS failsafe
+  holds the boat after `FS_GCS_TIMEOUT` (3 s). Until then the last stick value
+  stays in force: with no receiver, ArduPilot keeps the last override.
+  The tool's menu 13 and the app's Game controller card check this.
 * If the **PC or controller link drops**, the Pi centres the sticks after 0.5 s
-  and, if the boat was being driven in MANUAL, switches to HOLD after 3 s.
+  and, if the boat was being driven in MANUAL or ACRO, switches to HOLD after 3 s.
 * The app only drives while its window has focus (an unfocused window may keep
   reporting the last stick position).
-* The sticks only move the boat in MANUAL; AUTO, GUIDED, HOLD and RTL ignore them.
+* The sticks only move the boat in MANUAL and ACRO; AUTO, GUIDED, HOLD, LOITER
+  and RTL ignore them. The app's Boat tab → **Flight mode** switches modes;
+  MANUAL, ACRO and HOLD work with no GPS fix.
+* The Pixhawk must have proper power (power module or 5 V BEC): on the Pi's USB
+  alone it reads about 4.2 V and refuses to arm (*Board out of range*).
 
 With `"rc_source": "transmitter"` (the default) the Pi sends no stick values,
 so a real transmitter keeps full control.
@@ -222,6 +243,8 @@ also be set as an environment variable `BOAT_<KEY>`, e.g. `BOAT_MAV_CONNECTION=/
 | Part | How it's fitted |
 |---|---|
 | **USB webcam** (one that outputs MJPEG) | Above the intake ramp, pointing forward and about **15° down**. The ramp fills the bottom ~20 % of the picture; the horizon sits near the top. On a Pi Zero plug it into the micro-USB port marked **USB** (not PWR) through an OTG adapter. Set its horizontal field of view (`camera_hfov_deg`, from the spec sheet) in Boat Vision → Settings. |
+| **Or an Android phone** (Android 14+, USB webcam mode) | Mounted where the webcam would go. Connect it to the Pi through a **powered USB hub**: a Pi Zero cannot charge a phone and browns out. On the phone, choose USB preferences → **Webcam**. Set `"camera_source": "phone"` (Boat Pi Tool → 14. Boat camera). The boat captures the phone's MJPEG at **1920×1080, 30 fps** (`phone_width`, `phone_height`, `phone_fps`) and passes it straight through, with no re-encoding. If the phone refuses that size, it falls back to 720p, then 640×480. The app gets `stream_fps` of those frames (10 on a Pi Zero). Real 1080p frames are about 150–300 KB, so even 10 a second is 12–24 Mbit/s over Wi-Fi and NetBird. If the video lags, send fewer frames or choose 720p. `/api/camera/status` reports the data rate. |
+| **Phone without USB webcam mode** (e.g. vivo) | Same cable and hub. On the phone: Developer options → **USB debugging** on, install the free **IP Webcam** app, and tap Allow on "Allow USB debugging?" the first time. With `camera_source` "phone" and no webcam-mode phone, the boat uses `adb` (installed by the Boat Pi Tool) to forward the app's port (`phone_app_port`, 8080) over USB, opens the app's server, sets it to `phone_width`×`phone_height` at `camera_quality`, and reads its MJPEG with curl. The phone encodes and the Pi only copies, at about 25 fps for 1080p on a Pi Zero. Nothing goes over Wi-Fi. Keep the phone charged and set IP Webcam to keep running with the screen off. |
 | **Turbidity sensor** (analog module, e.g. DFRobot SEN0189) | Probe below the waterline; its board in the dry. |
 | **ADS1115 ADC** (the Pi has no analog input) | VDD → 3.3 V (pin 1), GND → pin 6, SDA → pin 3, SCL → pin 5. Sensor VCC → 5 V, signal → 10 kΩ → A0, A0 → 20 kΩ → GND (keeps A0 under 3.3 V; `turb_divider` 1.5 undoes it). |
 
@@ -286,6 +309,81 @@ Live-tunable from the app (Boat Vision → Settings, Water Lab → Calibrate):
 `measure_s`. Camera: `camera_source` (`auto` tries the camera module first),
 640×360 at 15 fps by default (a Pi Zero's software JPEG budget).
 
+## Live collect (drone and boat together, no planned mission)
+
+While the drone flies and its AI finds plastic, the boat goes after each find
+as it comes in (`live_collect.py`). Start it from the app: **Boat tab → Live
+collect → Start**. It needs a GPS fix on the boat (GUIDED mode).
+
+```
+ drone AI ─ find + position ─▶ VARUNA app ── /api/live/targets ──▶ boat Pi: queue
+                                (sent automatically while               │ nearest item first, GUIDED
+                                 live collect runs)                     ▼
+                              ◀── telemetry.live.collected ─── roller on → camera homing → catch counter
+```
+
+- **The app** sends every located drone find (not laptop-webcam finds) not yet
+  collected, from the last 15 minutes or since Start, about every 1.5 s, and
+  again when more sightings move its position. It marks what the boat reports
+  collected, like mission items. The tick box "Send the drone's finds to the
+  boat automatically" turns the feed off.
+- **The boat** keeps the queue (finds within `live_merge_m` of a queued one are
+  the same item; finds farther than `max_distance_m` are refused) and always
+  drives to the **nearest** item still to collect. The intake roller
+  (`collector_servo`, `collector_pwm_on/off`) goes on within
+  `live_roller_on_m` (5 m) and when the camera homing takes over, and off when
+  nothing is close. Near the item the camera homing (`homing_start_m`) finds
+  it, drives through it and waits for the catch counter: collected
+  ("camera") or missed. Without the camera, the boat drives through the GPS
+  point and waits `live_dwell_s` ("gps"). An item not reached within
+  `live_target_timeout_s` is missed.
+- **Nothing left**: the boat stops and holds where it is for more finds
+  ("Wait here"), or with "Return home" goes home after `live_return_after_s`
+  (30 s) and live collect ends.
+- **You stay in charge**: any mode change, Hold, RTL, Stop, disarm (app,
+  controller, failsafe) pauses it; **Resume** carries on. Wildlife holds and
+  water tests win and are waited out. A planned mission and live collect never
+  run together. The queue survives a Pi restart; live collect itself restarts
+  off.
+- **The roller** (`collector.py`): see below.
+
+## Intake roller
+
+**Relay module on the Pi** (the VARUNA boat: `collector_relay_gpio` 17). The Pi
+switches it with `pinctrl`. Wiring, on the Pi's header:
+
+| Relay module | Pi pin |
+|---|---|
+| VCC | 5 V (pin 2) |
+| GND | GND (pin 6) |
+| IN | GPIO17 (pin 11) |
+| COM / NO | in series with the roller motor's + wire from its battery (NO: off unless switched) |
+
+Active-low modules (most: IN low = on, `collector_relay_active_low` true): on
+drives the pin low, off releases it, so the module is fully off, and off at
+start, at shutdown and whenever the service isn't running. An active-high
+module: set `collector_relay_active_low` false.
+
+**Or a brushed ESC on a free Pixhawk output** (`collector_servo`, no relay set;
+that output's `SERVOn_FUNCTION` must be 0): a forward/reverse ESC stops at
+`collector_pwm_off` 1500 and runs at `collector_pwm_on` 1800 (1200 if it turns
+the wrong way); a forward-only one stops at 1000.
+
+- **R1** on the game controller (or Run / Stop on the Boat tab's Game controller
+  card, `POST /api/collector`) runs / stops it.
+- It **runs by itself at each target**: in live collect when the boat closes
+  in on an item (`live_roller_on_m`, 5 m) or the camera homing takes over; in a
+  planned mission near the item the Pixhawk is heading to. It stops again
+  when nothing is close. Last command wins: R1 can stop it near an item and it
+  stays stopped until the next one.
+- **Disarm, brake (L1 + R1) or emergency stop** always stops it. With an ESC,
+  the stop signal is sent when the Pixhawk connects, so the ESC arms on a valid neutral.
+
+```bash
+python test_live_collect.py   # queue, nearest first, roller, operator pause, return home, camera homing
+python test_relay.py          # the relay: on / off, off at start and shutdown, disarm, active-high
+```
+
 ## API (what the app calls)
 
 | Method | Path | |
@@ -293,7 +391,7 @@ Live-tunable from the app (Boat Vision → Settings, Water Lab → Calibrate):
 | GET | `/api/ping`, `/api/health`, `/api/system/pi` | Liveness, Pixhawk link, Pi metrics |
 | GET / WS | `/api/telemetry`, `/api/ws` | Position, mode, battery, GPS, mission progress, Pixhawk messages |
 | GET | `/api/telemetry/history` | Recent track for the map trail |
-| POST | `/api/mavlink/arm` `{arm}`, `/mode` `{mode}`, `/hold`, `/rtl`, `/stop` | Boat commands (`stop` = HOLD + disarm) |
+| POST | `/api/mavlink/arm` `{arm}`, `/mode` `{mode}`, `/hold`, `/rtl`, `/stop`, `/brake` | Boat commands (`stop` = HOLD + disarm; `brake` = force-disarm at once, then roller off + HOLD) |
 | POST | `/api/mission/upload` `{name, waypoints:[{id,lat,lng}], hold_s, speed_mps}` | Builds the ArduRover mission and uploads it to the Pixhawk |
 | POST | `/api/mission/start`, `/pause`, `/clear` | Start/resume (arms in HOLD, then AUTO), pause (HOLD) |
 | GET | `/api/mission/status`, `/api/mission/list` | Progress, history (incl. `missed`, `how` = camera / gps) |
@@ -303,6 +401,11 @@ Live-tunable from the app (Boat Vision → Settings, Water Lab → Calibrate):
 | POST / GET | `/api/catch/item`, `/api/catch`, `/api/catch/photo/{id}`, `/api/catch/empty` | Catch counter, bin |
 | GET / POST | `/api/wildlife`, `/api/wildlife/action` `{wait\|resume\|skip}`, `/api/wildlife/photo/{id}` | Wildlife pauses and sightings |
 | GET / POST | `/api/water/status`, `/api/water/track`, `/api/water/readings`, `/api/water/measure`, `/api/water/calibrate` `{clear\|reference\|reset}` | Turbidity |
+| POST | `/api/live/targets` `{targets:[{id,lat,lng,source?,confidence?}]}` | Live collect: add / update the drone's finds (added, merged, refused) |
+| POST / GET | `/api/live/start` `{when_empty: wait\|return}`, `/pause`, `/stop` `{rtl}`, `/skip` `{id}`, `/clear`, `/api/live/status` | Live collect control and queue (also `telemetry.live`) |
+| GET / POST | `/api/pixhawk/params?names=A,B`, `/api/pixhawk/params` `{values}`, `/api/pixhawk/reboot` | Read / set Pixhawk parameters (disarmed), restart it |
+| POST / GET | `/api/pixhawk/motor_test` `{motor, pwm, seconds}`, `/motor_start` `{motor, pwm}`, `/api/pixhawk/motors` | Motor matching: spin one thruster (stops by itself), save its start point |
+| POST / GET | `/api/pixhawk/esc_calibration` `{step: auto\|cancel, outputs}` | Timed ESC calibration (battery unplugged first) |
 
 Every command answers `{"success": true|false, "message": "..."}`. A refusal
 from the Pixhawk (for example a pre-arm check) comes back as `success: false`

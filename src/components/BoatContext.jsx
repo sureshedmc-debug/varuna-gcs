@@ -3,6 +3,7 @@ import { boatApi, boatWsUrl, isBoatReply } from '../api/boatClient'
 import { usePolling } from '../hooks/usePolling'
 import { useVarunaWS } from '../hooks/useVarunaWS'
 import { markCollected } from '../lib/boatStore'
+import { useLiveCollectFeed } from '../lib/liveCollectFeed'
 
 const Ctx = createContext(null)
 export const useBoat = () => useContext(Ctx)
@@ -52,6 +53,18 @@ export function BoatProvider({ children }) {
     markCollected(reachedKey.split('|'), missionName)
   }, [reachedKey, missionName])
 
+  // Live collect: send the drone's finds to the boat as they come, and mark
+  // what it collects (kept in this browser, like mission items).
+  const liveState = live ? t.live || null : null
+  useLiveCollectFeed(liveState, reachable === true)
+  const liveKey = (liveState?.collected || []).join('|')
+  const lastLiveRef = useRef('')
+  useEffect(() => {
+    if (!liveKey || liveKey === lastLiveRef.current) return
+    lastLiveRef.current = liveKey
+    markCollected(liveKey.split('|'), 'Live collect')
+  }, [liveKey])
+
   const value = useMemo(
     () => ({
       reachable,
@@ -62,9 +75,10 @@ export function BoatProvider({ children }) {
       telemetry: live ? telemetry : { data: null, status: 'offline', lastUpdate: 0 },
       fcConnected,
       mission,
+      live: liveState,
       simulated: live && t.simulated === true,
     }),
-    [reachable, wrongTarget, linkHint, ping.lastUpdate, ping.refresh, live, telemetry, fcConnected, mission, t?.simulated],
+    [reachable, wrongTarget, linkHint, ping.lastUpdate, ping.refresh, live, telemetry, fcConnected, mission, liveState, t?.simulated],
   )
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

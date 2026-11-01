@@ -13,6 +13,10 @@ One capture process feeds every viewer, at the configured size and rate
     frames through untouched — no decoding or re-encoding on the Pi, the
     lightest option for a Pi Zero. If the camera can't do MJPEG at that size,
     it falls back to raw YUYV that ffmpeg encodes (heavier), then to 640x480.
+  * Android phone ("phone") → in USB webcam mode it is a USB camera at
+    1080p / 30 fps (copied through). A phone without that mode runs the IP
+    Webcam app; adb forwards its port over the USB cable and curl reads its
+    MJPEG — the phone encodes, the Pi only copies.
   * Pi camera module (CSI) → rpicam-vid (or libcamera-vid on older OS) encodes
     MJPEG in software.
   * test → a generated test picture (laptop testing / no camera).
@@ -120,6 +124,56 @@ def csi_camera_present():
         return False
 
 
+PHONE_NO_PHONE = ("No phone camera found. Connect the phone to the Pi through a powered USB hub. On the phone, "
+                  "either USB preferences → Webcam (Android 14+), or, if there is no Webcam option: turn on "
+                  "Developer options → USB debugging and install the IP Webcam app.")
+PHONE_NO_ADB = ("The phone has no USB webcam mode, and adb (needed for the IP Webcam app over USB) isn't "
+                "installed on the Pi. Run the Boat Pi Tool's 2) Update, or on the Pi: sudo apt install adb")
+PHONE_NO_APP = ("The phone is connected, but the IP Webcam app isn't streaming. Install IP Webcam on the phone, "
+                "open it and tap \"Start server\" (keep the phone unlocked the first time).")
+PHONE_ADB_REASONS = {
+    "unauthorized": "On the phone, tap Allow on \"Allow USB debugging?\" (tick \"Always allow from this computer\").",
+    "offline": "The phone's USB debugging is not answering. Unplug the phone and plug it back in.",
+    "none": PHONE_NO_PHONE,
+}
+
+
+def _run_quiet(cmd, timeout=15):
+    """Run a short command; its output, or None if it failed."""
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return r.stdout if r.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _adb_state(adb):
+    """'device' (ready), 'unauthorized', 'offline' or 'none' for the first phone on adb."""
+    out = _run_quiet([adb, "devices"], timeout=20) or ""
+    states = [line.split("\t")[1].strip() for line in out.splitlines()[1:] if "\t" in line]
+    if "device" in states:
+        return "device"
+    return states[0] if states else "none"
+
+
+def _http_get(url, timeout=4):
+    import urllib.request
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as r:
+            return r.read(200_000)
+    except Exception:
+        return None
+
+
+def _http_json(url):
+    import json
+    body = _http_get(url)
+    try:
+        return json.loads(body) if body else None
+    except ValueError:
+        return None
+
+
 class CameraManager:
     def __init__(self, cfg):
         self.cfg = cfg
@@ -132,6 +186,7 @@ class CameraManager:
         self.frame_seq = 0
         self.frames_captured = 0
         self._stamps = deque(maxlen=60)
+        self._sizes = deque(maxlen=60)    # bytes per frame, for the data rate
         self.status_text = "STARTING"
         self.last_error = None
         self.source = None
@@ -139,6 +194,7 @@ class CameraManager:
         self.pipeline = None
         self.resolution = None
         self.started_at = None
+        self._phone_reason = None         # why the phone camera isn't streaming yet
 
     # ------------------------------------------------------------------ lifecycle
     def start(self):
@@ -202,9 +258,13 @@ class CameraManager:
             ]
         dev = self.cfg["camera_device"]
         dev = find_usb_camera() if dev in ("", "auto") else dev
+        if source == "phone":
+            return self._phone_attempts(dev, base, out)
         if not dev:
             return "usb", None, []
-        v4l = base + ["-f", "v4l2", "-thread_queue_size", "64"]
+        # Low latency: no input buffering and a short capture queue, so each frame
+        # goes out as soon as the webcam sends it, not after a backlog builds up.
+        v4l = base + ["-fflags", "nobuffer", "-flags", "low_delay", "-f", "v4l2", "-thread_queue_size", "8"]
         return "usb", dev, [
             ("USB camera MJPEG (pass-through)", f"{w}x{h}",
              v4l + ["-input_format", "mjpeg", "-video_size", f"{w}x{h}", "-framerate", str(fps), "-i", dev,
@@ -221,6 +281,72 @@ class CameraManager:
              v4l + ["-video_size", "640x480", "-framerate", str(fps), "-i", dev, "-c:v", "mjpeg", "-q:v", qv] + out),
         ]
 
+    def _phone_attempts(self, dev, base, out):
+        """An Android phone in USB webcam mode (Android 14+: USB preferences →
+        Webcam): the phone's own MJPEG at its full size, copied through. No raw
+        fallback: re-encoding 1080p would swamp a Pi Zero. If the phone refuses
+        the size, 720p and then 640x480 are tried.
+
+        Phones without webcam mode run the IP Webcam app instead (see
+        _phone_app_attempts)."""
+        if not dev:
+            return self._phone_app_attempts()
+        w, h, fps = self.cfg["phone_width"], self.cfg["phone_height"], self.cfg["phone_fps"]
+        sizes = [(w, h)] + [s for s in ((1280, 720), (640, 480)) if s != (w, h)]
+        v4l = base + ["-f", "v4l2", "-thread_queue_size", "64"]
+        return "phone", dev, [
+            ("Android phone MJPEG (pass-through)", f"{sw}x{sh}",
+             v4l + ["-input_format", "mjpeg", "-video_size", f"{sw}x{sh}", "-framerate", str(fps), "-i", dev,
+                    "-c:v", "copy"] + out)
+            for sw, sh in sizes
+        ]
+
+    def _phone_app_attempts(self):
+        """A phone without USB webcam mode, on the same USB cable: the IP Webcam
+        app (com.pas.webcam) streams MJPEG from its own web server, and adb
+        forwards that port to the Pi over USB debugging — no network setup,
+        nothing on the Wi-Fi. The phone encodes the JPEGs; curl just hands them
+        over, so the Pi does no picture work. Sets self._phone_reason when the
+        phone isn't ready, for the status shown in the app."""
+        adb = shutil.which("adb")
+        if not adb:
+            self._phone_reason = PHONE_NO_ADB
+            return "phone", None, []
+        state = _adb_state(adb)
+        if state != "device":
+            self._phone_reason = PHONE_ADB_REASONS.get(state, PHONE_NO_PHONE)
+            return "phone", None, []
+        port = self.cfg["phone_app_port"]
+        url = f"http://127.0.0.1:{port}"
+        if _run_quiet([adb, "forward", f"tcp:{port}", f"tcp:{port}"]) is None:
+            self._phone_reason = "adb could not reach the phone. Unplug the phone and plug it back in."
+            return "phone", None, []
+        status = _http_json(f"{url}/status.json")
+        if status is None:
+            # The app isn't serving: open it straight into its camera server.
+            _run_quiet([adb, "shell", "am", "start", "-n", "com.pas.webcam/.Rolling"])
+            for _ in range(8):
+                time.sleep(1)
+                status = _http_json(f"{url}/status.json")
+                if status is not None:
+                    break
+        if status is None:
+            self._phone_reason = PHONE_NO_APP
+            return "phone", None, []
+        w, h = self.cfg["phone_width"], self.cfg["phone_height"]
+        size = f"{w}x{h}"
+        cur = (status.get("curvals") or {}) if isinstance(status, dict) else {}
+        if cur.get("video_size") != size:
+            _http_get(f"{url}/settings/video_size?set={size}")
+        quality = str(self.cfg["camera_quality"])
+        if str(cur.get("quality")) != quality:
+            _http_get(f"{url}/settings/quality?set={quality}")
+        self._phone_reason = None
+        return "phone", f"IP Webcam app (adb :{port})", [
+            ("Android phone, IP Webcam app over USB", size,
+             ["curl", "-sSN", "--max-time", "0", "--connect-timeout", "5", f"{url}/video"]),
+        ]
+
     def _run(self):
         attempt_index = 0
         while not self._stop.is_set():
@@ -234,6 +360,7 @@ class CameraManager:
                     "csi": "rpicam-vid / libcamera-vid is not installed, or no camera module is connected.",
                     "usb": "No USB camera found. Plug it into the Pi (on a Pi Zero: the micro-USB port marked USB, "
                            "not PWR, through an OTG adapter).",
+                    "phone": self._phone_reason or PHONE_NO_PHONE,
                 }.get(source, "No camera found.")
                 self._stop.wait(5)
                 continue
@@ -334,6 +461,7 @@ class CameraManager:
             self.frame_seq += 1
             self.frames_captured += 1
             self._stamps.append(now)
+            self._sizes.append(len(frame))
             self.status_text = "STREAMING"
             self.last_error = None
             self._cond.notify_all()
@@ -365,13 +493,31 @@ class CameraManager:
         # right after starting doesn't read as double the real rate.
         return round((len(st) - 1) / max(st[-1] - st[0], 1.0), 1)
 
+    def data_rate(self):
+        """(average frame KB, capture Mbit/s, Mbit/s sent to the app at stream_fps)."""
+        sizes = list(self._sizes)
+        if not sizes:
+            return 0.0, 0.0, 0.0
+        avg = sum(sizes) / len(sizes)
+        fps = self.measured_fps()
+        sent = min(fps, float(self.cfg["stream_fps"]))
+        return round(avg / 1000, 1), round(avg * fps * 8 / 1e6, 1), round(avg * sent * 8 / 1e6, 1)
+
     def get_status(self):
         connected = bool(self.connected)
+        phone = self.cfg["camera_source"] == "phone"
+        w, h, fps = ((self.cfg["phone_width"], self.cfg["phone_height"], self.cfg["phone_fps"]) if phone else
+                     (self.cfg["camera_width"], self.cfg["camera_height"], self.cfg["camera_fps"]))
+        frame_kb, capture_mbps, stream_mbps = self.data_rate() if connected else (0.0, 0.0, 0.0)
         return {
             "camera_connected": connected,
             "status_text": self.status_text if not connected else "STREAMING",
             "measured_fps": self.measured_fps(),
-            "target": f"{self.cfg['camera_width']}x{self.cfg['camera_height']} @ {self.cfg['camera_fps']} fps",
+            "target": f"{w}x{h} @ {fps} fps",
+            "stream_fps": self.cfg["stream_fps"],
+            "frame_kb": frame_kb,
+            "capture_mbps": capture_mbps,
+            "stream_mbps": stream_mbps,
             "resolution": self.resolution,
             "pipeline": self.pipeline,
             "source": self.source,

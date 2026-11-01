@@ -52,7 +52,7 @@ With `camera_codec` = `h264` the camera module runs at `stream_fps` (15), not 30
 
 **Standby:** the camera only runs while someone watches it (the app's video, `/video_feed`, a snapshot). 30 s after the last viewer leaves it switches off — camera and encoder running nonstop is what warms the Pi — and it comes back in about 2 s when the video is opened again. System → Camera shows STANDBY meanwhile.
 
-**Where detections are:** with `/api/camera/h264?pose=1` every frame carries the drone's position, height, heading, roll and pitch at the moment it was taken (telemetry at 10 Hz, interpolated to the frame's capture time). The app's detection places each item on the map from the pose of the very frame it found it in, not from telemetry that arrived up to a second later, so plastic seen while the drone moves or turns lands where it really is. Without a Pixhawk (or with a USB webcam) the app uses the live telemetry as before.
+**Where detections are:** with `/api/camera/h264?pose=1` every frame carries the drone's position, height, heading, roll and pitch at the moment it was taken (telemetry at 10 Hz — 20 Hz over USB — interpolated to the frame's capture time). The app's detection places each item on the map from the pose of the very frame it found it in, not from telemetry that arrived up to a second later, so plastic seen while the drone moves or turns lands where it really is. Without a Pixhawk (or with a USB webcam) the app uses the live telemetry as before.
 
 **Camera module not found after a reboot?** With `camera_auto_detect=1` the Pi's firmware probes for the camera at boot and sometimes misses it (Pi 3 with the camera v1 especially). The setup tool's Update finds which camera module is connected (starting it on the spot if it wasn't found) and writes `camera_auto_detect=0` + `dtoverlay=<sensor>` (e.g. `ov5647`) to `/boot/firmware/config.txt`, so it loads on every boot. The original file is kept as `config.txt.before-varuna`.
 
@@ -164,7 +164,7 @@ The tool writes this file. You can also edit it, or set `DRONE_<KEY>` environmen
 
 | Key | Default | Meaning |
 |---|---|---|
-| `link_prefer` | `auto` | `usb`, `telem2`, or `auto` (USB if plugged in, else TELEM2). The app can also change it (System → Advanced). |
+| `link_prefer` | `auto` | `usb`, `telem2`, or `auto` (USB if plugged in, else TELEM2). The app can also change it (System → Advanced). Over USB the Pixhawk can go in any of the Pi's USB ports (it is found by its `/dev/serial/by-id` name, which survives a replug), the Pi switches to it within a second of plugging in, and it asks for telemetry at 10 Hz and position/attitude at 20 Hz (TELEM2: 5 Hz and 10 Hz). |
 | `camera_source` | `auto` | `auto` (USB webcam if plugged in, else Pi camera module), `usb`, `csi`, `test` or `off` (live) |
 | `camera_width/height/fps` | 1280/720/30 | Capture size and rate |
 | `camera_codec` | `h264` | Pi camera module video: `h264` (hardware encoder) or `mjpeg` (live) |

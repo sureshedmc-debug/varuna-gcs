@@ -46,7 +46,11 @@ GCS_COMPID = mavlink.MAV_COMP_ID_MISSIONPLANNER
 FORCE_DISARM_MAGIC = 21196
 FC_TIMEOUT_S = 3.5
 POSE_HZ = 10            # position + attitude rate asked of the Pixhawk (for placing detections)
-POSE_KEEP = 300         # samples kept of each: 30 s at POSE_HZ
+POSE_HZ_USB = 20        # ...over USB, which has the bandwidth for it
+POSE_KEEP = 300         # samples kept of each: 30 s at POSE_HZ, 15 s at POSE_HZ_USB
+STREAM_HZ = 5           # every other telemetry stream
+STREAM_HZ_USB = 10
+USB_CHECK_S = 1.0       # while searching, how often to look for a Pixhawk plugged in over USB
 POSE_MAX_GAP_S = 0.5    # a pose further than this from any sample is not trusted
 SILENT_SWITCH_S = 6.0   # try the next port/baud after this long without a heartbeat
 WORKED_SWITCH_S = 30.0  # ...but stay this long on a link that already worked (in flight!)
@@ -228,14 +232,17 @@ class DroneLink:
     # ------------------------------------------------------------------ connection
     @staticmethod
     def _usb_devices():
-        """Flight controllers plugged in over USB (ArduPilot/PX4 boards show up as ttyACM)."""
-        found = []
+        """Flight controllers plugged in over USB (ArduPilot/PX4 boards show up as ttyACM), in
+        any of the Pi's USB ports. By their /dev/serial/by-id name where there is one: it stays
+        the same if the board drops off the bus and comes back as another ttyACM number."""
+        found, real_seen = [], set()
         for path in sorted(glob.glob("/dev/serial/by-id/*")):
             real = os.path.realpath(path)
-            if "ttyACM" in real and real not in found:
-                found.append(real)
+            if "ttyACM" in real and real not in real_seen:
+                real_seen.add(real)
+                found.append(path)
         for path in sorted(glob.glob("/dev/ttyACM*")):
-            if path not in found:
+            if path not in real_seen:
                 found.append(path)
         return found
 
@@ -335,7 +342,8 @@ class DroneLink:
             log.warning("Could not save the working link: %s", exc)
 
     def _run(self):
-        last_hb = last_stream = last_home = 0.0
+        last_hb = last_stream = last_home = last_usb = 0.0
+        usb_seen = ()
         while not self._stop.is_set():
             if self._reconnect.is_set():
                 self._reconnect.clear()
@@ -389,6 +397,21 @@ class DroneLink:
                 if self.target_system is not None and now - self.last_fc_heartbeat > FC_TIMEOUT_S:
                     self.link_error = f"No heartbeat from the Pixhawk on {self.link_name} — check the cable and power."
                     last_stream = 0.0
+                # Plugged in over USB while the search is on TELEM2: go to it now, rather than
+                # after every TELEM2 speed has had its turn (USB comes first in the list). Only
+                # when a USB device newly appears, so a USB gadget that isn't the Pixhawk can't
+                # keep pulling the search back to it.
+                if (now - last_usb >= USB_CHECK_S and self.link_name != "usb"
+                        and self.cfg["link_prefer"] in ("usb", "auto") and not (self.cfg["mav_connection"] or "").strip()):
+                    last_usb = now
+                    devs = tuple(self._usb_devices())
+                    appeared, usb_seen = bool(devs) and devs != usb_seen, devs
+                    if appeared:
+                        log.info("Pixhawk plugged in over USB — switching to it.")
+                        self._close()
+                        self._cand_index = 0
+                        self.target_system = None
+                        continue
                 # Silent for a while: record what this port/baud looked like, then try the next one.
                 # The link that was working gets longer: a short dropout in flight (loose plug,
                 # radio noise) must not send the search off through every other port for a minute.
@@ -419,13 +442,15 @@ class DroneLink:
             return False
 
     def _request_streams(self):
+        usb = self.link_name == "usb"
+        stream_hz, pose_hz = (STREAM_HZ_USB, POSE_HZ_USB) if usb else (STREAM_HZ, POSE_HZ)
         self._send(lambda m: m.mav.request_data_stream_send(
-            self.target_system, self.target_component, mavlink.MAV_DATA_STREAM_ALL, 5, 1))
+            self.target_system, self.target_component, mavlink.MAV_DATA_STREAM_ALL, stream_hz, 1))
         # Position and attitude faster than the rest, to place detections in the video.
         for msg_id in (mavlink.MAVLINK_MSG_ID_GLOBAL_POSITION_INT, mavlink.MAVLINK_MSG_ID_ATTITUDE):
             self._send(lambda m, i=msg_id: m.mav.command_long_send(
                 self.target_system, self.target_component, mavlink.MAV_CMD_SET_MESSAGE_INTERVAL, 0,
-                i, 1_000_000 // POSE_HZ, 0, 0, 0, 0, 0))
+                i, 1_000_000 // pose_hz, 0, 0, 0, 0, 0))
         # Landed state (on ground / in air) is not part of the classic streams.
         self._send(lambda m: m.mav.command_long_send(
             self.target_system, self.target_component, mavlink.MAV_CMD_SET_MESSAGE_INTERVAL, 0,

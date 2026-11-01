@@ -8,10 +8,25 @@
 //   A  → MANUAL (drive with the sticks)     B → HOLD (stop)
 //   X  → resume the collection mission      Y → return home
 //   hold START 1 s → arm                    hold BACK / VIEW 1 s → disarm
+//   R1 (RB) → intake roller run / stop
+//   L1 + R1 together → instant brake: motors stop and the boat disarms
+//   MODE (HOME / GUIDE) → next flight mode
 //
 // Browsers only reveal a controller after one of its buttons is pressed.
 
-export const BUTTON = { A: 0, B: 1, X: 2, Y: 3, BACK: 8, START: 9 }
+export const BUTTON = { A: 0, B: 1, X: 2, Y: 3, L1: 4, R1: 5, BACK: 8, START: 9, MODE: 16 }
+
+/** What the MODE button steps through; the GPS-only one is skipped without a 3D fix. */
+export const MODE_CYCLE = [
+  { id: 'MANUAL' }, { id: 'ACRO' }, { id: 'LOITER', gps: true }, { id: 'HOLD' },
+]
+
+/** The mode after `current` in MODE_CYCLE (MANUAL if it isn't in the list). */
+export function nextMode(current, gpsOk) {
+  const list = MODE_CYCLE.filter((m) => gpsOk || !m.gps).map((m) => m.id)
+  const i = list.indexOf(current)
+  return i < 0 ? list[0] : list[(i + 1) % list.length]
+}
 export const HOLD_MS = 1000
 const DEADZONE = 0.12
 

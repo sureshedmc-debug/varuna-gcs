@@ -55,6 +55,21 @@ class SimWorld:
                                      "size": size, "color": color, "state": "floating", "ramp_t": 0.0,
                                      "rot": rnd.uniform(-0.6, 0.6)})
 
+    def add_objects_near(self, points, seed=None):
+        """Live collect: a floating item near each new plastic position the app
+        sends. Like the real thing, it isn't exactly where the drone placed it."""
+        rnd = random.Random(seed)
+        with self.lock:
+            for w in points:
+                ang = rnd.uniform(0, 2 * math.pi)
+                d = rnd.uniform(0.8, 2.0)
+                lat, lng = offset(w["lat"], w["lng"], d * math.cos(ang), d * math.sin(ang))
+                label, size, color = PLASTIC[rnd.randrange(len(PLASTIC))]
+                self._seq += 1
+                self.objects.append({"id": f"o{self._seq}", "lat": lat, "lng": lng, "label": label,
+                                     "size": size, "color": color, "state": "floating", "ramp_t": 0.0,
+                                     "rot": rnd.uniform(-0.6, 0.6)})
+
     def spawn_duck(self, ahead_m=5.0, right_m=-0.6):
         """A duck `ahead_m` in front of the boat, swimming across its path."""
         b = self.boat

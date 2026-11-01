@@ -12,6 +12,8 @@ const LEGEND = [
   ['A', 'MANUAL — drive', GREEN], ['B', 'HOLD — stop', RED],
   ['X', 'Resume mission', '#0A84FF'], ['Y', 'Return home', '#FFD60A'],
   ['START', 'hold 1 s: arm', '#AEB3BA'], ['BACK', 'hold 1 s: disarm', '#AEB3BA'],
+  ['R1', 'Roller run / stop', '#32D74B'], ['MODE', 'Next mode', '#BF5AF2'],
+  ['L1 + R1', 'BRAKE: stop + disarm', RED],
 ]
 
 function Bar({ label, value, vertical }) {
@@ -108,8 +110,8 @@ export function BoatGamepadCard() {
                 <Bar label="Steering" value={d.s} />
               </div>
               {!d.focused && <div className="mb-2 text-[11px] text-warn">Click this window to drive: the controller is ignored while another window is in front, and the boat centres its sticks.</div>}
-              {d.focused && mode !== 'MANUAL' && (
-                <div className="mb-2 text-[11px] text-muted">Mode is {mode || '—'}: the sticks only drive in <b className="text-ink">MANUAL</b> — press <b className="text-ink">A</b>.</div>
+              {d.focused && mode !== 'MANUAL' && mode !== 'ACRO' && (
+                <div className="mb-2 text-[11px] text-muted">Mode is {mode || '—'}: the sticks only drive in <b className="text-ink">MANUAL</b> or <b className="text-ink">ACRO</b> — press <b className="text-ink">A</b> for MANUAL.</div>
               )}
             </>
           )}
@@ -123,6 +125,17 @@ export function BoatGamepadCard() {
               onChange={(e) => setLimit(Number(e.target.value) / 100)} onMouseUp={(e) => saveLimit(Number(e.target.value) / 100)}
               onTouchEnd={(e) => saveLimit(Number(e.target.value) / 100)} onKeyUp={(e) => saveLimit(Number(e.target.value) / 100)} />
           </div>
+
+          {t.collector && (
+            <div className="mb-2 flex items-center justify-between rounded-lg px-2.5 py-1.5 text-[11px]" style={{ background: 'rgba(255,255,255,0.04)' }}>
+              <span className="text-muted">
+                Intake roller{t.collector.relay_gpio ? ` · relay GPIO${t.collector.relay_gpio}` : t.collector.output ? ` · out ${t.collector.output}` : ' · no output set'}:{' '}
+                <b style={{ color: t.collector.on ? GREEN : undefined }} className={t.collector.on ? '' : 'text-ink'}>{t.collector.on ? 'RUNNING' : 'stopped'}</b>
+              </span>
+              <button type="button" disabled={!boat.fcConnected} onClick={() => boatApi.collector().catch(() => {})}
+                className="font-semibold text-accent disabled:opacity-50">{t.collector.on ? 'Stop' : 'Run'}</button>
+            </div>
+          )}
 
           <div className="mb-2 grid grid-cols-2 gap-x-3 gap-y-1">
             {LEGEND.map(([k, label, color]) => (
@@ -145,7 +158,7 @@ export function BoatGamepadCard() {
                 <>
                   <div className="font-semibold text-warn">Pixhawk failsafe needs attention</div>
                   {(fs.problems || []).map((p) => <div key={p} className="text-muted">{p}</div>)}
-                  <button type="button" disabled={fixing} onClick={fix} className="mt-1 font-semibold text-accent">{fixing ? 'Fixing…' : 'Fix it (radio failsafe on, action HOLD)'}</button>
+                  <button type="button" disabled={fixing} onClick={fix} className="mt-1 font-semibold text-accent">{fixing ? 'Fixing…' : 'Fix it (failsafe on, action HOLD)'}</button>
                 </>
               )}
             </div>

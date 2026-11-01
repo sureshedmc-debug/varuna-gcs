@@ -157,6 +157,8 @@ class BoatLink:
             "satellites": 0, "gps_fix": 0,
             "home_lat": None, "home_lng": None,
             "mission_seq": None, "mission_count": None,
+            "board_v": None, "servo_v": None, "board_v_t": 0.0,   # POWER_STATUS: Pixhawk 5 V rail, servo rail
+            "servo_out": None, "servo_out_t": 0.0,                # SERVO_OUTPUT_RAW: µs on outputs 1–8
         }
 
     # ------------------------------------------------------------------ lifecycle
@@ -384,6 +386,17 @@ class BoatLink:
         self._send(lambda m: m.mav.request_data_stream_send(ts, tc, mavlink.MAV_DATA_STREAM_ALL, 0, 0))
         for stream, hz in STREAM_RATES:
             self._send(lambda m, s=stream, r=hz: m.mav.request_data_stream_send(ts, tc, s, r, 1))
+        # What the Pixhawk actually sends each motor output (motor setup check, the app's readout).
+        self.set_message_rate(36, 4)                            # SERVO_OUTPUT_RAW
+
+    def set_message_rate(self, msg_id, hz):
+        """MAV_CMD_SET_MESSAGE_INTERVAL, fire and forget (no answer awaited)."""
+        if self.target_system is None:
+            return
+        ts, tc = self.target_system, self.target_component
+        us = int(1e6 / hz) if hz > 0 else -1
+        self._send(lambda m: m.mav.command_long_send(ts, tc, mavlink.MAV_CMD_SET_MESSAGE_INTERVAL, 0,
+                                                     msg_id, us, 0, 0, 0, 0, 0))
 
     # ------------------------------------------------------------------ incoming
     def _handle(self, msg):
@@ -447,6 +460,14 @@ class BoatLink:
                 s["home_lng"] = msg.longitude / 1e7
             elif t == "MISSION_CURRENT":
                 s["mission_seq"] = msg.seq
+            elif t == "SERVO_OUTPUT_RAW":
+                s["servo_out"] = [msg.servo1_raw, msg.servo2_raw, msg.servo3_raw, msg.servo4_raw,
+                                  msg.servo5_raw, msg.servo6_raw, msg.servo7_raw, msg.servo8_raw]
+                s["servo_out_t"] = now
+            elif t == "POWER_STATUS":
+                s["board_v"] = msg.Vcc / 1000.0 if msg.Vcc else None
+                s["servo_v"] = msg.Vservo / 1000.0 if msg.Vservo else None
+                s["board_v_t"] = now
 
         if t == "STATUSTEXT":
             text = (msg.text or "").replace("\x00", "").strip()
@@ -576,6 +597,24 @@ class BoatLink:
             if not self._wait_state(lambda s: s["armed"] == bool(arm), 3.0):
                 raise LinkError("The Pixhawk accepted the command but the arm state did not change.")
             return "Armed." if arm else "Disarmed."
+
+    def brake_disarm(self, timeout=1.5):
+        """Instant brake: force-disarm now (the motors stop at once). Skips the
+        command lock so a slow command can't hold it up. True once the Pixhawk
+        has disarmed: its ACK (it disarms before answering), not the next
+        heartbeat, which can be a second away."""
+        self._require_fc()
+        cmd = mavlink.MAV_CMD_COMPONENT_ARM_DISARM
+        w = self._expect(("COMMAND_ACK",), lambda m: m.command == cmd)
+        for attempt in range(2):
+            self._send(lambda m: m.mav.command_long_send(
+                self.target_system, self.target_component, cmd, attempt, 0, FORCE_DISARM_MAGIC, 0, 0, 0, 0, 0))
+        ack = self._wait(w, timeout)
+        if ack is not None and ack.result == mavlink.MAV_RESULT_ACCEPTED:
+            with self._state_lock:
+                self.state["armed"] = False
+            return True
+        return self._wait_state(lambda s: not s["armed"], timeout)
 
     def set_current_item(self, seq, nav_seq=None):
         """Make `seq` the next mission item. If it is a DO command, the Pixhawk

@@ -75,10 +75,8 @@ class MissionManager:
         if speed_mps and speed_mps > 0:
             items.append({"command": mavlink.MAV_CMD_DO_CHANGE_SPEED, "frame": mavlink.MAV_FRAME_MISSION,
                           "param1": 1, "param2": speed_mps, "param3": -1})
-        servo = self.cfg["collector_servo"]
-        if servo:
-            items.append({"command": mavlink.MAV_CMD_DO_SET_SERVO, "frame": mavlink.MAV_FRAME_MISSION,
-                          "param1": servo, "param2": self.cfg["collector_pwm_on"]})
+        # The intake roller is not in the mission: collector.py runs it near each
+        # item (and the operator's R1 at any time), so it isn't spinning all trip.
         seq_map = {}
         for wp in waypoints:
             seq_map[len(items)] = wp["id"]
@@ -87,9 +85,6 @@ class MissionManager:
             hold = round(max(0.0, min(120.0, float(hold_s if own_hold is None else own_hold))))
             items.append({"command": nav, "param1": hold,
                           "lat": wp["lat"], "lng": wp["lng"], "alt": 0})
-        if servo:
-            items.append({"command": mavlink.MAV_CMD_DO_SET_SERVO, "frame": mavlink.MAV_FRAME_MISSION,
-                          "param1": servo, "param2": self.cfg["collector_pwm_off"]})
         rtl_seq = None
         if rtl:
             rtl_seq = len(items)
@@ -177,9 +172,8 @@ class MissionManager:
             armed_here = True
         try:
             if st == "uploaded":
-                # Start at item 1, not at the first waypoint: items before it are
-                # the speed change and the collector switch-on, which would be
-                # skipped otherwise.
+                # Start at item 1, not at the first waypoint: the item before it
+                # is the speed change, which would be skipped otherwise.
                 self.link.set_current_item(1, plan["first_seq"])
             self.link.set_mode("AUTO")
         except LinkError:

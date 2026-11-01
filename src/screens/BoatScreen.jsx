@@ -11,6 +11,9 @@ import { boatIcon, itemIcon, MISSION_STATE, BoatOffline, BLUE, GREEN } from '../
 import { homeIcon } from '../components/MapCanvas'
 import { BoatVisionWidgets } from '../components/BoatVisionWidgets'
 import { BoatGamepadCard } from '../components/BoatGamepadCard'
+import { BoatModeCard } from '../components/BoatModeCard'
+import { BoatMotorMatchCard } from '../components/BoatMotorMatchCard'
+import { BoatLiveCollectCard } from '../components/BoatLiveCollectCard'
 import { num, relTime } from '../lib/format'
 import { isOk } from '../lib/commands'
 
@@ -80,6 +83,12 @@ export default function BoatScreen({ onNavigate }) {
   }, [track.data, pos?.[0], pos?.[1]]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const history = usePolling(() => (boat.reachable === true ? boatApi.missionList() : Promise.resolve([])), 15000, [boat.reachable])
+
+  // Live collect's queue, for the map (only fetched while there is one).
+  const liveOn = boat.reachable === true && !!boat.live &&
+    (boat.live.state !== 'off' || Object.values(boat.live.counts || {}).some((n) => n > 0))
+  const liveList = usePolling(() => (liveOn ? boatApi.liveStatus() : Promise.resolve(null)), 2500, [liveOn])
+  const liveTargets = liveOn && Array.isArray(liveList.data?.targets) ? liveList.data.targets : []
   const historyList = Array.isArray(history.data) ? history.data : []
 
   const wps = mission?.waypoints || []
@@ -124,6 +133,10 @@ export default function BoatScreen({ onNavigate }) {
           {wps.map((w, i) => (
             <Marker key={w.id} position={[w.lat, w.lng]} interactive={false}
               icon={itemIcon(i + 1, reached.has(w.id) ? 'done' : mission?.current_index === i + 1 ? 'current' : 'todo')} />
+          ))}
+          {liveTargets.map((x, i) => x.status === 'missed' ? null : (
+            <Marker key={`live-${x.id}`} position={[x.lat, x.lng]} interactive={false}
+              icon={itemIcon(i + 1, x.status === 'collected' ? 'done' : x.status === 'active' ? 'current' : 'todo')} />
           ))}
           {home && <Marker position={home} icon={homeIcon()} interactive={false} />}
           {pos && <Marker position={pos} icon={boatIcon(t.heading ?? t.yaw)} interactive={false} zIndexOffset={1000} />}
@@ -229,7 +242,13 @@ export default function BoatScreen({ onNavigate }) {
                 )}
               </div>
 
+              <BoatLiveCollectCard />
+
+              <BoatModeCard />
+
               <BoatGamepadCard />
+
+              <BoatMotorMatchCard />
 
               <BoatVisionWidgets onNavigate={onNavigate} />
 

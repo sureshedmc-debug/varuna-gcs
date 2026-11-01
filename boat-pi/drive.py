@@ -6,16 +6,18 @@ WebSocket ~20 times a second. This module turns them into RC override values
 for the Pixhawk (steering on channel 1, throttle on 3) and sends them ten times
 a second — ALWAYS while rc_source is "gamepad", neutral when nobody drives:
 
-  * The Pixhawk sees a live "radio", so it arms and runs missions without a
-    transmitter (with no radio at all, ArduRover refuses to arm: "Radio failsafe").
-  * If the boat Pi dies, the overrides stop and the Pixhawk's own radio failsafe
-    acts within ~3 s (FS_ACTION, normally Hold) — tested on ArduRover SITL.
+  * The Pixhawk gets its steering and throttle from the Pi, with no radio
+    receiver. Pixhawk settings for this (README → game controller): radio
+    failsafe off (FS_THR_ENABLE 0), RC1/RC3 calibrated to 1100–1500–1900 so
+    1500 is "stopped", and the RC arming check skipped (ARMING_SKIPCHK).
+  * If the boat Pi dies, its heartbeats stop and the Pixhawk's GCS failsafe
+    acts after FS_GCS_TIMEOUT (FS_GCS_ENABLE 1, FS_ACTION 2 = Hold).
   * If the PC / controller link drops, this module centres the sticks after
     gamepad_timeout_s (0.5 s) and, if the boat was being driven in MANUAL,
     switches it to HOLD after gamepad_lost_s (3 s).
 
-The sticks only move the boat in MANUAL mode (the controller's A button); in
-AUTO, GUIDED, HOLD and RTL the Pixhawk ignores them. With rc_source
+The sticks only move the boat in MANUAL (the controller's A button) or ACRO;
+in AUTO, GUIDED, HOLD, LOITER and RTL the Pixhawk ignores them. With rc_source
 "transmitter" nothing is sent, so a real transmitter keeps full control.
 """
 
@@ -30,6 +32,13 @@ log = logging.getLogger("boat.drive")
 SEND_HZ = 10
 NEUTRAL = 1500
 SPAN = 400                 # 1100…1900 µs: ArduPilot's default RC range
+STICK_MODES = ("MANUAL", "ACRO")   # modes where the Pixhawk follows the sticks
+
+
+def _expo(x, e):
+    """Stick curve: small stick = gentle throttle, full stick still = full.
+    (1 - e)·x + e·x³ — e = 0 is linear; at e = 0.5 half stick gives 31 %."""
+    return (1.0 - e) * x + e * x * x * x
 
 
 def _clamp(v):
@@ -81,6 +90,14 @@ class DriveManager:
                 self.drove = True
                 self.lost_acted = False
 
+    def brake(self):
+        """Instant brake: centre the sticks and send neutral to the Pixhawk now."""
+        with self.lock:
+            self.steer = self.throttle = 0.0
+            self.drove = False
+        if self.enabled and self.link.fc_connected:
+            self.link.rc_override(NEUTRAL, NEUTRAL)
+
     def connected(self, on):
         with self.lock:
             self.clients = max(0, self.clients + (1 if on else -1))
@@ -94,7 +111,7 @@ class DriveManager:
         with self.lock:
             fresh = time.time() - self.t_input <= self.cfg["gamepad_timeout_s"]
             s, t = (self.steer, self.throttle) if fresh else (0.0, 0.0)
-        t *= self.cfg["gamepad_max_throttle"]
+        t = _expo(t, self.cfg["gamepad_throttle_expo"]) * self.cfg["gamepad_max_throttle"]
         return int(round(NEUTRAL + SPAN * s)), int(round(NEUTRAL + SPAN * t))
 
     def _run(self):
@@ -107,7 +124,7 @@ class DriveManager:
             self._watch_link()
 
     def _watch_link(self):
-        """Controller link lost while driving in MANUAL: put the boat in HOLD."""
+        """Controller link lost while driving in MANUAL or ACRO: put the boat in HOLD."""
         with self.lock:
             quiet = time.time() - self.t_input
             if not self.drove or self.lost_acted or quiet < self.cfg["gamepad_lost_s"]:
@@ -115,7 +132,7 @@ class DriveManager:
             self.lost_acted = True
             self.drove = False
         s = self.link.snapshot()
-        if not (s["armed"] and s["flight_mode"] == "MANUAL"):
+        if not (s["armed"] and s["flight_mode"] in STICK_MODES):
             return
         self._event(f"Controller link lost for {quiet:.0f} s while driving — holding the boat", "warn")
         if self.vision is not None:
