@@ -6,6 +6,7 @@
 
 import { getAlertSettings } from '../alertSettings'
 import { mapsLink } from './format'
+import { isOnline } from '../online'
 
 let emailjs = null
 async function client() {
@@ -21,6 +22,7 @@ async function send(params) {
   if (!emailjsServiceId || !emailjsTemplateId || !emailjsPublicKey) {
     return { ok: false, error: 'Fill EmailJS Service, Template and Public Key in System → Alerts first.' }
   }
+  if (!isOnline()) return { ok: false, error: 'No internet connection — email alerts need the internet.' }
   try {
     const ej = await client()
     const res = await ej.send(emailjsServiceId, emailjsTemplateId, params, { publicKey: emailjsPublicKey })

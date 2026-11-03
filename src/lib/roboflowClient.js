@@ -1,3 +1,5 @@
+import { isOnline } from './online'
+
 /**
  * Roboflow Hosted Inference API Client for Varuna GCS.
  * Allows running cloud/serverless detections via Roboflow API.
@@ -16,6 +18,7 @@ export const ROBOFLOW_CONFIG = {
  * @returns {Promise<Array<{x1: number, y1: number, x2: number, y2: number, score: number, class: string, label: string}>>}
  */
 export async function detectRoboflow(source, { confThr = 0.35 } = {}) {
+  if (!isOnline()) throw new Error('The cloud detector needs the internet — switch to the on-device detector.')
   const sw = source.videoWidth || source.width || source.naturalWidth
   const sh = source.videoHeight || source.height || source.naturalHeight
   if (!sw || !sh) return []

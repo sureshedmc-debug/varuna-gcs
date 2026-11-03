@@ -11,6 +11,7 @@ const http = require('node:http')
 const https = require('node:https')
 const settings = require('./settings.cjs')
 const { startServer } = require('./server.cjs')
+const { createLocalData } = require('./localData.cjs')
 
 const DEV_URL = process.env.VITE_DEV_SERVER_URL || ''
 
@@ -60,6 +61,12 @@ async function boot() {
       preferredPort: s.port,
       getTarget: () => settings.load().piAddress,
       getBoatTarget: () => settings.load().boatAddress,
+      // Operator records (CSV) and sign-in live in the per-user folder, which
+      // survives app updates: %APPDATA%\VARUNA GCS\data on Windows.
+      localData: createLocalData({
+        dataDir: path.join(app.getPath('userData'), 'data'),
+        seedFile: path.join(distRoot(), 'config', 'rivers.json'),
+      }),
     })
     if (port !== s.port) {
       // The app's settings, saved Groq key and detection log live in
@@ -120,7 +127,8 @@ function applyCsp(ses) {
     "worker-src 'self' blob:",
     "style-src 'self' 'unsafe-inline'", // Tailwind + Framer Motion inject styles
     "font-src 'self' data:",
-    `img-src 'self' data: blob: https://server.arcgisonline.com${devOrigin ? ` ${devOrigin}` : ''}`,
+    // googleusercontent: the signed-in operator's Google profile picture.
+    `img-src 'self' data: blob: https://server.arcgisonline.com https://*.googleusercontent.com${devOrigin ? ` ${devOrigin}` : ''}`,
     `media-src 'self' blob: data:${devOrigin ? ` ${devOrigin}` : ''}`,
     `connect-src 'self' ${CONNECT_HOSTS.join(' ')}${devConnectExtra ? ` ${devConnectExtra}` : ''}`,
     "form-action 'none'",
@@ -155,6 +163,15 @@ function isOwnUrl(u) {
   }
 }
 
+function isGoogleSignInPage(u) {
+  try {
+    const x = new URL(u)
+    return x.hostname === 'localhost' && x.pathname === '/local/auth/google/page'
+  } catch {
+    return false
+  }
+}
+
 function openExternal(u) {
   if (/^(https?:|mailto:)/i.test(u)) shell.openExternal(u).catch(() => {})
 }
@@ -176,6 +193,12 @@ function setupSecurity() {
   app.on('web-contents-created', (_e, contents) => {
 
     contents.setWindowOpenHandler(({ url }) => {
+      // Google refuses to sign in inside an embedded app window, so its sign-in
+      // page (served by localData.cjs) always opens in the system browser.
+      if (isGoogleSignInPage(url)) {
+        openExternal(url)
+        return { action: 'deny' }
+      }
       // The certificate print view (lib/certificate.js) opens a blank window and
       // writes into it; the camera snapshot opens a same-origin URL. Both stay
       // in-app. Everything else (Google Maps, WhatsApp) goes to the system browser.
@@ -389,7 +412,8 @@ function onScreen(b) {
 function createWindow(url) {
   const saved = settings.load().windowBounds
   const bounds = onScreen(saved) ? { x: saved.x, y: saved.y, width: saved.width, height: saved.height } : {}
-  const iconPath = path.join(__dirname, '..', 'build', 'icon.png')
+  // .ico on Windows: it carries hand-made 16–32 px sizes for the title bar and taskbar.
+  const iconPath = path.join(__dirname, '..', 'build', process.platform === 'win32' ? 'icon.ico' : 'icon.png')
 
   win = new BrowserWindow({
     width: 1440,

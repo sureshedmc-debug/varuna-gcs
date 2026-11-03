@@ -1,5 +1,7 @@
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
+import { createRequire } from 'node:module'
+import path from 'node:path'
 
 // The production bundle NEVER contains a backend host: the app calls the API via
 // relative paths (see src/api/client.js), resolved against window.location.origin
@@ -103,7 +105,7 @@ export default defineConfig(({ mode }) => {
   }
 
   return {
-    plugins: [react(), watcherResilience()],
+    plugins: [react(), watcherResilience(), localDataStore(env)],
     // `preview` gets the same proxy as `server`: without it, npm run preview
     // serves the built bundle with no route to the Pi, so a production-shaped
     // smoke test would look broken for the wrong reason.
@@ -128,6 +130,7 @@ export default defineConfig(({ mode }) => {
           '**/android/**',
           '**/training-data/**',
           '**/varuna photos and video/**',
+          '**/data/**', // the local CSV store, rewritten on every save
         ],
       },
     },
@@ -173,6 +176,30 @@ export default defineConfig(({ mode }) => {
     },
   }
 })
+
+// The same /local/* store the desktop app's server mounts (electron/localData.cjs):
+// CSV records, the state/river catalog and sign-in. In dev the files go to
+// <project>/data (gitignored), or VARUNA_DATA_DIR.
+function localDataStore(env) {
+  let store
+  const middleware = (req, res, next) => {
+    if (!String(req.url || '').startsWith('/local/')) return next()
+    store ||= createRequire(import.meta.url)('./electron/localData.cjs').createLocalData({
+      dataDir: path.resolve(env.VARUNA_DATA_DIR || 'data'),
+      seedFile: path.resolve('public/config/rivers.json'),
+    })
+    store.handle(req, res)
+  }
+  return {
+    name: 'varuna:local-data',
+    configureServer(server) {
+      server.middlewares.use(middleware)
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use(middleware)
+    },
+  }
+}
 
 // Belt and braces for the watcher. The ignore list above covers the directories
 // we know about, but antivirus, OneDrive or a stray build can lock any file at

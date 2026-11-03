@@ -173,9 +173,10 @@ function serveStatic(root, req, res) {
  * @param {() => string} o.getTarget  current Pi base URL ('' = not configured);
  *   read per request so a new address applies without restarting.
  * @param {() => string} [o.getBoatTarget]  current boat Pi base URL ('' = not configured).
+ * @param {{handle: Function}} [o.localData]  CSV records + sign-in (electron/localData.cjs), under /local/*.
  * @returns {Promise<{server: import('http').Server, port: number}>}
  */
-function startServer({ root, preferredPort, getTarget, getBoatTarget = () => '' }) {
+function startServer({ root, preferredPort, getTarget, getBoatTarget = () => '', localData = null }) {
   root = path.resolve(root)
   const proxy = httpProxy.createProxyServer({ changeOrigin: true, ws: true })
   let ownOrigins = { hosts: new Set(), origins: new Set() }
@@ -207,6 +208,9 @@ function startServer({ root, preferredPort, getTarget, getBoatTarget = () => '' 
       if (!target) return sendText(res, 503, 'Pi address not set (System → Connection)')
       return proxy.web(req, res, { target })
     }
+    // localData does its own same-origin check (its Google sign-in page is the
+    // one route opened as a top-level navigation from the system browser).
+    if (localData && pathname.startsWith('/local/')) return localData.handle(req, res)
     serveStatic(root, req, res)
   })
 

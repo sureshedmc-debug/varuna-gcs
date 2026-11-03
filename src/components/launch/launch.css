@@ -1,0 +1,234 @@
+/* Home launchpad (Login / Direct Mission Plan / Basic data + the VARUNA AI
+   panel) and the pages it opens. Same palette and cards as homeNew.css. */
+
+/* ── Launchpad: options left, brand panel right ── */
+.vl-launch {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 36%);
+  grid-template-areas: 'options brand';
+  gap: 22px;
+  margin: 18px 24px 0;
+  /* The spotlight: the first screen is the three ways in and the artwork. */
+  min-height: clamp(500px, calc(100vh - 56px - 110px), 780px);
+}
+.vl-options { grid-area: options; display: flex; flex-direction: column; gap: 16px; justify-content: center; }
+.vl-greet { font-size: 38px; font-weight: 900; letter-spacing: -0.01em; color: #1e1b4b; margin: 0; }
+.vl-greet b {
+  background: linear-gradient(135deg, #4c1d95 0%, #7c3aed 50%, #a78bfa 100%);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+}
+.vl-greet-sub { font-size: 15px; color: #5b21b6; font-weight: 500; margin: 4px 0 6px; }
+
+.vl-option {
+  display: flex; align-items: center; gap: 20px; width: 100%; text-align: left; flex: 1; max-height: 150px; min-height: 96px;
+  background: #fff; border: 1.5px solid #f0ecff; border-radius: 20px; padding: 22px 26px;
+  box-shadow: 0 2px 12px rgba(109,40,217,0.06); cursor: pointer; color: #1e1b4b;
+  transition: transform .22s, box-shadow .22s, border-color .22s;
+}
+.vl-option:hover { transform: translateY(-2px); border-color: #ddd6fe; box-shadow: 0 10px 28px rgba(109,40,217,0.14); }
+.vl-option:focus-visible { outline: 2px solid #7c3aed; outline-offset: 2px; }
+.vl-option-icon {
+  width: 66px; height: 66px; border-radius: 18px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, #6d28d9, #a78bfa); box-shadow: 0 6px 16px rgba(124,58,237,0.32); color: #fff;
+}
+.vl-option-icon.teal { background: linear-gradient(135deg, #0d9488, #5eead4); box-shadow: 0 6px 16px rgba(13,148,136,0.28); }
+.vl-option-icon.amber { background: linear-gradient(135deg, #d97706, #fcd34d); box-shadow: 0 6px 16px rgba(217,119,6,0.26); }
+.vl-option-title { font-size: 21px; font-weight: 800; }
+.vl-option-sub { font-size: 14px; color: #6d28d9; margin-top: 4px; font-weight: 500; }
+.vl-option-go { margin-left: auto; color: #a78bfa; flex-shrink: 0; }
+
+/* Brand panel: the existing hero artwork, cropped to the drone, standing upright
+   between its own sky (top) and lake (bottom) colours. */
+.vl-brand {
+  grid-area: brand; position: relative; overflow: hidden; border-radius: 16px;
+  display: flex; flex-direction: column; justify-content: space-between;
+  background: linear-gradient(180deg, #a99be8 0%, #c9b8f2 30%, #e9c8de 46%, #8d8cc9 60%, #5a5fa6 100%);
+  box-shadow: 0 14px 40px rgba(109,40,217,0.22); padding: 32px 28px 28px;
+}
+.vl-brand-top { position: relative; z-index: 1; }
+.vl-brand-eyebrow { font-size: 13px; font-weight: 800; letter-spacing: 0.28em; text-transform: uppercase; color: #2e1065; }
+.vl-brand-title {
+  font-size: 58px; font-weight: 900; line-height: 1.05; letter-spacing: -0.02em; margin: 2px 0 0;
+  background: linear-gradient(135deg, #3b0764 0%, #5b21b6 50%, #7c3aed 100%);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+}
+.vl-brand-art {
+  position: relative; margin: 8px -28px; aspect-ratio: 900 / 449;
+  background: url('/hero-banner.png') no-repeat;
+  background-size: 241.1% auto; background-position: 63% 48.9%;
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 14%, #000 86%, transparent 100%);
+  mask-image: linear-gradient(180deg, transparent 0%, #000 14%, #000 86%, transparent 100%);
+}
+.vl-brand-bottom { position: relative; z-index: 1; display: flex; gap: 10px; align-items: stretch; }
+.vl-brand-bar { width: 3px; border-radius: 2px; background: linear-gradient(180deg, #e879f9, #a78bfa); }
+.vl-brand-tag { font-size: 15px; font-weight: 800; letter-spacing: 0.18em; text-transform: uppercase; color: #fff; line-height: 1.7; text-shadow: 0 1px 4px rgba(0,0,0,0.3); }
+
+@media (max-width: 860px) {
+  .vl-launch { grid-template-columns: 1fr; grid-template-areas: 'brand' 'options'; margin: 12px 12px 0; min-height: 0; }
+  .vl-brand { min-height: 0; padding: 18px 18px 16px; }
+  .vl-brand-art { margin: 4px auto; width: min(100%, 520px); }
+  .vl-brand-title { font-size: 36px; }
+  .vl-greet { font-size: 28px; }
+  .vl-option { padding: 18px; gap: 14px; min-height: 0; }
+  .vl-option-icon { width: 54px; height: 54px; border-radius: 14px; }
+  .vl-option-title { font-size: 18px; }
+}
+
+/* ── Simple / Expert switch ── */
+.vl-modebar { display: flex; justify-content: flex-end; margin: 14px 24px -6px; }
+.vl-mode { display: inline-flex; padding: 3px; gap: 2px; border-radius: 999px; background: #fff; border: 1.5px solid #ede9fe; box-shadow: 0 2px 10px rgba(109,40,217,0.06); }
+.vl-mode button { border: 0; background: transparent; padding: 6px 16px; border-radius: 999px; font-size: 13px; font-weight: 700; color: #6d28d9; cursor: pointer; }
+.vl-mode button.on { background: linear-gradient(135deg, #6d28d9, #8b5cf6); color: #fff; box-shadow: 0 3px 10px rgba(124,58,237,0.3); }
+.vl-mode button:focus-visible { outline: 2px solid #7c3aed; outline-offset: 2px; }
+
+/* ── Simple Home: three steps, one big button, readiness ── */
+.vl-launch.simple .vl-options { gap: 14px; }
+.vl-steps-list { list-style: none; margin: 0; padding: 6px 22px; background: #fff; border: 1.5px solid #f0ecff; border-radius: 20px; box-shadow: 0 2px 12px rgba(109,40,217,0.06); }
+.vl-step-row { display: flex; gap: 14px; align-items: flex-start; padding: 12px 0; color: #94a3b8; }
+.vl-step-row + .vl-step-row { border-top: 1px solid #f3f0ff; }
+.vl-step-num { width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 15px; background: #f1f5f9; color: #94a3b8; }
+.vl-step-row.done .vl-step-num { background: #dcfce7; color: #15803d; }
+.vl-step-row.now .vl-step-num { background: linear-gradient(135deg, #6d28d9, #a78bfa); color: #fff; box-shadow: 0 4px 12px rgba(124,58,237,0.35); }
+.vl-step-title { display: flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 800; color: #1e1b4b; line-height: 32px; }
+.vl-step-row.todo .vl-step-title, .vl-step-row.skipped .vl-step-title { color: #94a3b8; }
+.vl-step-tag { font-size: 11px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; background: #f1f5f9; color: #64748b; }
+.vl-step-tag.done { background: #dcfce7; color: #15803d; }
+.vl-step-tag.now { background: #ede9fe; color: #6d28d9; }
+.vl-step-hint { display: block; font-size: 14px; color: #5b21b6; font-weight: 500; margin-top: 2px; }
+.vl-step-row.todo .vl-step-hint { color: #94a3b8; }
+.vl-step-action { margin-left: auto; flex-shrink: 0; align-self: center; }
+.vl-step-btn { border: 1.5px solid #ddd6fe; background: #fff; color: #6d28d9; font-size: 13px; font-weight: 700; padding: 6px 14px; border-radius: 999px; cursor: pointer; transition: background .15s, border-color .15s; }
+.vl-step-btn:hover { background: #f5f3ff; border-color: #c4b5fd; }
+.vl-step-btn:focus-visible { outline: 2px solid #7c3aed; outline-offset: 2px; }
+.vl-step-btn.danger { border-color: #fecaca; color: #b91c1c; }
+.vl-step-btn.danger:hover { background: #fef2f2; border-color: #fca5a5; }
+.vl-step-confirm { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; padding: 10px 12px; border-radius: 12px; background: #fef2f2; border: 1px solid #fecaca; font-size: 14px; font-weight: 600; color: #7f1d1d; }
+.vl-step-confirm > span { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.vl-go { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; text-align: left; border: 0; cursor: pointer; color: #fff;
+  padding: 22px 28px; border-radius: 20px; background: linear-gradient(135deg, #5b21b6 0%, #7c3aed 55%, #a78bfa 100%);
+  box-shadow: 0 12px 30px rgba(109,40,217,0.35); transition: transform .2s, box-shadow .2s; }
+.vl-go:hover { transform: translateY(-2px); box-shadow: 0 16px 36px rgba(109,40,217,0.42); }
+.vl-go:focus-visible { outline: 3px solid #c4b5fd; outline-offset: 3px; }
+.vl-go-label { display: block; font-size: 24px; font-weight: 900; }
+.vl-go-sub { display: block; font-size: 14px; font-weight: 500; opacity: .9; margin-top: 2px; }
+.vl-quiet-links { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; padding: 0 4px; }
+
+.vl-ready { display: flex; gap: 12px; align-items: flex-start; padding: 14px 18px; border-radius: 16px; border: 1.5px solid #e2e8f0; background: #fff; }
+.vl-ready-dot { width: 12px; height: 12px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; background: #94a3b8; }
+.vl-ready.ok { border-color: #bbf7d0; background: #f0fdf4; }
+.vl-ready.ok .vl-ready-dot { background: #22c55e; box-shadow: 0 0 0 4px rgba(34,197,94,0.18); }
+.vl-ready.warn { border-color: #fde68a; background: #fffbeb; }
+.vl-ready.warn .vl-ready-dot { background: #f59e0b; box-shadow: 0 0 0 4px rgba(245,158,11,0.18); }
+.vl-ready-title { font-size: 16px; font-weight: 800; color: #1e1b4b; }
+.vl-ready-text { font-size: 14px; color: #475569; margin-top: 2px; }
+.vl-ready-help { margin: 8px 0 0; padding-left: 18px; font-size: 14px; color: #475569; }
+.vl-ready-help li + li { margin-top: 4px; }
+
+.vl-summary-line { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin: 18px 24px 24px;
+  padding: 14px 20px; border-radius: 16px; background: #fff; border: 1.5px solid #f0ecff; font-size: 15px; font-weight: 600; color: #1e1b4b; }
+
+@media (max-width: 860px) {
+  .vl-modebar { margin: 10px 12px -2px; }
+  .vl-summary-line { margin: 14px 12px 18px; }
+  /* On a phone a beginner sees what to do first; the artwork follows. */
+  .vl-launch.simple { grid-template-areas: 'options' 'brand'; }
+  .vl-go { padding: 18px 20px; }
+  .vl-go-label { font-size: 20px; }
+}
+
+/* ── Pages opened from the launchpad (Home steps back behind them) ── */
+.vl-layer {
+  position: fixed; inset: 56px 0 0 0; z-index: 30; overflow-y: auto; overscroll-behavior: contain;
+  min-height: 0 !important; background: transparent !important;
+  display: flex; align-items: flex-start; justify-content: center; padding: 28px 16px 40px;
+}
+.vl-scrim { position: fixed; inset: 56px 0 0 0; z-index: 29; background: rgba(30,27,75,0.10); }
+.vl-page {
+  position: relative; width: min(100%, 560px); background: #fff; border-radius: 20px; border: 1.5px solid #ede9fe;
+  box-shadow: 0 24px 60px rgba(76,29,149,0.22); padding: 26px 26px 24px; color: #1e1b4b;
+}
+.vl-page.wide { width: min(100%, 860px); }
+.vl-back {
+  display: inline-flex; align-items: center; gap: 6px; background: #f8f7ff; border: 1.5px solid #ede9fe; border-radius: 10px;
+  padding: 6px 12px; font-size: 12px; font-weight: 700; color: #6d28d9; cursor: pointer; margin-bottom: 14px;
+}
+.vl-back:hover { background: #f3f0ff; }
+.vl-h1 { font-size: 24px; font-weight: 900; margin: 0 0 4px; letter-spacing: -0.01em; }
+.vl-sub { font-size: 13px; color: #6d28d9; margin: 0 0 18px; font-weight: 500; }
+.vl-section-title { font-size: 12px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; color: #7c3aed; margin: 18px 0 8px; }
+
+.vl-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-radius: 12px; padding: 11px 18px;
+  font-size: 14px; font-weight: 800; cursor: pointer; border: 1.5px solid transparent; transition: filter .2s, transform .2s;
+  background: linear-gradient(135deg, #6d28d9, #8b5cf6); color: #fff; box-shadow: 0 8px 20px rgba(124,58,237,0.28);
+}
+.vl-btn:hover:not(:disabled) { filter: brightness(1.06); transform: translateY(-1px); }
+.vl-btn:disabled { opacity: .55; cursor: not-allowed; }
+.vl-btn.vl-full { width: 100%; }
+.vl-btn.ghost { background: #fff; color: #5b21b6; border-color: #ddd6fe; box-shadow: none; }
+.vl-btn.google { background: #fff; color: #1f2937; border-color: #e5e7eb; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+.vl-btn.big { padding: 16px 22px; font-size: 16px; border-radius: 14px; }
+
+.vl-field { display: block; margin-bottom: 12px; }
+.vl-label { display: block; font-size: 12px; font-weight: 700; color: #4c1d95; margin-bottom: 5px; }
+.vl-input, .vl-select {
+  width: 100%; border: 1.5px solid #e4defc; border-radius: 10px; padding: 10px 12px; font-size: 14px; color: #1e1b4b;
+  background: #fbfaff; outline: none; transition: border-color .2s, box-shadow .2s; font-family: inherit;
+}
+.vl-input:focus, .vl-select:focus { border-color: #8b5cf6; box-shadow: 0 0 0 3px rgba(139,92,246,0.16); }
+.vl-input[aria-invalid='true'] { border-color: #f87171; }
+.vl-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (max-width: 520px) { .vl-row { grid-template-columns: 1fr; } .vl-page { padding: 20px 16px; } }
+
+.vl-divider { display: flex; align-items: center; gap: 10px; color: #a78bfa; font-size: 11px; font-weight: 700; letter-spacing: .12em; margin: 18px 0; }
+.vl-divider::before, .vl-divider::after { content: ''; flex: 1; height: 1px; background: #ede9fe; }
+
+.vl-msg { border-radius: 10px; padding: 10px 12px; font-size: 13px; font-weight: 600; margin: 10px 0; }
+.vl-msg.bad { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+.vl-msg.ok { background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }
+.vl-msg.info { background: #f5f3ff; color: #5b21b6; border: 1px solid #ede9fe; }
+.vl-link { background: none; border: 0; padding: 0; color: #6d28d9; font-weight: 700; cursor: pointer; text-decoration: underline; font-size: inherit; }
+
+.vl-identity { display: flex; align-items: center; gap: 12px; background: #f8f7ff; border: 1.5px solid #ede9fe; border-radius: 14px; padding: 12px 14px; }
+.vl-avatar {
+  width: 42px; height: 42px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, #6d28d9, #a78bfa); color: #fff; font-weight: 900; font-size: 16px; overflow: hidden;
+}
+.vl-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.vl-identity-name { font-size: 14px; font-weight: 800; }
+.vl-identity-sub { font-size: 12px; color: #6d28d9; overflow-wrap: anywhere; }
+
+.vl-active-plan { margin-top: 14px; }
+
+/* ── Live Mission Plan wizard ── */
+.vl-modal-scrim { position: fixed; inset: 0; z-index: 60; background: rgba(30,27,75,0.35); display: flex; align-items: center; justify-content: center; padding: 16px; }
+.vl-modal { width: min(100%, 520px); max-height: calc(100vh - 32px); overflow-y: auto; }
+.vl-steps { display: flex; gap: 6px; margin: 0 0 16px; }
+.vl-step { flex: 1; height: 4px; border-radius: 2px; background: #ede9fe; }
+.vl-step.on { background: linear-gradient(90deg, #6d28d9, #a78bfa); }
+.vl-choices { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.vl-choice {
+  text-align: left; border: 1.5px solid #ede9fe; background: #fff; border-radius: 12px; padding: 12px; cursor: pointer; color: #1e1b4b;
+  transition: border-color .2s, background .2s;
+}
+.vl-choice:hover { border-color: #c4b5fd; }
+.vl-choice[aria-pressed='true'] { border-color: #7c3aed; background: #f5f3ff; box-shadow: 0 0 0 3px rgba(124,58,237,0.12); }
+.vl-choice-name { font-size: 14px; font-weight: 800; }
+.vl-choice-sub { font-size: 11px; color: #7c3aed; margin-top: 2px; }
+.vl-summary { font-size: 13px; color: #4c1d95; background: #f8f7ff; border-radius: 10px; padding: 10px 12px; margin: 12px 0; }
+.vl-actions { display: flex; gap: 10px; justify-content: space-between; margin-top: 16px; flex-wrap: wrap; }
+
+/* ── Basic data ── */
+.vl-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.vl-table th { text-align: left; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: #7c3aed; padding: 6px 8px; border-bottom: 1.5px solid #ede9fe; }
+.vl-table td { padding: 8px; border-bottom: 1px solid #f3f0ff; }
+.vl-mono { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; overflow-wrap: anywhere; }
+.vl-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.vl-chip { font-size: 12px; font-weight: 600; background: #f5f3ff; color: #5b21b6; border-radius: 999px; padding: 4px 10px; }
+.vl-scroll-x { overflow-x: auto; }
+
+
+@media (prefers-reduced-motion: reduce) {
+  .vl-option, .vl-btn { transition: none; }
+}

@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- VARUNA GCS app icon: a water drop (Varuna, the river) carrying a
+       top-down quadcopter, over a clean wave. Source for build/icon.png,
+       build/icon.ico and the app's favicon (scripts/make-icons.mjs). -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2e1065"/>
+      <stop offset="0.55" stop-color="#5b21b6"/>
+      <stop offset="1" stop-color="#8b5cf6"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.3" cy="0.2" r="0.8">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="drop" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#e9e2ff"/>
+    </linearGradient>
+    <linearGradient id="wave" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#14b8a6"/>
+      <stop offset="1" stop-color="#22d3ee"/>
+    </linearGradient>
+    <linearGradient id="craft" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4c1d95"/>
+      <stop offset="1" stop-color="#7c3aed"/>
+    </linearGradient>
+    <clipPath id="dropClip">
+      <path d="M512 160 C604 292 764 448 764 610 A252 252 0 1 1 260 610 C260 448 420 292 512 160 Z"/>
+    </clipPath>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#1e0a4a" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+
+  <!-- tile -->
+  <rect x="40" y="40" width="944" height="944" rx="216" fill="url(#bg)"/>
+  <rect x="40" y="40" width="944" height="944" rx="216" fill="url(#glow)"/>
+
+  <!-- the drop -->
+  <path filter="url(#shadow)" fill="url(#drop)"
+        d="M512 160 C604 292 764 448 764 610 A252 252 0 1 1 260 610 C260 448 420 292 512 160 Z"/>
+
+  <!-- river waves along the bottom of the drop -->
+  <g clip-path="url(#dropClip)">
+    <path fill="#99f6e4" opacity="0.75" d="M220 742 Q320 702 420 742 T620 742 T820 742 V900 H220 Z"/>
+    <path fill="url(#wave)" d="M220 778 Q320 738 420 778 T620 778 T820 778 V900 H220 Z"/>
+  </g>
+
+  <!-- top-down quadcopter -->
+  <g stroke="url(#craft)" stroke-linecap="round">
+    <line x1="407" y1="455" x2="617" y2="665" stroke-width="30"/>
+    <line x1="617" y1="455" x2="407" y2="665" stroke-width="30"/>
+  </g>
+  <g fill="#f5f3ff" stroke="url(#craft)" stroke-width="18">
+    <circle cx="407" cy="455" r="56"/>
+    <circle cx="617" cy="455" r="56"/>
+    <circle cx="407" cy="665" r="56"/>
+    <circle cx="617" cy="665" r="56"/>
+  </g>
+  <g fill="#7c3aed">
+    <circle cx="407" cy="455" r="14"/>
+    <circle cx="617" cy="455" r="14"/>
+    <circle cx="407" cy="665" r="14"/>
+    <circle cx="617" cy="665" r="14"/>
+  </g>
+  <rect x="456" y="504" width="112" height="112" rx="34" fill="url(#craft)"/>
+  <!-- the AI camera eye -->
+  <circle cx="512" cy="560" r="26" fill="#22d3ee"/>
+  <circle cx="512" cy="560" r="11" fill="#ecfeff"/>
+</svg>

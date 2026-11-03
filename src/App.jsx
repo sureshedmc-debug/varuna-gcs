@@ -9,6 +9,8 @@ import { WarningBanner, deriveWarnings } from './components/WarningBanner'
 import { Rail } from './components/Rail'
 import { TopBar } from './components/TopBar'
 import { registerNavigator } from './lib/planDraftStore'
+import { startDataRecorders } from './lib/liveMissionPlan'
+import { useHomeMode } from './lib/homeMode'
 import { ErrorBoundary } from './components/ErrorBoundary'
 
 import { wakeWordEnabled } from './lib/assistant/wakeWord'
@@ -46,9 +48,13 @@ const SCREENS = {
 
 // Only this small component listens to the live system state for the banner,
 // so telemetry updates don't re-render the whole shell (rail, top bar, screen).
-function SystemWarnings() {
+// On Simple Home the readiness card already explains a missing drone in plain
+// words, so the red "Backend unreachable" banner stays off there.
+function SystemWarnings({ onSimpleHome }) {
   const { pi, backendReachable } = useSystem()
-  return <WarningBanner warnings={deriveWarnings({ pi: pi.data, backendReachable })} />
+  const quiet = useHomeMode() === 'simple' && onSimpleHome
+  const warnings = deriveWarnings({ pi: pi.data, backendReachable }).filter((w) => !(quiet && w.key === 'backend'))
+  return <WarningBanner warnings={warnings} />
 }
 
 // While the boat's live collect runs, the drone's AI keeps finding plastic for
@@ -97,6 +103,8 @@ function Shell({ onLock }) {
   }
   // Lets the AI assistant switch tabs (e.g. open Missions after planning).
   useEffect(() => registerNavigator(setTab), [])
+  // Missions, coordinates and detections → the local CSV store.
+  useEffect(() => startDataRecorders(), [])
   const Screen = SCREENS[tab]
   const fullBleed = tab === 'live' || tab === 'control' || tab === 'mission' || tab === 'boat' || tab === 'collect' || tab === 'vision' || tab === 'water'
 
@@ -119,7 +127,7 @@ function Shell({ onLock }) {
         mobileOpen={navOpen}
         onMobileOpenChange={setNavOpen}
       />
-      <SystemWarnings />
+      <SystemWarnings onSimpleHome={tab === 'home'} />
       <main
         className={`relative z-10 pt-[56px] transition-[padding] duration-500 ease-[cubic-bezier(.16,1,.3,1)] ${navPinned ? 'md:pl-[244px]' : 'md:pl-[28px]'} ${fullBleed ? 'px-2 pb-2 md:pr-2' : 'px-2.5 pb-4 md:pr-4'}`}
       >

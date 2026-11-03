@@ -1,5 +1,9 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { motion } from 'framer-motion'
 import './homeNew.css'
+import HomeLaunchpad, { ModeSwitch } from '../components/launch/HomeLaunchpad'
+import { useHomeMode, setHomeMode } from '../lib/homeMode'
+import LaunchPages from '../components/launch/LaunchPages'
 import HomeBoatRow from '../components/HomeBoatRow'
 import { useSystem }        from '../components/SystemContext'
 import { useTrashStats }    from '../lib/detectionStats'
@@ -108,22 +112,6 @@ function LiveSparkline({ readings=[], color='#a78bfa' }) {
       <defs><PinkShade id={shadeId}/></defs>
       <polygon points={`${pad},${H} ${pts} ${W-pad},${H}`} fill={`url(#${shadeId})`}/>
       <polyline points={pts} stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
-    </svg>
-  )
-}
-
-function DroneIcon({ size=22, color='currentColor' }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <rect x="10" y="10" width="4" height="4" rx="1" fill={color}/>
-      <line x1="12" y1="10" x2="8"  y2="6"  stroke={color} strokeWidth="1.5" strokeLinecap="round"/>
-      <line x1="12" y1="10" x2="16" y2="6"  stroke={color} strokeWidth="1.5" strokeLinecap="round"/>
-      <line x1="12" y1="14" x2="8"  y2="18" stroke={color} strokeWidth="1.5" strokeLinecap="round"/>
-      <line x1="12" y1="14" x2="16" y2="18" stroke={color} strokeWidth="1.5" strokeLinecap="round"/>
-      <circle cx="7"  cy="5"  r="2" stroke={color} strokeWidth="1.4" fill="none"/>
-      <circle cx="17" cy="5"  r="2" stroke={color} strokeWidth="1.4" fill="none"/>
-      <circle cx="7"  cy="19" r="2" stroke={color} strokeWidth="1.4" fill="none"/>
-      <circle cx="17" cy="19" r="2" stroke={color} strokeWidth="1.4" fill="none"/>
     </svg>
   )
 }
@@ -255,24 +243,29 @@ function Chevron() {
 }
 
 /* ── Live connection status dot ── */
-function StatusDot({ ok }) {
-  return (
-    <span style={{
-      display:'inline-block', width:8, height:8, borderRadius:'50%',
-      background: ok ? '#16a34a' : '#ef4444',
-      boxShadow: ok ? '0 0 6px #16a34a' : '0 0 6px #ef4444',
-      flexShrink:0,
-    }}/>
-  )
-}
-
 /* ═══════════════════════════════════════════════════════════════════════
    MAIN COMPONENT
 ═══════════════════════════════════════════════════════════════════════ */
 export default function MissionControlScreen({ onNavigate }) {
 
+  /* ── Launchpad pages (Login / Direct Mission Plan / Basic data) ────── */
+  const [page, setPage] = useState(null)
+  const homeRef = useRef(null)
+  const [depthOrigin, setDepthOrigin] = useState('50% 0px')
+  // Home steps back around the middle of what is on screen, not the page top.
+  const openPage = useCallback((p) => {
+    const r = homeRef.current?.getBoundingClientRect()
+    if (r) setDepthOrigin(`50% ${Math.round(window.innerHeight / 2 - r.top)}px`)
+    setPage(p)
+  }, [])
+  const closePage = useCallback(() => setPage(null), [])
+
+  /* ── Simple (guided) or Expert (full dashboard) view ───────────────── */
+  const simple = useHomeMode() === 'simple'
+  const [details, setDetails] = useState(false)
+
   /* ── Live data sources ─────────────────────────────────────────────── */
-  const { telemetry, backendReachable, simulated, health, armedSince } = useSystem()
+  const { telemetry } = useSystem()
   const trashStats    = useTrashStats()           // { peak, last, updatedAt }
   const trashLog      = useTrashLog()             // array of sighting entries
   const activeMission = useActiveMission()        // { name, waypoints, altitude, speedKmh, status, target } | null
@@ -285,68 +278,9 @@ export default function MissionControlScreen({ onNavigate }) {
   const t = readTelem(telemetry.data)
   const voltN   = Number(t.volt)
   const battPct = Number.isNaN(voltN) ? 0 : Math.round(Math.max(0,Math.min(100,((voltN-10.5)/(12.6-10.5))*100)))
-  const altN    = Number.isFinite(Number(t.alt))   ? Number(t.alt)   : 0
-  const speedN  = Number.isFinite(Number(t.speed)) ? Number(t.speed) : 0
-  const satsN   = Number.isFinite(Number(t.sats))  ? Number(t.sats)  : 0
-  const headN   = Number.isFinite(Number(t.heading)) ? ((Math.round(Number(t.heading))%360)+360)%360 : null
-  const armed   = t.armed === true
-
-  /* ── Sparkline history buffers (keep last 8 telem samples) ─────────── */
-  const voltHistory  = useRef([])
-  const altHistory   = useRef([])
-  const speedHistory = useRef([])
-  const satsHistory  = useRef([])
-  useEffect(() => {
-    if (!telemetry.data) return
-    const push = (ref, val) => {
-      if (!Number.isFinite(val)) return
-      ref.current = [...ref.current.slice(-7), val]
-    }
-    push(voltHistory,  voltN)
-    push(altHistory,   altN)
-    push(speedHistory, speedN)
-    push(satsHistory,  satsN)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [telemetry.data, voltN, altN, speedN, satsN])
-
-  /* ── Link & arm state ─────────────────────────────────────────────── */
-  const linkStatus = simulated ? 'sim'
-    : telemetry.status === 'live'    ? 'live'
-    : telemetry.status === 'polling' ? 'polling'
-    : 'connecting'
-  const linkLabel = simulated ? 'SIMULATOR'
-    : telemetry.status === 'live'    ? 'LINK LIVE'
-    : telemetry.status === 'polling' ? 'RECONNECTING'
-    : 'CONNECTING'
 
   /* ── Battery % from ring color ─────────────────────────────────────── */
   const battColor = battPct>=60 ? '#7c3aed' : battPct>=30 ? '#f59e0b' : '#ef4444'
-
-  /* ── Flight time for current armed session ──────────────────────────── */
-  const [now, setNow] = useState(Date.now())
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(id)
-  }, [])
-  const flightSecs = armedSince ? Math.round((now - armedSince) / 1000) : 0
-  const flightFmt  = flightSecs >= 3600
-    ? `${Math.floor(flightSecs/3600)}h ${Math.floor((flightSecs%3600)/60)}m`
-    : flightSecs >= 60
-    ? `${Math.floor(flightSecs/60)}m ${flightSecs%60}s`
-    : flightSecs > 0
-    ? `${flightSecs}s`
-    : null
-
-  /* ── Backend connectivity ───────────────────────────────────────────── */
-  const backendOk = backendReachable === true
-
-  /* ── Health data ────────────────────────────────────────────────────── */
-  const hd = health?.data || {}
-  const pixOk   = !!(hd.pixhawk_connected ?? hd.pixhawk ?? false)
-
-  /* ── KPI: Active drone count ────────────────────────────────────────── */
-  // Drone is "active" if the backend is reachable AND Pixhawk is connected
-  const activeDrones = backendOk && pixOk ? 1 : backendOk ? 1 : 0
 
   /* ── KPI: Missions completed (real impact store) ────────────────────── */
   const missionsCompleted = impact.missionsCompleted
@@ -355,11 +289,10 @@ export default function MissionControlScreen({ onNavigate }) {
   const totalDetected = trashLog.length
 
   /* ── KPI count-up animations ─────────────────────────────────────────── */
-  const animDrones    = useCountUp(activeDrones)
   const animMissions  = useCountUp(missionsCompleted)
   const animDetected  = useCountUp(totalDetected)
 
-  // pollTotal is computed below in pollutionMap � we derive it first so
+  // pollTotal is computed below in pollutionMap — we derive it first so
   // useCountUp can reference it without a forward call.
   const pollRawTotal = useMemo(() => {
     let t = 0
@@ -470,39 +403,42 @@ export default function MissionControlScreen({ onNavigate }) {
      RENDER
   ════════════════════════════════════════════════════════════════════ */
   return (
-    <div className="varuna-home">
+    <>
+    <motion.div
+      ref={homeRef}
+      className="varuna-home"
+      style={{ transformOrigin: depthOrigin, pointerEvents: page ? 'none' : undefined }}
+      initial={false}
+      animate={page ? { scale: 0.94, opacity: 0.35 } : { scale: 1, opacity: 1 }}
+      transition={{ type: 'tween', ease: [0.16, 1, 0.3, 1], duration: 0.45 }}
+      aria-hidden={page ? true : undefined}
+      {...(page ? { inert: '' } : {})}
+    >
 
-      {/* ── Hero ── */}
-      <div className="vh-hero vh-animate vh-animate-2">
-        <img className="vh-hero-img" src="/hero-banner.png" alt="Aerial lake environment with drone" draggable="false"/>
-      </div>
+      {/* ── Launchpad: Login / Direct Mission Plan / Basic data + VARUNA AI panel ── */}
+      <div className="vl-modebar"><ModeSwitch mode={simple ? 'simple' : 'expert'} onChange={setHomeMode} /></div>
+      <HomeLaunchpad onOpen={openPage} onNavigate={onNavigate} simple={simple} />
+
+      {/* ── Simple view: one line of results; the dashboard folds away ── */}
+      {simple && (
+        <div className="vl-summary-line">
+          <span>
+            {missionsCompleted > 0 || pollRawTotal > 0
+              ? `You have flown ${missionsCompleted} mission${missionsCompleted === 1 ? '' : 's'} and found ${pollRawTotal} piece${pollRawTotal === 1 ? '' : 's'} of waste.`
+              : 'Your results will show here after your first flight.'}
+          </span>
+          <button type="button" className="vl-link" onClick={() => setDetails((d) => !d)} aria-expanded={details}>
+            {details ? 'Hide details' : 'Show details'}
+          </button>
+        </div>
+      )}
 
       {/* ── Body ── */}
+      {(!simple || details) && (
       <div className="vh-body">
 
         {/* ── KPI Row — all live ── */}
         <div className="vh-kpi-row vh-animate vh-animate-3">
-
-          {/* Active Drones — live from backendReachable + pixhawk health */}
-          <div className="vh-kpi-card">
-            <div className="vh-kpi-icon teal"><DroneIcon size={24} color="#fff"/></div>
-            <div className="vh-kpi-right">
-              <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
-                <div>
-                  <div className="vh-kpi-label">Active Drones</div>
-                  <div className="vh-kpi-value">{animDrones}</div>
-                </div>
-                <LiveSparkline readings={[0,0,backendOk?1:0,backendOk?1:0,backendOk?1:0,backendOk?1:0,activeDrones]} color="#a78bfa"/>
-              </div>
-              <div className={`vh-kpi-delta ${backendOk?'up':'neu'}`} style={{display:'flex',alignItems:'center',gap:4}}>
-                <StatusDot ok={backendOk}/>
-                {backendOk
-                  ? (simulated ? 'Simulator mode' : `Pixhawk ${pixOk?'connected':'searching'}`)
-                  : 'Backend offline'
-                }
-              </div>
-            </div>
-          </div>
 
           {/* Missions Completed — live from impactStats */}
           <div className="vh-kpi-card">
@@ -576,67 +512,14 @@ export default function MissionControlScreen({ onNavigate }) {
         <div className="vh-telem-row vh-animate vh-animate-3">
 
           {/* Battery */}
-          <div className="vh-telem-card">
-            <Ring pct={battPct/100} color={battColor}
+          <div className="vh-telem-card vh-telem-card--feature">
+            <Ring pct={battPct/100} color={battColor} size={104}
               val={telemetry.data ? `${battPct}%` : DASH} unit="BATT"/>
-            <div className="vh-telem-label">Battery</div>
-            <div className="vh-telem-sub">
-              {telemetry.data ? `${Number.isNaN(voltN)?'—':voltN.toFixed(1)} V` : 'No data'}
-            </div>
-          </div>
-
-          {/* Altitude */}
-          <div className="vh-telem-card">
-            <Ring pct={altN/50} color="#7c3aed"
-              val={telemetry.data ? altN.toFixed(1) : DASH} unit="m"/>
-            <div className="vh-telem-label">Altitude</div>
-            <div className="vh-telem-sub">{t.mode || 'No mode'}</div>
-          </div>
-
-          {/* Speed */}
-          <div className="vh-telem-card">
-            <Ring pct={speedN/20} color="#8b5cf6"
-              val={telemetry.data ? speedN.toFixed(1) : DASH} unit="km/h"/>
-            <div className="vh-telem-label">Speed</div>
-            <div className="vh-telem-sub">{speedN>0?`${speedN.toFixed(1)} km/h`:'Stationary'}</div>
-          </div>
-
-          {/* GPS */}
-          <div className="vh-telem-card">
-            <Ring pct={satsN/12}
-              color={satsN>=6?'#7c3aed':satsN>=4?'#f59e0b':'#ef4444'}
-              val={telemetry.data ? satsN : DASH} unit="SATS"/>
-            <div className="vh-telem-label">GPS Sats</div>
-            <div className="vh-telem-sub">
-              {satsN>=6?'Good fix':satsN>=4?'Weak fix':satsN>0?'No fix':'No GPS'}
-            </div>
-          </div>
-
-          {/* Link + armed state */}
-          <div className="vh-telem-card">
-            <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:6,paddingTop:4}}>
-              {/* WiFi-style icon colored by status */}
-              <svg width="38" height="38" viewBox="0 0 24 24" fill="none">
-                <path d="M1 6c0 0 5-3 11-3s11 3 11 3" stroke={backendOk?'#7c3aed':'#e2e8f0'} strokeWidth="2" strokeLinecap="round"/>
-                <path d="M4 10c0 0 3.5-2 8-2s8 2 8 2" stroke={backendOk?'#7c3aed':'#e2e8f0'} strokeWidth="2" strokeLinecap="round"/>
-                <path d="M7 14c0 0 2-1.5 5-1.5s5 1.5 5 1.5" stroke={backendOk?'#7c3aed':'#e2e8f0'} strokeWidth="2" strokeLinecap="round"/>
-                <circle cx="12" cy="18" r="1.5"
-                  fill={telemetry.status==='live'?'#7c3aed':telemetry.status==='polling'?'#f59e0b':'#e2e8f0'}/>
-              </svg>
-              <span className={`vh-link-pill ${linkStatus}`}>
-                <span className="vh-pulse-dot"/>
-                {linkLabel}
-              </span>
-              <span style={{fontSize:10.5,color:armed?'#dc2626':'#7c3aed',fontWeight:700}}>
-                {armed
-                  ? `🔴 ARMED${flightFmt?' · '+flightFmt:''}`
-                  : '🟢 DISARMED'
-                }
-              </span>
-            </div>
-            <div className="vh-telem-label">Link</div>
-            <div className="vh-telem-sub">
-              {headN!=null ? `HDG ${headN}°` : simulated ? 'SIMULATOR' : '—'}
+            <div className="vh-telem-detail">
+              <div className="vh-telem-label">Battery</div>
+              <div className="vh-telem-sub">
+                {telemetry.data ? `${Number.isNaN(voltN)?'—':voltN.toFixed(1)} V` : 'No data'}
+              </div>
             </div>
           </div>
         </div>
@@ -782,6 +665,9 @@ export default function MissionControlScreen({ onNavigate }) {
           </div>
         </div>
       </div>
-    </div>
+      )}
+    </motion.div>
+    <LaunchPages page={page} onOpen={setPage} onClose={closePage} onNavigate={onNavigate} />
+    </>
   )
 }

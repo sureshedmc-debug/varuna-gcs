@@ -15,3 +15,6 @@ release/
 # Local editor settings and unpacked desktop-app builds
 .idea/
 /VARUNA GCS/
+
+# Local CSV records and sign-in data written by `npm run dev`
+/data/
