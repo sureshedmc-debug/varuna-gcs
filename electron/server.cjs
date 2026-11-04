@@ -15,6 +15,7 @@ const http = require('node:http')
 const fs = require('node:fs')
 const path = require('node:path')
 const httpProxy = require('http-proxy')
+const { createProxyGuard } = require('./proxyGuard.cjs')
 
 // Same prefixes vite.config.js proxies.
 const PROXY_PREFIXES = ['/api', '/video_feed', '/stream', '/tune']
@@ -179,6 +180,10 @@ function serveStatic(root, req, res) {
 function startServer({ root, preferredPort, getTarget, getBoatTarget = () => '', localData = null }) {
   root = path.resolve(root)
   const proxy = httpProxy.createProxyServer({ changeOrigin: true, ws: true })
+  // A Pi that is off fails in seconds, then at once, instead of holding the
+  // page's few connections for ~21 s each (see proxyGuard.cjs).
+  const guard = createProxyGuard()
+  guard.attach(proxy, (req) => req.__guardTarget)
   let ownOrigins = { hosts: new Set(), origins: new Set() }
 
   proxy.on('error', (err, _req, resOrSocket) => {
@@ -200,19 +205,27 @@ function startServer({ root, preferredPort, getTarget, getBoatTarget = () => '',
       if (!target) return sendText(res, 503, 'Boat address not set (System → Boat connection)')
       toBoatUrl(req)
       if (!isProxied(pathOf(req.url))) return sendText(res, 404, 'Not found')
-      return proxy.web(req, res, { target })
+      return forward(req, res, target, 'Boat')
     }
     if (isProxied(pathname)) {
       if (!allowedCaller(req, ownOrigins)) return sendText(res, 403, 'Forbidden')
       const target = getTarget()
       if (!target) return sendText(res, 503, 'Pi address not set (System → Connection)')
-      return proxy.web(req, res, { target })
+      return forward(req, res, target, 'Pi')
     }
     // localData does its own same-origin check (its Google sign-in page is the
     // one route opened as a top-level navigation from the system browser).
     if (localData && pathname.startsWith('/local/')) return localData.handle(req, res)
     serveStatic(root, req, res)
   })
+
+  function forward(req, res, target, who) {
+    // Same plain-text 502 as a failed connect, so the app reads it as "unreachable".
+    if (!guard.allow(target)) return sendText(res, 502, `${who} unreachable (no answer moments ago)`)
+    req.__guardTarget = target
+    req.__guardChecked = true
+    proxy.web(req, res, { target })
+  }
 
   // The telemetry WebSockets (/api/ws for the drone, /boat/api/ws for the boat).
   server.on('upgrade', (req, socket, head) => {
@@ -222,6 +235,9 @@ function startServer({ root, preferredPort, getTarget, getBoatTarget = () => '',
     if (!isProxied(pathOf(req.url)) || !target || !allowedUpgrade(req, ownOrigins)) {
       return socket.destroy()
     }
+    if (!guard.allow(target)) return socket.destroy()
+    req.__guardTarget = target
+    req.__guardChecked = true
     proxy.ws(req, socket, head, { target })
   })
 

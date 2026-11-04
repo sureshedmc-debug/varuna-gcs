@@ -54,11 +54,13 @@ export default defineConfig(({ mode }) => {
 `)
     }
     // Fail the request fast. A WebSocket upgrade hands us a raw socket, which
-    // has no writeHead — ending it is all that's needed there.
+    // has no writeHead — ending it is all that's needed there. Plain text, as
+    // electron/server.cjs sends: a JSON body with a `success` key would make
+    // src/api/client.js read a dead Pi as reachable.
     try {
       if (res && typeof res.writeHead === 'function') {
-        if (!res.headersSent) res.writeHead(502, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify({ success: false, message: `${boat ? 'Boat' : 'Backend'} unreachable (${code})` }))
+        if (!res.headersSent) res.writeHead(502, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' })
+        res.end(`${boat ? 'Boat' : 'Pi'} unreachable (${code})`)
       } else if (res && typeof res.end === 'function') {
         res.end()
       }
@@ -74,11 +76,16 @@ export default defineConfig(({ mode }) => {
   // customLogger matters: a customLogger built with createLogger() hardcodes
   // level 'info', which silently overrode --logLevel and clearScreen for
   // builds too.
-  const quietErrors = (px) => {
+  // A Pi that is off fails in seconds, then at once, instead of holding the
+  // page's few connections for ~21 s each (electron/proxyGuard.cjs).
+  const guard = createRequire(import.meta.url)('./electron/proxyGuard.cjs').createProxyGuard()
+
+  const quietErrors = (px, to = target) => {
+    const onGuardError = guard.attach(px, () => to)
     px.on('error', onProxyError)
     setTimeout(() => {
       for (const l of px.listeners('error')) {
-        if (l !== onProxyError) px.removeListener('error', l)
+        if (l !== onProxyError && l !== onGuardError) px.removeListener('error', l)
       }
     }, 0)
   }
@@ -86,7 +93,7 @@ export default defineConfig(({ mode }) => {
   const proxy = Object.fromEntries(
     proxyPaths.map((p) => [
       p,
-      { target, changeOrigin: true, ws: true, secure: false, configure: quietErrors },
+      { target, changeOrigin: true, ws: true, secure: false, configure: (px) => quietErrors(px) },
     ])
   )
   // Keyed as a regex so it matches /boat and /boat/... only (not /boatsomething).
@@ -97,7 +104,7 @@ export default defineConfig(({ mode }) => {
     secure: false,
     rewrite: (p) => p.replace(/^\/boat/, '') || '/',
     configure: (px) => {
-      quietErrors(px)
+      quietErrors(px, boatTarget)
       // The rewrite has already dropped /boat by the time an error fires.
       px.on('proxyReq', (_pr, req) => { req.__varunaBoat = true })
       px.on('proxyReqWs', (_pr, req) => { req.__varunaBoat = true })

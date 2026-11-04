@@ -175,6 +175,17 @@ export default function IntroScreen({ onActivate }) {
                 </motion.span>
               </h1>
 
+              {/* The collection boat that works with the drone. */}
+              <motion.div
+                className="mt-3 flex items-baseline gap-3"
+                initial={{ opacity: 0, y: 10, filter: 'blur(6px)' }}
+                animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+                transition={{ delay: 2.4, duration: 0.8, ease }}
+              >
+                <span className="font-mono text-[10.5px] tracking-[0.42em] text-white/50">BOAT</span>
+                <span className="text-xl font-bold tracking-[0.3em] text-white/90 sm:text-2xl">JAL DHARA</span>
+              </motion.div>
+
               <motion.button
                 type="button"
                 tabIndex={-1}

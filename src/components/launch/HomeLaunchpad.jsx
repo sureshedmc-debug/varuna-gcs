@@ -8,6 +8,7 @@ import { useLivePlan, endLivePlan } from '../../lib/liveMissionPlan'
 import { useActiveMission } from '../../lib/missionStore'
 import { useImpactStats } from '../../lib/impactStats'
 import { useSystem } from '../SystemContext'
+import { useBoat } from '../BoatContext'
 import { pick } from '../../lib/format'
 import { UserIcon, RouteIcon, DataIcon, ChevronRight } from './icons'
 
@@ -93,6 +94,57 @@ function Readiness() {
   )
 }
 
+const BOAT_HELP = [
+  'Switch on the boat and wait about a minute.',
+  'Check this laptop and the boat are on the same Netbird network.',
+  "If it still doesn't connect, check the boat's address under System → Boat connection.",
+]
+
+/** The boat's link, in the same plain words as the drone's card above it. */
+function BoatReadiness() {
+  const boat = useBoat()
+  const [help, setHelp] = useState(false)
+  const t = boat?.telemetry?.data || {}
+  const pct = Number(t.battery_percent)
+  const batt = Number.isFinite(pct) && t.battery_percent != null ? Math.round(pct) : null
+
+  let tone = 'wait'
+  let title = 'Looking for the boat…'
+  let text = 'This takes a few seconds.'
+  if (boat?.reachable === true) {
+    tone = !boat.fcConnected || (batt != null && batt < 30) ? 'warn' : 'ok'
+    title = !boat.fcConnected ? 'Boat found, not ready' : tone === 'ok' ? 'Boat ready' : 'Boat battery is low'
+    text = !boat.fcConnected
+      ? 'Jal Dhara is on, but its flight controller is not answering yet.'
+      : batt == null ? 'Jal Dhara is connected.' : tone === 'ok' ? `Jal Dhara is connected. Battery ${batt}%.` : `Battery ${batt}%. Charge Jal Dhara before you go.`
+  } else if (boat?.reachable === false) {
+    tone = 'warn'
+    title = 'Boat not connected'
+    text = boat.wrongTarget ? "The boat's address points at something that is not the boat." : 'The app keeps trying to reach Jal Dhara.'
+  }
+  return (
+    <div className={`vl-ready ${tone}`} role="status">
+      <span className="vl-ready-dot" aria-hidden="true" />
+      <div style={{ minWidth: 0 }}>
+        <div className="vl-ready-title">{title}</div>
+        <div className="vl-ready-text">
+          {text}{' '}
+          {boat?.reachable === false && (
+            <button type="button" className="vl-link" onClick={() => setHelp((h) => !h)} aria-expanded={help}>
+              {help ? 'Hide help' : 'How do I connect?'}
+            </button>
+          )}
+        </div>
+        {help && (
+          <ol className="vl-ready-help">
+            {BOAT_HELP.map((s) => <li key={s}>{s}</li>)}
+          </ol>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function SimpleStart({ onOpen, onNavigate }) {
   const user = useUser()
   const plan = useLivePlan()
@@ -159,6 +211,7 @@ function SimpleStart({ onOpen, onNavigate }) {
       </div>
 
       <Readiness />
+      <BoatReadiness />
     </>
   )
 }

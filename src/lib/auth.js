@@ -108,7 +108,7 @@ export async function signInWithGoogle({ signal, onPage } = {}) {
   onPage?.(begin.url)
   const deadline = Date.now() + (begin.expiresInS || 300) * 1000
   while (Date.now() < deadline) {
-    await sleep(1500)
+    await sleep(500) // a local call; checking often makes sign-in feel instant
     if (signal?.aborted) throw new LocalDataError('cancelled', 'Google sign-in cancelled.')
     let r
     try {
