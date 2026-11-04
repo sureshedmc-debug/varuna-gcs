@@ -245,7 +245,7 @@ export default function HomeLaunchpad({ onOpen, onNavigate, simple = false }) {
               sub={plan ? 'Continue the live plan, or start a new one' : 'Choose state, river and sections, then plan'}
               onClick={() => onOpen('plan')}
             />
-            <Option icon={<DataIcon size={30} />} tone="amber" title="Basic / Elementary Data" sub="Saved records, CSV files and river list" onClick={() => onOpen('data')} />
+            <Option icon={<DataIcon size={30} />} tone="amber" title="Data" sub="Saved records, CSV files and river list" onClick={() => onOpen('data')} />
           </>
         )}
       </div>

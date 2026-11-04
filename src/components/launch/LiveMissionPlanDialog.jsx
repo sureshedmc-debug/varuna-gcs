@@ -68,7 +68,7 @@ export default function LiveMissionPlanDialog({ onClose, onProceed }) {
     setError('')
     if (step === 1) {
       if (!state) return setError('Select a state.')
-      if (!rivers.length) return setError(`No rivers are listed for ${state.name}. Add them to rivers.csv (Basic data shows where it is).`)
+      if (!rivers.length) return setError(`No rivers are listed for ${state.name}. Add them to rivers.csv (the Data page shows where it is).`)
       return setStep(2)
     }
     if (step === 2) {

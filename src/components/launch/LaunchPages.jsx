@@ -12,7 +12,7 @@ import BasicDataPage from './BasicDataPage'
 import { ArrowLeft } from './icons'
 
 const EASE = [0.16, 1, 0.3, 1]
-const TITLES = { login: 'Login', plan: 'Direct Mission Plan', 'plan-new': 'Direct Mission Plan', data: 'Basic data' }
+const TITLES = { login: 'Login', plan: 'Direct Mission Plan', 'plan-new': 'Direct Mission Plan', data: 'Data' }
 
 export default function LaunchPages({ page, onOpen, onClose, onNavigate }) {
   const pageRef = useRef(null)

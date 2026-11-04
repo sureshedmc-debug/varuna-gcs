@@ -22,7 +22,7 @@ export default function BasicDataPage() {
 
   return (
     <>
-      <h2 className="vl-h1">Basic / Elementary Data</h2>
+      <h2 className="vl-h1">Data</h2>
       <p className="vl-sub">Everything below is saved automatically as you sign in, plan, fly and detect.</p>
 
       {error && <div className="vl-msg bad">{error} <button type="button" className="vl-link" onClick={() => setN((x) => x + 1)}>Try again</button></div>}
