@@ -2,10 +2,12 @@ import * as THREE from 'three'
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js'
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js'
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js'
-import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
-import { OutputPass } from 'three/addons/postprocessing/OutputPass.js'
+import { LiteBloomPass } from './liteBloom'
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js'
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js'
+import { makeRiver, SURFACE_LAYER } from './riverScene'
+import { mergeStatic, hideSmallFromMirror } from './sceneOptim'
+import { makeEcosystem } from './riverEcosystem'
 
 // Intro clock (seconds from mount)
 const TL = {
@@ -24,6 +26,7 @@ const R = {
 }
 const IDLE_Z = -10
 const ARRIVE_D = 1.35
+const WATER_Y = -0.9 // river surface, ~2.3 below the hovering drone
 
 const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x))
 const lerp = (a, b, t) => a + (b - a) * t
@@ -391,15 +394,31 @@ const RadialBlurShader = {
 }
 
 const FinishShader = {
-  uniforms: { tDiffuse: { value: null }, uTime: { value: 0 }, uCA: { value: 0 }, uVig: { value: 1 }, uGrain: { value: 0.035 }, uWhite: { value: 0 }, uScan: { value: new THREE.Vector4() }, uRes: { value: new THREE.Vector2(1, 1) } },
+  uniforms: { tDiffuse: { value: null }, uTime: { value: 0 }, uCA: { value: 0 }, uVig: { value: 1 }, uGrain: { value: 0.035 }, uWhite: { value: 0 }, uExposure: { value: 1 }, uScan: { value: new THREE.Vector4() }, uRes: { value: new THREE.Vector2(1, 1) }, tBloom0: { value: null }, tBloom1: { value: null }, tBloom2: { value: null }, uBloomW: { value: new THREE.Vector3() } },
   vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+  // Also does the tone mapping + sRGB encode (ACES filmic, as three's OutputPass would),
+  // saving one full-screen pass per frame.
   fragmentShader: /* glsl */ `
-    uniform sampler2D tDiffuse; uniform float uTime, uCA, uVig, uGrain, uWhite; uniform vec4 uScan; uniform vec2 uRes; varying vec2 vUv;
+    uniform sampler2D tDiffuse, tBloom0, tBloom1, tBloom2; uniform vec3 uBloomW;
+    uniform float uTime, uCA, uVig, uGrain, uWhite, uExposure; uniform vec4 uScan; uniform vec2 uRes; varying vec2 vUv;
     float hash(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+    vec3 vrRrtOdt(vec3 v){ vec3 a = v * (v + 0.0245786) - 0.000090537; vec3 b = v * (0.983729 * v + 0.4329510) + 0.238081; return a / b; }
+    vec3 vrAces(vec3 color){
+      const mat3 IN = mat3(vec3(0.59719, 0.07600, 0.02840), vec3(0.35458, 0.90834, 0.13383), vec3(0.04823, 0.01566, 0.83777));
+      const mat3 OUT = mat3(vec3(1.60475, -0.10208, -0.00327), vec3(-0.53108, 1.10813, -0.07276), vec3(-0.07367, -0.00605, 1.07602));
+      color *= uExposure / 0.6;
+      return clamp(OUT * vrRrtOdt(IN * color), 0.0, 1.0);
+    }
+    vec3 vrToSRGB(vec3 c){ return mix(pow(c, vec3(0.41666)) * 1.055 - vec3(0.055), c * 12.92, vec3(lessThanEqual(c, vec3(0.0031308)))); }
     void main(){
       vec2 c = vUv - 0.5;
-      vec2 off = c * uCA;
-      vec3 col = vec3(texture2D(tDiffuse, vUv + off).r, texture2D(tDiffuse, vUv).g, texture2D(tDiffuse, vUv - off).b);
+      vec3 col;
+      if (uCA > 0.0001) {
+        vec2 off = c * uCA;
+        col = vec3(texture2D(tDiffuse, vUv + off).r, texture2D(tDiffuse, vUv).g, texture2D(tDiffuse, vUv - off).b);
+      } else col = texture2D(tDiffuse, vUv).rgb;
+      col += texture2D(tBloom0, vUv).rgb * uBloomW.x + texture2D(tBloom1, vUv).rgb * uBloomW.y + texture2D(tBloom2, vUv).rgb * uBloomW.z;
+      col = vrToSRGB(vrAces(col));
       float v = smoothstep(0.92, 0.22, length(c * vec2(1.0, 0.82)));
       col *= mix(1.0, v, uVig);
       col += (hash(floor(vUv * uRes) + fract(uTime) * 91.7) - 0.5) * uGrain * (1.0 - uWhite);
@@ -425,10 +444,11 @@ const FinishShader = {
  * and hovers until go() is called; then it rushes the camera and the frame
  * floods white. onReveal() fires at the white peak — swap in the app then.
  */
-export function createDroneIntro(container, { onReveal, reducedMotion = false } = {}) {
+export function createDroneIntro(container, { onReveal, onFrame, reducedMotion = false } = {}) {
   let renderer
   try {
-    renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance', stencil: false })
+    // No canvas MSAA: everything is drawn into the composer's targets, so it would only cost bandwidth.
+    renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance', stencil: false })
   } catch {
     renderer = null
   }
@@ -439,7 +459,11 @@ export function createDroneIntro(container, { onReveal, reducedMotion = false } 
 
   const W = () => container.clientWidth || window.innerWidth
   const H = () => container.clientHeight || window.innerHeight
-  const dpr = Math.min(window.devicePixelRatio || 1, 1.75)
+  // Render scale adapts at runtime (see adaptRes) to hold the display's refresh rate.
+  const maxPr = Math.min(window.devicePixelRatio || 1, 1.5)
+  const minPr = Math.min(maxPr, 0.6)
+  let dpr = Math.min(maxPr, 1.0)
+  const getPr = () => dpr
   renderer.setPixelRatio(dpr)
   renderer.setSize(W(), H())
   renderer.setClearColor(0x000000, 1)
@@ -463,6 +487,13 @@ export function createDroneIntro(container, { onReveal, reducedMotion = false } 
 
   const tex = makeTextures()
   const D = buildDrone(tex, envTex)
+  // ~110 parts -> a few draw calls (rotors and the gimbal head keep moving on their own)
+  hideSmallFromMirror(D.body, SURFACE_LAYER, 0.05)
+  mergeStatic(D.body, new Set([D.gimbal, ...D.props.map((p) => p.blades.parent)]))
+  for (const p of D.props) {
+    mergeStatic(p.blades) // two blades -> one mesh, still spinning
+    mergeStatic(p.blades.parent, new Set([p.blades])) // hub + cap
+  }
   scene.add(D.drone)
   D.drone.updateMatrixWorld(true)
   const droneBox = new THREE.Box3().setFromObject(D.drone)
@@ -513,9 +544,7 @@ export function createDroneIntro(container, { onReveal, reducedMotion = false } 
   })
   const spots = []
   const glows = []
-  const reflections = []
   const glowMat = new THREE.SpriteMaterial({ map: tex.glow, color: 0xffffff, blending: THREE.AdditiveBlending, depthWrite: false, fog: false, transparent: true })
-  const reflMat = new THREE.SpriteMaterial({ map: tex.reflect, color: 0xdbe9ff, blending: THREE.AdditiveBlending, depthWrite: false, fog: false, transparent: true })
   for (const p of D.headlights) {
     const s = new THREE.SpotLight(0xf1f6ff, 0, 40, 0.22, 0.8, 1.2)
     s.position.copy(p)
@@ -536,20 +565,14 @@ export function createDroneIntro(container, { onReveal, reducedMotion = false } 
     g.renderOrder = 3
     scene.add(g)
     glows.push({ sprite: g, local: p.clone().add(new THREE.Vector3(0, 0, 0.03)) })
-    const rf = new THREE.Sprite(reflMat)
-    scene.add(rf)
-    reflections.push(rf)
   }
 
-  // Wet studio floor
-  const FLOOR_Y = -2.3
-  const floor = new THREE.Mesh(
-    new THREE.PlaneGeometry(400, 400),
-    new THREE.MeshStandardMaterial({ color: 0x08090c, metalness: 0.6, roughness: 0.32 }),
-  )
-  floor.rotation.x = -Math.PI / 2
-  floor.position.y = FLOOR_Y
-  scene.add(floor)
+  // Night river beneath the drone (real mirror reflections), and the Varuna
+  // loop on it: drifting plastic, the drone tagging it, JAL DHARA collecting it.
+  const FLOOR_Y = WATER_Y
+  const river = makeRiver({ scene, camera, WATER_Y, W, H, getPr })
+  scene.fog.color.copy(river.horizon)
+  const eco = makeEcosystem({ scene, envMap: envTex, WATER_Y, dotTex: river.dot })
 
   // Haze particles that stretch into speed streaks
   const N = 520
@@ -611,23 +634,55 @@ export function createDroneIntro(container, { onReveal, reducedMotion = false } 
   composer.addPass(new RenderPass(scene, camera))
   const blurPass = new ShaderPass(RadialBlurShader)
   composer.addPass(blurPass)
-  const bloom = new UnrealBloomPass(new THREE.Vector2(W(), H()), 0.4, 0.5, 0.85)
+  // Quarter-res 3-level bloom; the finish pass composites it (no extra full-res passes)
+  const bloom = new LiteBloomPass(0.4, 0.5, 0.85)
   composer.addPass(bloom)
-  composer.addPass(new OutputPass())
   const finish = new ShaderPass(FinishShader)
   composer.addPass(finish)
+  bloom.textures.forEach((tx, i) => (finish.uniforms[`tBloom${i}`].value = tx))
 
   function resize() {
     const w = W()
     const h = H()
     camera.aspect = w / h
     camera.updateProjectionMatrix()
+    renderer.setPixelRatio(dpr)
+    composer.setPixelRatio(dpr)
     renderer.setSize(w, h)
     composer.setSize(w, h)
+    river.resize(w, h)
     finish.uniforms.uRes.value.set(w * dpr, h * dpr)
   }
   resize()
   window.addEventListener('resize', resize)
+
+  // Dynamic resolution: learn the display's frame interval (60/100/120/144 Hz…),
+  // drop render scale fast when frames run long, creep back up when there's headroom.
+  const perf = { refresh: 1 / 60, ema: 1 / 60, slow: 0, fast: 0, settle: 0.6 }
+  function adaptRes(rawDt) {
+    if (rawDt <= 0 || rawDt > 0.25) return
+    perf.refresh = Math.min(perf.refresh * 1.0005, rawDt) // tracks the shortest interval seen
+    perf.refresh = Math.max(perf.refresh, 1 / 165)
+    perf.ema += (rawDt - perf.ema) * 0.08
+    perf.settle -= rawDt
+    if (perf.settle > 0) return
+    if (perf.ema > perf.refresh * 1.22) {
+      perf.slow += rawDt
+      perf.fast = 0
+    } else if (perf.ema < perf.refresh * 1.06) {
+      perf.fast += rawDt
+      perf.slow = 0
+    } else perf.slow = perf.fast = 0
+    let next = dpr
+    if (perf.slow > 0.35 && dpr > minPr) next = Math.max(minPr, dpr * 0.85)
+    else if (perf.fast > 3 && dpr < maxPr) next = Math.min(maxPr, dpr * 1.07)
+    if (next !== dpr) {
+      dpr = next
+      perf.slow = perf.fast = 0
+      perf.settle = 0.5 // let the new size settle before judging again
+      resize()
+    }
+  }
 
   // --- state ---
   let t = 0 // intro clock
@@ -640,8 +695,11 @@ export function createDroneIntro(container, { onReveal, reducedMotion = false } 
   let rush = null
   const pointer = { x: 0, y: 0, sx: 0, sy: 0 }
   const tmpV = new THREE.Vector3()
+  const beamA = [new THREE.Vector3(), new THREE.Vector3()]
+  const beamB = [new THREE.Vector3(), new THREE.Vector3()]
   const lookTarget = new THREE.Vector3()
-  const idleLook = new THREE.Vector3(0, 0.95, IDLE_Z)
+  // Framed a little lower than the old studio shot so the river and the boat sit under the drone
+  const idleLook = new THREE.Vector3(0, -0.75, IDLE_Z)
 
   function idlePos(time, out) {
     const ent = 1 - Math.pow(1 - clamp(time / TL.settle), 3)
@@ -758,7 +816,7 @@ export function createDroneIntro(container, { onReveal, reducedMotion = false } 
     camera.fov = baseFov() + (rushing ? 17 * smooth(R.launch + 0.6, R.arrive, g) : 0)
     camera.updateProjectionMatrix()
 
-    // Headlight glow + wet-floor reflections
+    // Headlight glow (the river mirrors it for real)
     for (let i = 0; i < glows.length; i++) {
       const gl = glows[i]
       const wp = D.body.localToWorld(tmpV.copy(gl.local))
@@ -767,11 +825,15 @@ export function createDroneIntro(container, { onReveal, reducedMotion = false } 
       const gs = (dist * 0.014 + 0.08) * beam * (1 + near * 1.1)
       gl.sprite.scale.set(gs, gs, 1)
       glowMat.color.setScalar(beam * hb * (0.8 + near * 1.2) + flood * 6)
-      const rf = reflections[i]
-      rf.position.set(wp.x, FLOOR_Y + 0.02 - (wp.y - FLOOR_Y) * 0.55, wp.z + 0.2)
-      const rh = Math.max(0.01, (wp.y - FLOOR_Y) * 1.15)
-      rf.scale.set(rh * 0.09 + dist * 0.004, rh, 1)
-      reflMat.opacity = beam * 0.04
+    }
+
+    // River + ecosystem: the boat and the drone's tagging wake up with the drone
+    {
+      const halfH = renderer.domElement.height / 2
+      const beams = spots.map((sp, i) => [sp.getWorldPosition(beamA[i]), sp.target.getWorldPosition(beamB[i])])
+      river.update(dt, { cam: camera, dronePos: D.drone.position, wash: spin * pow, poolI: beam * (1 - flood), beams, halfH, boat: eco.boatPos() })
+      const ai = smooth(TL.scan + 0.45, TL.scan + 1.05, t)
+      eco.update(dt, { t, power: pow, ai, drone: D.drone.position, halfH })
     }
 
     // Launch mist + air disturbance
@@ -872,10 +934,12 @@ export function createDroneIntro(container, { onReveal, reducedMotion = false } 
     tmpV.copy(D.drone.position).project(camera)
     blurPass.uniforms.uCenter.value.set(clamp(tmpV.x * 0.5 + 0.5), clamp(tmpV.y * 0.5 + 0.5))
     blurPass.uniforms.uStrength.value = 0.13 * Math.pow(v01, 1.35)
+    blurPass.enabled = blurPass.uniforms.uStrength.value > 0.0005 // skip the full-screen pass while hovering
     bloom.strength = 0.4 + beam * 0.15 + v01 * 0.25 + flood * 2.8
     bloom.radius = 0.5 + flood * 0.4
     bloom.threshold = lerp(0.85, 0.15, flood)
-    renderer.toneMappingExposure = 1 + flood * 3
+    bloom.weights(finish.uniforms.uBloomW.value)
+    finish.uniforms.uExposure.value = 1 + flood * 3
     finish.uniforms.uTime.value = t
     finish.uniforms.uCA.value = 0.004 * v01 + 0.01 * near
     finish.uniforms.uVig.value = 1 - flood * 0.7
@@ -900,6 +964,20 @@ export function createDroneIntro(container, { onReveal, reducedMotion = false } 
       } else u.w = 0
     }
     finish.uniforms.uWhite.value = rushing ? smooth(R.whiteStart + 0.08, R.whitePeak, g) : 0
+
+    if (onFrame) {
+      const w = W()
+      const h = H()
+      // tag anchor just off the drone's left rotor
+      tmpV.set(-1.95, 0.3, 0).add(D.drone.position).project(camera)
+      onFrame({
+        power: pow,
+        ai: smooth(TL.scan + 0.45, TL.scan + 1.05, t),
+        rushing,
+        drone: { x: (tmpV.x * 0.5 + 0.5) * w, y: (-tmpV.y * 0.5 + 0.5) * h },
+        boat: eco.hud(camera, w, h),
+      })
+    }
   }
 
   function frame(dt) {
@@ -918,8 +996,10 @@ export function createDroneIntro(container, { onReveal, reducedMotion = false } 
   function tick(now) {
     if (disposed || revealed) return
     raf = requestAnimationFrame(tick)
-    const dt = Math.min(0.05, (now - last) / 1000)
+    const raw = (now - last) / 1000
+    const dt = Math.min(0.05, raw)
     last = now
+    if (g < 0) adaptRes(raw) // never resize mid-rush
     frame(dt)
   }
 
@@ -943,13 +1023,22 @@ export function createDroneIntro(container, { onReveal, reducedMotion = false } 
     detach = () => window.removeEventListener('resize', still)
   } else {
     window.addEventListener('pointermove', onPointer)
-    raf = requestAnimationFrame(tick)
+    // Compile every shader up front (in parallel where the driver allows) so the
+    // first seconds don't stutter; start anyway after 1.5 s.
+    const begin = () => {
+      if (disposed || raf) return
+      last = performance.now()
+      raf = requestAnimationFrame(tick)
+    }
+    Promise.race([renderer.compileAsync(scene, camera).catch(() => {}), new Promise((r) => setTimeout(r, 1500))]).then(begin)
     detach = () => window.removeEventListener('pointermove', onPointer)
   }
 
   return {
     supported: true,
-    state: () => ({ t, g }),
+    state: () => ({ t, g, pr: dpr }),
+    /** dev profiling handles */
+    debug: { scene, composer, bloom, renderer, camera, river, eco, setPr: (p) => ((dpr = p), resize()) },
     /** Launch the rush toward the camera. Safe to call more than once. */
     go() {
       if (disposed || g >= 0 || revealed) return
@@ -980,6 +1069,8 @@ export function createDroneIntro(container, { onReveal, reducedMotion = false } 
         if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => m.dispose())
       })
       Object.values(tex).forEach((x) => x.dispose())
+      river.dispose()
+      eco.dispose()
       envTex.dispose()
       pmrem.dispose()
       roomEnv.traverse((o) => {
