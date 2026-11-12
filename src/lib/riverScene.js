@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { Reflector } from 'three/addons/objects/Reflector.js'
+import { makeDayScenery, loadScannedPlants, SCAN_KEEP_OUT } from './riverDayScenery'
 
 // Night river under the drone: a planar-reflection water surface (real mirror
 // of the scene, distorted by ripples flowing downstream + rotor downwash),
@@ -33,7 +34,9 @@ const WATER_FRAG = /* glsl */ `
   uniform sampler2D tDiffuse;
   uniform sampler2D tNormal;
   uniform float uTime, uWash, uPoolI, uFlow;
-  uniform vec3 uCam, uDrone, uPool0, uPool1, uMoonDir, uBoat;
+  uniform vec3 uCam, uDrone, uPool0, uPool1, uMoonDir;
+  uniform vec4 uBoat; // x, z, stir, hull scale
+  uniform vec3 uGlint;
   varying vec4 vUv;
   varying vec3 vWorld;
   #include <common>
@@ -60,7 +63,8 @@ const WATER_FRAG = /* glsl */ `
     // Hull ripples spreading from the boat.
     vec2 db = p - uBoat.xy;
     float rb = length(db);
-    float bw = uBoat.z * exp(-max(rb - 2.0, 0.0) * 0.55) * smoothstep(1.2, 2.2, rb);
+    float rs = rb / uBoat.w;
+    float bw = uBoat.z * exp(-max(rs - 2.0, 0.0) * 0.55) * smoothstep(1.2, 2.2, rs);
     n += (db / (rb + 1e-3)) * sin(rb * 7.0 - uTime * 4.0) * bw * 0.35;
 
     float dist = length(vWorld - uCam);
@@ -82,7 +86,7 @@ const WATER_FRAG = /* glsl */ `
     // Moon glitter: tight specular sparkles on the ripples.
     vec3 Ns = normalize(vec3(n.x * 0.55, 1.0, n.y * 0.55));
     float sp = pow(max(dot(reflect(-uMoonDir, Ns), V), 0.0), 380.0);
-    col += vec3(0.75, 0.82, 1.0) * sp * 1.6;
+    col += uGlint * sp * 1.6;
 
     // Headlight pools where the beams meet the water (ripples catch glints).
     vec2 q0 = (p - uPool0.xz) * vec2(0.45, 0.22);
@@ -108,16 +112,30 @@ const SKY_VERT = /* glsl */ `
 `
 const SKY_FRAG = /* glsl */ `
   uniform vec3 uHorizon, uZenith, uMoonDir;
-  uniform float uTime;
+  uniform float uTime, uDay;
   varying vec3 vDir;
   float hash(vec3 p) { return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }
+  float h2(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+  float vn(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(h2(i), h2(i + vec2(1, 0)), f.x), mix(h2(i + vec2(0, 1)), h2(i + vec2(1, 1)), f.x), f.y); }
   void main() {
     float y = vDir.y;
-    vec3 col = mix(uHorizon, uZenith, smoothstep(0.0, 0.42, y));
+    vec3 col = mix(uHorizon, uZenith, uDay > 0.5 ? pow(smoothstep(-0.02, 0.5, y), 0.6) : smoothstep(0.0, 0.42, y));
+    float m = max(dot(vDir, uMoonDir), 0.0);
+    if (uDay > 0.5) {
+      // Daylight: warm haze around the low sun, soft drifting cumulus.
+      col += vec3(1.0, 0.86, 0.62) * (pow(m, 6.0) * 0.28 + pow(m, 90.0) * 0.6);
+      vec2 cp = vDir.xz / (y + 0.18) * 1.6 + vec2(uTime * 0.012, uTime * 0.02);
+      float c = vn(cp) * 0.55 + vn(cp * 2.1 + 3.7) * 0.3 + vn(cp * 4.6 + 9.1) * 0.15;
+      c = smoothstep(0.48, 0.78, c) * smoothstep(0.03, 0.14, y);
+      vec3 cloud = mix(vec3(0.86, 0.9, 0.95), vec3(1.0, 0.97, 0.92), pow(m, 3.0));
+      col = mix(col, cloud, c * 0.85);
+      gl_FragColor = vec4(col, 1.0);
+      return;
+    }
     // Warm city glow low on the horizon, downstream.
     col += vec3(0.10, 0.055, 0.03) * exp(-max(y, 0.0) * 22.0) * smoothstep(0.2, -0.9, vDir.z) * 0.6;
     // Moon halo
-    float m = max(dot(vDir, uMoonDir), 0.0);
     col += vec3(0.32, 0.40, 0.55) * pow(m, 60.0) * 0.5 + vec3(0.10, 0.13, 0.2) * pow(m, 8.0) * 0.3;
     // Stars, twinkling, fading out toward the hazy horizon
     vec3 c = floor(vDir * 340.0);
@@ -297,9 +315,16 @@ const haloTex = () =>
 // Distance of the shoreline from the river centre, along z.
 export const edgeAt = (z) => 15 + Math.sin(z * 0.045) * 2.6 + Math.sin(z * 0.13 + 1.3) * 1.1 + Math.max(0, -z - 60) * 0.05
 
-export function makeRiver({ scene, camera, WATER_Y, W, H, getPr }) {
-  const horizon = new THREE.Color(0x0b1626)
-  const zenith = new THREE.Color(0x010204)
+export function makeRiver({ scene, camera, WATER_Y, W, H, getPr, mood = 'night', renderer = null }) {
+  // 'night' is the intro; 'day' is a lighter, greener take for the Home page loop.
+  const day = mood === 'day'
+  // Recording the Home loop (dev only): real scanned plants and sun shadows.
+  const scans = day && import.meta.env.DEV && !!renderer
+  const PAL = day
+    ? { horizon: 0xc4e0ee, zenith: 0x2f7fd8, water: 0x1f5058, bank: 0x5b8a3c, tree: 0xffffff, reed: 0x6f9a3a, pad: 0x3f8a3a, ridge: 0x8fadb0 }
+    : { horizon: 0x0b1626, zenith: 0x010204, water: 0x040a10, bank: 0x0a0d0b, tree: 0x050806, reed: 0x15200f, pad: 0x1c3a1f, ridge: 0x050a12 }
+  const horizon = new THREE.Color(PAL.horizon)
+  const zenith = new THREE.Color(PAL.zenith)
   // The mirror is blurred by ripples anyway: half-res, no MSAA keeps it cheap.
   const RT_SCALE = 0.5
   const rtSize = (w, h) => [Math.max(64, Math.round(w * getPr() * RT_SCALE)), Math.max(64, Math.round(h * getPr() * RT_SCALE))]
@@ -331,7 +356,8 @@ export function makeRiver({ scene, camera, WATER_Y, W, H, getPr }) {
         uPool0: { value: new THREE.Vector3(0, 0, 999) },
         uPool1: { value: new THREE.Vector3(0, 0, 999) },
         uMoonDir: { value: moonDir },
-        uBoat: { value: new THREE.Vector3(0, 999, 0) },
+        uBoat: { value: new THREE.Vector4(0, 999, 0, 1) },
+        uGlint: { value: day ? new THREE.Color(1.6, 1.4, 1.1) : new THREE.Color(0.75, 0.82, 1.0) },
       },
     ]),
     vertexShader: WATER_VERT,
@@ -341,7 +367,7 @@ export function makeRiver({ scene, camera, WATER_Y, W, H, getPr }) {
     textureWidth: rtSize(W(), H())[0],
     textureHeight: rtSize(W(), H())[1],
     clipBias: 0.003,
-    color: 0x040a10,
+    color: PAL.water,
     shader: waterShader,
     multisample: 0,
   })
@@ -354,19 +380,42 @@ export function makeRiver({ scene, camera, WATER_Y, W, H, getPr }) {
   const U = water.material.uniforms
 
   // --- banks: mud lip, grassy slope, then rising land ---
-  const bankMat = new THREE.MeshLambertMaterial({ color: 0x0a0d0b })
   const ACROSS = [-0.6, 0, 1.2, 3.5, 9, 30, 220]
   const LIFT = [-0.35, 0.05, 0.42, 0.62, 0.8, 1.4, 4]
+  const bump = (z, ai, side) => (ai > 1 ? Math.sin(z * 0.21 + ai * 2 + side) * 0.15 * ai : 0)
+  /** bank height at `off` metres in from the shoreline (matches the mesh below) */
+  const groundAt = (side, z, off) => {
+    let i = 1
+    while (i < ACROSS.length - 1 && ACROSS[i] < off) i++
+    const k = Math.min(1, Math.max(0, (off - ACROSS[i - 1]) / (ACROSS[i] - ACROSS[i - 1])))
+    return WATER_Y + LIFT[i - 1] + bump(z, i - 1, side) + k * (LIFT[i] + bump(z, i, side) - LIFT[i - 1] - bump(z, i - 1, side))
+  }
+  // Daylight gets real-looking trees, grass and hills (own seed: the shared one stays as it was).
+  let dseed = 1907
+  const drnd = () => (dseed = (dseed * 16807) % 2147483647) / 2147483647
+  const dayScenery = day ? makeDayScenery({ scene, rnd: drnd, WATER_Y, edgeAt, groundAt, keepOut: scans ? SCAN_KEEP_OUT : null }) : null
+  // wet mud at the waterline, drier bank, then grass
+  const BANK_HUE = [0x2f271c, 0x3f3223, 0x6b5e3e, 0x5b7d33, 0x547733, 0x4b6b30, 0x5d7849]
+  const bankMat = day
+    ? new THREE.MeshLambertMaterial({ color: 0xffffff, map: dayScenery.groundTex, vertexColors: true })
+    : new THREE.MeshLambertMaterial({ color: PAL.bank })
+  const hc = new THREE.Color()
   const zs = []
   for (let z = 12; z >= -260; z -= 2) zs.push(z)
   const makeBank = (side) => {
     const pos = []
     const idx = []
+    const uv = []
+    const col = []
     zs.forEach((z, zi) => {
       const e = edgeAt(z)
       ACROSS.forEach((a, ai) => {
-        const bump = ai > 1 ? Math.sin(z * 0.21 + ai * 2 + side) * 0.15 * ai : 0
-        pos.push(side * (e + a), WATER_Y + LIFT[ai] + bump, z)
+        const x = side * (e + a)
+        pos.push(x, WATER_Y + LIFT[ai] + bump(z, ai, side), z)
+        uv.push(x * 0.14, z * 0.14)
+        const n = 0.82 + 0.36 * (0.5 + 0.5 * Math.sin(z * 0.37 + ai * 1.7 + side * 2.3) * Math.sin(z * 0.11 + ai))
+        hc.setHex(BANK_HUE[ai]).multiplyScalar(n)
+        col.push(hc.r, hc.g, hc.b)
         if (zi > 0 && ai > 0) {
           const n = ACROSS.length
           const i0 = (zi - 1) * n + ai - 1
@@ -380,9 +429,13 @@ export function makeRiver({ scene, camera, WATER_Y, W, H, getPr }) {
     })
     const geo = new THREE.BufferGeometry()
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2))
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3))
     geo.setIndex(idx)
     geo.computeVertexNormals()
-    scene.add(new THREE.Mesh(geo, bankMat))
+    const bank = new THREE.Mesh(geo, bankMat)
+    bank.receiveShadow = true
+    scene.add(bank)
   }
   makeBank(-1)
   makeBank(1)
@@ -397,10 +450,10 @@ export function makeRiver({ scene, camera, WATER_Y, W, H, getPr }) {
   // --- tree silhouettes: layered canopy (cone + blob) ---
   const treeGeo = new THREE.ConeGeometry(1, 1, 7)
   treeGeo.translate(0, 0.5, 0)
-  const treeMat = new THREE.MeshLambertMaterial({ color: 0x050806 })
+  const treeMat = new THREE.MeshLambertMaterial({ color: PAL.tree })
   const TREES = 520
   const trees = new THREE.InstancedMesh(treeGeo, treeMat, TREES)
-  const blobGeo = new THREE.IcosahedronGeometry(1, 1)
+  const blobGeo = new THREE.IcosahedronGeometry(1, day ? 3 : 1)
   const blobs = new THREE.InstancedMesh(blobGeo, treeMat, 260)
   for (let i = 0; i < TREES; i++) {
     const side = i % 2 ? 1 : -1
@@ -424,14 +477,21 @@ export function makeRiver({ scene, camera, WATER_Y, W, H, getPr }) {
       blobs.setMatrixAt(i, m4)
     }
   }
+  if (day) {
+    // mixed greens: dark conifers, brighter broadleaf crowns
+    const cc = new THREE.Color()
+    const greens = [0x2f5d2a, 0x3c6e2f, 0x2a5233, 0x4a7d34, 0x36622c]
+    for (let i = 0; i < TREES; i++) trees.setColorAt(i, cc.setHex(greens[i % greens.length]).multiplyScalar(0.85 + rnd() * 0.3))
+    for (let i = 0; i < 260; i++) blobs.setColorAt(i, cc.setHex(greens[(i * 3 + 1) % greens.length]).multiplyScalar(1.05 + rnd() * 0.35))
+  }
   trees.instanceMatrix.needsUpdate = true
   blobs.instanceMatrix.needsUpdate = true
-  scene.add(trees, blobs)
+  if (!day) scene.add(trees, blobs) // daylight has its own trees (built above)
 
   // --- reeds along the shoreline, swaying ---
   const reedGeo = new THREE.ConeGeometry(0.025, 1, 3)
   reedGeo.translate(0, 0.5, 0)
-  const reedMat = new THREE.MeshLambertMaterial({ color: 0x15200f })
+  const reedMat = new THREE.MeshLambertMaterial({ color: PAL.reed })
   const reedU = { uTime: { value: 0 } }
   reedMat.onBeforeCompile = (sh) => {
     sh.uniforms.uTime = reedU.uTime
@@ -469,7 +529,7 @@ export function makeRiver({ scene, camera, WATER_Y, W, H, getPr }) {
   padShape.lineTo(0, 0)
   const padGeo = new THREE.ShapeGeometry(padShape, 18)
   padGeo.rotateX(-Math.PI / 2)
-  const padMat = new THREE.MeshLambertMaterial({ color: 0x1c3a1f })
+  const padMat = new THREE.MeshLambertMaterial({ color: PAL.pad })
   const PADS = 150
   const pads = new THREE.InstancedMesh(padGeo, padMat, PADS)
   pads.layers.set(SURFACE_LAYER)
@@ -526,6 +586,7 @@ export function makeRiver({ scene, camera, WATER_Y, W, H, getPr }) {
   })
   const lamps = new THREE.Points(lampGeo, lampMat)
   lamps.frustumCulled = false
+  lamps.visible = !day
   scene.add(lamps)
 
   // --- fireflies over the reeds ---
@@ -552,6 +613,7 @@ export function makeRiver({ scene, camera, WATER_Y, W, H, getPr }) {
   const fireflies = new THREE.Points(ffGeo, ffMat)
   fireflies.frustumCulled = false
   fireflies.layers.set(SURFACE_LAYER)
+  fireflies.visible = !day
   scene.add(fireflies)
 
   // --- distant ridge (unfogged silhouette just darker than the horizon) ---
@@ -571,11 +633,11 @@ export function makeRiver({ scene, camera, WATER_Y, W, H, getPr }) {
     const geo = new THREE.BufferGeometry()
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
     geo.setIndex(idx)
-    scene.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0x050a12, fog: false, side: THREE.DoubleSide })))
+    scene.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: PAL.ridge, fog: false, side: THREE.DoubleSide })))
   }
 
   // --- sky, moon, moonlight ---
-  const skyU = { uHorizon: { value: horizon }, uZenith: { value: zenith }, uMoonDir: { value: moonDir }, uTime: { value: 0 } }
+  const skyU = { uHorizon: { value: horizon }, uZenith: { value: zenith }, uMoonDir: { value: moonDir }, uTime: { value: 0 }, uDay: { value: day ? 1 : 0 } }
   const sky = new THREE.Mesh(
     new THREE.SphereGeometry(240, 32, 16),
     new THREE.ShaderMaterial({ uniforms: skyU, vertexShader: SKY_VERT, fragmentShader: SKY_FRAG, side: THREE.BackSide, depthWrite: false, fog: false }),
@@ -593,11 +655,49 @@ export function makeRiver({ scene, camera, WATER_Y, W, H, getPr }) {
   moonHalo.position.copy(moon.position)
   moonHalo.scale.setScalar(46)
   moonHalo.renderOrder = -9
+  moon.visible = moonHalo.visible = !day
   scene.add(moon, moonHalo)
 
   const moonLight = new THREE.DirectionalLight(0x9db2dc, 0.55)
   moonLight.position.copy(moonDir).multiplyScalar(60)
   scene.add(moonLight)
+  if (day) {
+    // sun high behind the camera's left shoulder, plus sky/grass bounce
+    moonLight.color.set(0xfff0d8)
+    moonLight.intensity = 2.3
+    moonLight.position.set(-30, 46, 34)
+    scene.add(new THREE.HemisphereLight(0xcfe4ff, 0x4d6b34, 1.15))
+  }
+  let scansReady = Promise.resolve(null)
+  if (scans) {
+    // The sun casts soft shadows over the near reach; trees never move far, so
+    // the shadow map is drawn once (after the scans load), not every frame.
+    moonLight.position.set(-42, 40, -18)
+    moonLight.target.position.set(0, WATER_Y, -62)
+    scene.add(moonLight.target)
+    moonLight.castShadow = true
+    const sc = moonLight.shadow.camera
+    sc.left = -78
+    sc.right = 78
+    sc.top = 78
+    sc.bottom = -78
+    sc.near = 1
+    sc.far = 220
+    moonLight.shadow.mapSize.set(4096, 4096)
+    moonLight.shadow.bias = -0.0004
+    moonLight.shadow.normalBias = 0.03
+    moonLight.shadow.radius = 3
+    renderer.shadowMap.needsUpdate = true
+    scansReady = loadScannedPlants({ scene, rnd: drnd, edgeAt, groundAt, wind: dayScenery.wind, surfaceLayer: SURFACE_LAYER })
+      .then((r) => {
+        renderer.shadowMap.needsUpdate = true
+        return r
+      })
+      .catch((e) => {
+        console.warn('scanned plants not loaded (run the rec-assets fetch first):', e)
+        return null
+      })
+  }
 
   const a = new THREE.Vector3()
   const b = new THREE.Vector3()
@@ -612,6 +712,8 @@ export function makeRiver({ scene, camera, WATER_Y, W, H, getPr }) {
   return {
     horizon,
     moonDir,
+    /** resolves once the scanned plants are in (dev day mood); null otherwise */
+    scans: scansReady,
     normalTex,
     dot,
     /** wash: rotor downwash 0..1, poolI: headlight level 0..1, beams: [[from, to], ...] in world space */
@@ -622,11 +724,12 @@ export function makeRiver({ scene, camera, WATER_Y, W, H, getPr }) {
       U.uDrone.value.set(dronePos.x, dronePos.y - WATER_Y, dronePos.z)
       U.uWash.value = wash
       U.uPoolI.value = poolI
-      if (boat) U.uBoat.value.set(boat.x, boat.z, boat.stir)
+      if (boat) U.uBoat.value.set(boat.x, boat.z, boat.stir, boat.scale ?? 1)
       if (beams[0]) hitWater(a.copy(beams[0][0]), b.copy(beams[0][1]), U.uPool0.value)
       if (beams[1]) hitWater(a.copy(beams[1][0]), b.copy(beams[1][1]), U.uPool1.value)
       skyU.uTime.value = clock
       reedU.uTime.value = clock
+      dayScenery?.update(clock)
       lampMat.uniforms.uTime.value = clock
       lampMat.uniforms.uHalfH.value = halfH
       ffMat.uniforms.uTime.value = clock
@@ -647,6 +750,7 @@ export function makeRiver({ scene, camera, WATER_Y, W, H, getPr }) {
     dispose() {
       water.dispose()
       disposables.forEach((t) => t.dispose())
+      dayScenery?.dispose()
     },
   }
 }

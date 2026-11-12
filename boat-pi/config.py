@@ -30,11 +30,17 @@ DEFAULTS = {
     "disarm_on_complete": True,
     # Safety: reject any target farther than this from the boat (metres).
     "max_distance_m": 1500,
-    # The intake roller (collector.py): the Pixhawk output its ESC is on (0 = none;
-    # that output's SERVOn_FUNCTION must be 0). Runs near each item and on R1.
+    # The collector (collector.py): the Pixhawk output its servo / ESC is on (0 = none;
+    # that output's SERVOn_FUNCTION must be 0). Worked with R1 on the controller.
     "collector_servo": 0,
     "collector_pwm_on": 1800,         # roller running (a forward/reverse brushed ESC: >1500 = forward)
     "collector_pwm_off": 1500,        # roller stopped: 1500 for a forward/reverse ESC, 1000 for forward-only
+    # What the collector is: "scoop" = a digital servo tipping the scoop (R1 moves it
+    # between scoop_pwm_zero, its original 0 position, and scoop_pwm_extreme; it never
+    # moves by itself), "roller" = the old intake belt / roller ESC or relay below.
+    "collector_kind": "scoop",
+    "scoop_pwm_zero": 1000,           # the scoop's 0 / original position (where it starts)
+    "scoop_pwm_extreme": 2000,        # the other end. Most digital servos take 500–2500 µs
     # ...or a relay module on a Pi GPIO pin (BCM number, 0 = none; overrides the ESC output).
     "collector_relay_gpio": 0,
     "collector_relay_active_low": True,   # most relay modules: IN pulled low = on
@@ -81,6 +87,20 @@ DEFAULTS = {
     "gamepad_throttle_expo": 0.5,     # 0 = linear; higher = gentler near the centre, full at the end
     "gamepad_timeout_s": 0.5,         # no controller input this long → sticks centred
     "gamepad_lost_s": 3.0,            # …this long while driving in MANUAL → HOLD
+    # ---- Two extra servos (servos.py): two-position, worked from the transmitter
+    # (a switch on the channel) or the app's controller (D-pad left / right). Each
+    # output passes its channel through: SERVOn_FUNCTION = 50 + channel (RCINx).
+    "servo1_name": "Servo 1",
+    "servo1_output": 6,
+    "servo1_channel": 6,
+    "servo1_pwm_off": 1100,           # the position it starts in (no transmitter) — e.g. gate closed
+    "servo1_pwm_on": 1900,
+    "servo2_name": "Servo 2",
+    "servo2_output": 7,
+    "servo2_channel": 7,
+    "servo2_pwm_off": 1100,
+    "servo2_pwm_on": 1900,
+    "servo_app_lost_s": 10.0,         # transmitter: the app gone this long → the servos go back to the switches
     # Where the camera sits: used to turn a spot in the picture into a spot on the water.
     "camera_height_m": 0.6,           # lens height above the water
     "camera_tilt_deg": 15,            # below the horizon: 15° sees from the ramp (~1.2 m) out to ~20 m
@@ -108,6 +128,16 @@ DEFAULTS = {
     "live_merge_m": 2.0,              # a new find this close to a queued one is the same item
     "live_return_after_s": 30.0,      # "return when empty": nothing new for this long → home
     "live_target_timeout_s": 180.0,   # give up on an item not reached in this time
+    # ---- Drone-to-boat visual collection (target_match.py, vision.py homing, live_collect.py).
+    # The GPS approach radius is homing_start_m, the max search time homing_search_s.
+    "match_method": "colour",         # how a candidate is compared to the drone's crop: colour | none
+    "match_threshold": 0.55,          # a candidate must score this (0..1) to be the drone's item
+    "collect_max_retries": 2,         # failed pick-ups re-tried this many times, then RETRY_REQUIRED
+    "verify_lookback": True,          # no catch-counter count: turn back and look at the spot
+    "verify_view_m": 4.0,             # look-back: drive this far past the spot, then turn to face it
+    "verify_look_s": 7.5,             # look-back: watch the spot (straight on, left, right) this long; gone → COLLECTED
+    "verify_time_s": 45.0,            # the whole verification (watch + look-back) never takes longer
+    "gps_lost_hold_s": 5.0,           # GPS fix lost this long → HOLD until it is back
 
     # ---- Wildlife-safe mode
     "wildlife_enabled": True,
@@ -137,12 +167,14 @@ DEFAULTS = {
 }
 
 _BOOL_KEYS = {"disarm_on_complete", "homing_enabled", "wildlife_enabled", "turbidity_enabled",
-              "collector_relay_active_low"}
+              "collector_relay_active_low", "verify_lookback"}
 _INT_KEYS = {"mav_baud", "http_port", "max_waypoints", "collector_servo", "collector_pwm_on", "collector_pwm_off",
-             "collector_relay_gpio",
+             "collector_relay_gpio", "scoop_pwm_zero", "scoop_pwm_extreme", "collect_max_retries",
              "operator_lost_s", "camera_width", "camera_height", "camera_fps", "camera_quality", "stream_fps",
              "bin_capacity_items", "turb_i2c_bus", "turb_i2c_addr", "turb_channel",
-             "phone_width", "phone_height", "phone_fps", "phone_app_port"}
+             "phone_width", "phone_height", "phone_fps", "phone_app_port",
+             "servo1_output", "servo1_channel", "servo1_pwm_off", "servo1_pwm_on",
+             "servo2_output", "servo2_channel", "servo2_pwm_off", "servo2_pwm_on"}
 _FLOAT_KEYS = {"default_hold_s", "default_speed_mps", "max_distance_m", "sim_home_lat", "sim_home_lng",
                "camera_height_m", "camera_tilt_deg", "camera_hfov_deg", "ramp_top", "count_line",
                "zone_x1", "zone_x2", "zone_y1",
@@ -150,10 +182,12 @@ _FLOAT_KEYS = {"default_hold_s", "default_speed_mps", "max_distance_m", "sim_hom
                "homing_capture_m", "homing_drive_through_m", "homing_confirm_s",
                "live_arrive_m", "live_roller_on_m", "live_dwell_s", "live_merge_m", "live_return_after_s",
                "live_target_timeout_s",
+               "match_threshold", "verify_view_m", "verify_look_s", "verify_time_s", "gps_lost_hold_s",
                "wildlife_clear_s", "wildlife_alert_s", "vision_timeout_s", "vision_lost_speed_mps",
                "motion_sensitivity", "turb_divider", "turb_clear_volts", "turb_ref_volts", "turb_ref_ntu",
                "turb_log_every_s", "measure_s", "telemetry_hz",
-               "gamepad_max_throttle", "gamepad_throttle_expo", "gamepad_timeout_s", "gamepad_lost_s"}
+               "gamepad_max_throttle", "gamepad_throttle_expo", "gamepad_timeout_s", "gamepad_lost_s",
+               "servo_app_lost_s"}
 
 # Pi Zero defaults: the camera's JPEG encoding is done in software, on one slow
 # core, and the video goes over NetBird; 10 fps at quality 70 is about half the
@@ -187,9 +221,20 @@ TUNABLE = {
     "live_arrive_m": ("float", 0.5, 5), "live_roller_on_m": ("float", 1, 20), "live_dwell_s": ("float", 0, 30),
     "live_merge_m": ("float", 0.5, 10), "live_return_after_s": ("float", 5, 600),
     "live_target_timeout_s": ("float", 30, 900),
-    "collector_servo": ("int", 0, 16),
+    "collector_servo": ("int", 0, 16), "collector_kind": ("scoop", "roller"),
+    "scoop_pwm_zero": ("int", 500, 2500), "scoop_pwm_extreme": ("int", 500, 2500),
     "collector_pwm_on": ("int", 1000, 2000), "collector_pwm_off": ("int", 1000, 2000),
     "collector_relay_gpio": ("int", 0, 27), "collector_relay_active_low": ("bool",),
+    "match_method": ("colour", "none"), "match_threshold": ("float", 0, 1),
+    "collect_max_retries": ("int", 0, 5), "verify_lookback": ("bool",),
+    "verify_view_m": ("float", 1, 10), "verify_look_s": ("float", 1, 30), "verify_time_s": ("float", 5, 180),
+    "gps_lost_hold_s": ("float", 1, 60),
+    "servo1_output": ("int", 1, 8), "servo1_channel": ("int", 5, 16),
+    "servo1_pwm_off": ("int", 800, 2200), "servo1_pwm_on": ("int", 800, 2200),
+    "servo2_output": ("int", 1, 8), "servo2_channel": ("int", 5, 16),
+    "servo2_pwm_off": ("int", 800, 2200), "servo2_pwm_on": ("int", 800, 2200),
+    "servo_app_lost_s": ("float", 3, 120),
+    "homing_accept_m": ("float", 1, 15), "homing_confirm_s": ("float", 1, 20), "homing_lost_s": ("float", 1, 15),
 }
 
 

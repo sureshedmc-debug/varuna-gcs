@@ -13,6 +13,12 @@ app's catch counter picks up.
 frame, so the app (in SIM mode) can stand in for the AI models, which don't
 recognise drawn shapes.
 
+For the drone-to-boat workflow tests: `reference_image(label)` draws the
+item as the drone sees it (top-down crop), live points get an item of the
+class the drone reported, `place()` drops any item (a decoy), `dodge_next`
+makes the next item(s) the boat drives over slip aside instead of riding up
+the ramp (a failed pick-up), and `auto_place` off leaves new points empty.
+
 Needs Pillow (laptop only — the real boat Pi never imports this module).
 """
 
@@ -29,6 +35,20 @@ PLASTIC = [("plastic bottle", 0.28, (235, 240, 245)), ("plastic bag", 0.40, (245
            ("plastic cup", 0.12, (230, 90, 70)), ("plastic container", 0.30, (90, 160, 230)),
            ("other plastic", 0.22, (240, 200, 60))]
 RAMP_RIDE_S = 1.6
+DODGE_M = 1.6               # a dodging item is pushed this far to the side
+
+
+def plastic_for(label, rnd):
+    """The PLASTIC entry for a class name (any kind if unknown)."""
+    from target_match import kind
+    for p in PLASTIC:
+        if p[0] == str(label or "").strip().lower():
+            return p
+    k = kind(label)
+    for p in PLASTIC:
+        if k and kind(p[0]) == k:
+            return p
+    return PLASTIC[rnd.randrange(len(PLASTIC))]
 
 
 class SimWorld:
@@ -40,6 +60,8 @@ class SimWorld:
         self.lock = threading.Lock()
         self.collected = deque(maxlen=100)
         self._seq = 0
+        self.auto_place = True               # live points get an item near them
+        self.dodge_next = 0                  # next N items driven over slip aside
 
     def seed_for_mission(self, waypoints, seed=None):
         rnd = random.Random(seed)
@@ -59,16 +81,55 @@ class SimWorld:
         """Live collect: a floating item near each new plastic position the app
         sends. Like the real thing, it isn't exactly where the drone placed it."""
         rnd = random.Random(seed)
+        if not self.auto_place:
+            return
         with self.lock:
             for w in points:
                 ang = rnd.uniform(0, 2 * math.pi)
                 d = rnd.uniform(0.8, 2.0)
                 lat, lng = offset(w["lat"], w["lng"], d * math.cos(ang), d * math.sin(ang))
-                label, size, color = PLASTIC[rnd.randrange(len(PLASTIC))]
+                label, size, color = plastic_for(w.get("object_class"), rnd)
                 self._seq += 1
                 self.objects.append({"id": f"o{self._seq}", "lat": lat, "lng": lng, "label": label,
                                      "size": size, "color": color, "state": "floating", "ramp_t": 0.0,
-                                     "rot": rnd.uniform(-0.6, 0.6)})
+                                     "rot": rnd.uniform(-0.6, 0.6), "for": w.get("id")})
+
+    def place(self, lat, lng, label, dodge=0):
+        """Drop one item (e.g. a decoy of another kind) at a position."""
+        label, size, color = plastic_for(label, random.Random())
+        with self.lock:
+            self._seq += 1
+            o = {"id": f"o{self._seq}", "lat": lat, "lng": lng, "label": label, "size": size, "color": color,
+                 "state": "floating", "ramp_t": 0.0, "rot": 0.0, "dodge": int(dodge)}
+            self.objects.append(o)
+            return dict(o)
+
+    def objects_view(self):
+        with self.lock:
+            return [{k: o.get(k) for k in ("id", "lat", "lng", "label", "state", "for")} for o in self.objects]
+
+    def reference_image(self, label, size_px=96):
+        """The drone's view of an item: a top-down crop with water around it."""
+        from PIL import Image, ImageDraw
+        label, size, color = plastic_for(label, random.Random(0))
+        img = Image.new("RGB", (size_px, size_px), (32, 74, 92))
+        dr = ImageDraw.Draw(img)
+        rnd = random.Random(7)
+        for _ in range(12):                       # a few ripples
+            y, x = rnd.randrange(size_px), rnd.randrange(size_px)
+            dr.line([(x - 6, y), (x + 6, y)], fill=(60, 105, 125))
+        c = size_px / 2
+        r = size_px * 0.32 * (0.6 + size)          # bigger items fill more of the crop
+        if "bag" in label:
+            dr.ellipse([c - r, c - r * 0.8, c + r, c + r * 0.8], fill=color, outline=(200, 200, 200))
+        else:
+            hgt = r * (0.45 if "bottle" in label else 0.7)
+            dr.rounded_rectangle([c - r, c - hgt, c + r, c + hgt], radius=max(1, int(hgt / 3)), fill=color)
+            if "bottle" in label:
+                dr.rectangle([c + r * 0.7, c - hgt * 0.5, c + r, c + hgt * 0.5], fill=(30, 90, 200))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=85)
+        return buf.getvalue()
 
     def spawn_duck(self, ahead_m=5.0, right_m=-0.6):
         """A duck `ahead_m` in front of the boat, swimming across its path."""
@@ -93,6 +154,16 @@ class SimWorld:
                 if o["state"] == "floating":
                     fwd, right = to_boat(b.lat, b.lng, b.heading, o["lat"], o["lng"])
                     if -0.3 <= fwd <= 0.9 and abs(right) <= 0.45:
+                        if o.get("dodge", 0) > 0 or self.dodge_next > 0:
+                            # The bow wave pushes it aside: a failed pick-up.
+                            if o.get("dodge", 0) > 0:
+                                o["dodge"] -= 1
+                            else:
+                                self.dodge_next -= 1
+                            side = 1.0 if right >= 0 else -1.0
+                            o["lat"], o["lng"] = to_world(b.lat, b.lng, b.heading, fwd, side * DODGE_M)
+                            o["dodged"] = o.get("dodged", 0) + 1
+                            continue
                         o["state"], o["ramp_t"] = "ramp", now
                 elif o["state"] == "ramp" and now - o["ramp_t"] > RAMP_RIDE_S:
                     o["state"] = "collected"
@@ -210,6 +281,7 @@ class SimCamera:
         self._thread = None
         self.frame = None
         self.frame_time = 0.0
+        self.recent = deque(maxlen=24)
         self.frame_seq = 0
         self.frames_captured = 0
         self._stamps = deque(maxlen=60)
@@ -241,6 +313,7 @@ class SimCamera:
             t = time.time()
             with self._cond:
                 self.frame, self.frame_time = jpeg, t
+                self.recent.append((t, jpeg))
                 self.frame_seq += 1
                 self.frames_captured += 1
                 self._stamps.append(t)
@@ -256,6 +329,10 @@ class SimCamera:
                 return None
             key = min(self.poses, key=lambda k: abs(k - frame_time))
             return self.poses[key] if abs(key - frame_time) < 1.0 else None
+
+    def frame_near(self, t, tol=0.3):
+        from camera import frame_near
+        return frame_near(self.recent, self._cond, t, tol)
 
     def wait_frame(self, after_seq, timeout=2.0):
         with self._cond:

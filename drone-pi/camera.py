@@ -9,10 +9,13 @@ out of a Raspberry Pi 3:
     third of MJPEG's bandwidth and half its CPU. The app decodes it in the
     browser (WebCodecs) from /api/camera/h264. camera_codec = mjpeg makes
     rpicam-vid encode MJPEG instead.
-  * USB webcam  → ffmpeg asks the camera for its own MJPEG at 1280x720/30 and
-    copies the frames through untouched (no decoding or re-encoding on the Pi).
-    If the camera can't do MJPEG at that size, it falls back to raw YUYV that
-    ffmpeg encodes (heavier), then to 640x480.
+  * USB webcam  → with camera_codec = h264, its raw 640x480 picture goes
+    straight into the Pi's hardware H.264 encoder (ffmpeg h264_v4l2m2m): no CPU
+    encoding, low bandwidth, and the same low-delay player as the camera module.
+    Without that encoder, or with camera_codec = mjpeg, ffmpeg asks the camera
+    for its own MJPEG at 1280x720/30 and copies the frames through untouched;
+    if it can't do MJPEG at that size, raw YUYV that ffmpeg encodes (heavier),
+    then 640x480.
   * test → a generated test picture (laptop testing / no camera), in H.264 or
     MJPEG like the camera module.
 
@@ -20,8 +23,8 @@ With H.264, /video_feed and /api/camera/snapshot still get JPEGs: while
 someone watches /video_feed (browsers without WebCodecs) ffmpeg decodes the
 stream to JPEGs, and a snapshot decodes the latest keyframe.
 
-camera_source "auto" (the default) uses whichever camera is there: the USB
-webcam if one is plugged in, else the camera module. If the one in use fails
+camera_source "auto" (the default) uses whichever camera is there: the camera
+module if one is connected, else the USB webcam. If the one in use fails
 or is unplugged it switches to the other by itself, and changing
 camera_source or camera_quality live (System → Live tuning in the app)
 restarts the capture with the new setting.
@@ -255,8 +258,11 @@ class H264Jpegs:
             return self._queue.popleft() if self._queue else None
 
     def _run(self):
-        cmd = [self.ffmpeg, "-hide_banner", "-loglevel", "error"] + FF_H264_IN + \
-              ["-f", "mjpeg", "-q:v", "5", "-flush_packets", "1", "pipe:1"]
+        # The one place the Pi decodes video in software, so it is kept light:
+        # no deblocking (the slowest part of H.264 decoding on the Pi's CPU,
+        # hardly visible at this size) and 640-wide JPEGs (a quarter of the encoding).
+        cmd = [self.ffmpeg, "-hide_banner", "-loglevel", "error", "-skip_loop_filter", "all"] + FF_H264_IN + \
+              ["-vf", "scale=640:-2:flags=fast_bilinear", "-f", "mjpeg", "-q:v", "6", "-flush_packets", "1", "pipe:1"]
         try:
             proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                     stderr=subprocess.DEVNULL, bufsize=0)
@@ -461,9 +467,21 @@ class CameraManager:
         if not dev:
             return "usb", None, []
         v4l = base + ["-f", "v4l2", "-thread_queue_size", "64"]
-        # USB webcams stay MJPEG: their own JPEGs pass through with no work on the Pi,
-        # and the Pi 3's encoder couldn't keep up with re-encoding them as well.
-        return "usb", dev, [
+        # H.264 from a USB webcam: its raw 640x480 picture straight into the Pi's
+        # hardware encoder (h264_v4l2m2m). Nothing is decoded or encoded on the
+        # CPU, so it stays cool, and it needs a fraction of the bandwidth of the
+        # webcam's own MJPEG (whose JPEG size the Pi can't change). 640x480 is
+        # about the detector's input size anyway. Without the encoder (Pi 5, an
+        # ffmpeg without it) it falls through to the MJPEG settings below.
+        usb_h264 = [
+            ("USB camera → hardware H.264", "640x480",
+             v4l + ["-input_format", "yuyv422", "-video_size", "640x480", "-framerate", str(sfps), "-i", dev,
+                    "-c:v", "h264_v4l2m2m", "-pix_fmt", "yuv420p", "-b:v", f"{kbps}k", "-g", str(intra), "-bf", "0",
+                    "-bsf:v", "dump_extra", "-f", "h264", "-flush_packets", "1", "pipe:1"], "h264"),
+        ] if h264 else []
+        # Otherwise MJPEG: the webcam's own JPEGs pass through with no work on the
+        # Pi; the Pi 3 couldn't keep up with re-encoding them.
+        return "usb", dev, usb_h264 + [
             ("USB camera MJPEG (pass-through)", f"{w}x{h}",
              v4l + ["-input_format", "mjpeg", "-video_size", f"{w}x{h}", "-framerate", str(fps), "-i", dev,
                     "-c:v", "copy"] + out, "mjpeg"),
@@ -481,8 +499,10 @@ class CameraManager:
         camera that just failed every setting goes behind the other one."""
         usb = bool(find_usb_camera())
         csi = bool(find_csi_tool()) and csi_camera_present()
-        order = ["usb", "csi"]
-        if usb and csi and time.time() - self._failed_at.get("usb", 0.0) < FAILED_SKIP_S:
+        # The camera module first: its hardware H.264 is the lightest, sharpest
+        # stream and the only one with no CPU work at 720p.
+        order = ["csi", "usb"]
+        if usb and csi and time.time() - self._failed_at.get("csi", 0.0) < FAILED_SKIP_S:
             order.reverse()
         for source in order:
             if usb if source == "usb" else csi:

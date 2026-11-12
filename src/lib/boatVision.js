@@ -10,6 +10,13 @@
 //   this engine ──/api/vision/observe (3×/s)──▶ boat: homing, wildlife holds
 //   this engine ──/api/catch/item─────────────▶ boat: catch log, bin count
 //
+// Drone-to-boat matching: while the boat homes onto a drone find (the observe
+// reply names it), each plastic box is compared with the drone's crop of that
+// find (targetMatch.js — colour + shape computer vision) and sent with its
+// `match` score; the boat only steers onto a box that scores its
+// match_threshold. The crop comes from this app's own store (droneTargets.js)
+// or, failing that, from the copy the boat keeps.
+//
 // It runs whichever tab is open (homing needs it), and stops when the boat
 // goes offline or the operator switches it off. If it stops while the boat is
 // working, the boat notices and falls back (System → Boat vision: slow / hold
@@ -24,6 +31,8 @@ import { boatApi, boatUrls } from '../api/boatClient'
 import { readMjpeg } from './mjpegReader'
 import { RampCounter, toGray } from './catchCounter'
 import { inDangerZone } from './boatCamera'
+import { SIG, matchScore, signature } from './targetMatch'
+import { getDroneCrop } from './droneTargets'
 
 const PLASTIC_HZ = 3 // detection passes per second; each pass is sent to the boat
 const WILDLIFE_HZ = 2
@@ -50,6 +59,7 @@ function initialState() {
     lastCatch: null,
     observed: 0,
     models: { plastic: 'off', wildlife: 'off' },
+    matching: null, // { id, cls, hasRef } while the boat homes onto a drone find
   }
 }
 
@@ -111,7 +121,11 @@ export function startBoatVision({ cfg, sim }) {
     wildlife: null,
     grid: document.createElement('canvas'),
     crop: document.createElement('canvas'),
+    sig: document.createElement('canvas'), // SIG x SIG: candidate crops for the matcher
+    homing: null, // { id, cls } from the boat's observe reply
+    ref: null, // { id, sig } the drone's crop of that find
   }
+  r.sig.width = r.sig.height = SIG
   r.grid.width = GRID_W
   r.grid.height = GRID_H
   run = r
@@ -288,6 +302,17 @@ async function analyse(r, bmp, f, w, h) {
       if (run !== r) return
     }
   }
+  // 2b. Homing onto a drone find: how well does each box match the drone's crop?
+  const homing = r.homing
+  if (homing && targets.length) {
+    const ref = await referenceFor(r, homing.id)
+    if (run !== r) return
+    targets = targets.map((b) => {
+      const sig = ref?.sig ? signature(cropSig(r, bmp, b, w, h)) : null
+      const m = matchScore(ref?.sig || null, homing.cls, sig, b.label, Number(b.score))
+      return { ...b, match: m.score, matchParts: m.parts }
+    })
+  }
   const aiMs = Math.round(performance.now() - t0)
   set({ targets, hazards, tracks: trackView(r), aiMs: aiMs > 2 ? aiMs : state.aiMs })
 
@@ -296,16 +321,68 @@ async function analyse(r, bmp, f, w, h) {
   const inZone = hazards.some((x) => x.in_zone)
   const body = {
     frame_time: f.frameTime, frame_w: w, frame_h: h,
-    targets: targets.map(({ x1, y1, x2, y2, score, label }) => ({ x1, y1, x2, y2, score, label })),
+    targets: targets.map(({ x1, y1, x2, y2, score, label, match }) => ({ x1, y1, x2, y2, score, label, ...(match != null ? { match } : {}) })),
+    matcher: 'app-cv', // this app compares the boxes with the drone's crop (the boat waits for its scores)
+    ...(homing ? { match_for: homing.id } : {}),
     hazards: hazards.map(({ x1, y1, x2, y2, score, label, in_zone }) => ({ x1, y1, x2, y2, score, label, in_zone })),
   }
   if (inZone && !r.hadHazard) body.hazard_photo = snapshot(r, bmp, 0, 0, w, h, 480)
   r.hadHazard = inZone
   r.observing = true
   boatApi.observe(body)
-    .then((res) => { if (run === r) set({ observed: state.observed + (res && !res._httpError ? 1 : 0) }) })
+    .then((res) => {
+      if (run !== r || !res || res._httpError) return
+      // The reply names the drone find the boat is homing onto (if any): match against it from the next pass.
+      const id = res.homing_id || null
+      r.homing = id ? { id, cls: res.homing_class || null } : null
+      set({
+        observed: state.observed + 1,
+        matching: id ? { id, cls: res.homing_class || null, hasRef: !!(r.ref?.id === id && r.ref.sig) } : null,
+      })
+    })
     .catch(() => {})
     .finally(() => { r.observing = false })
+}
+
+/** The drone's crop of a find, as a matcher signature (cached per find). */
+async function referenceFor(r, id) {
+  if (r.ref?.id === id) return r.ref
+  r.ref = { id, sig: null } // one attempt per find; a failed load means class + score only
+  let url = await getDroneCrop(id)
+  if (!url) {
+    try {
+      const res = await fetch(boatUrls.liveReference(id), { cache: 'no-store' })
+      if (res.ok) url = URL.createObjectURL(await res.blob())
+    } catch {
+      /* the boat has none either */
+    }
+  }
+  if (!url) return r.ref
+  try {
+    const img = await createImageBitmap(await (await fetch(url)).blob())
+    const cv = document.createElement('canvas')
+    cv.width = cv.height = SIG
+    const ctx = cv.getContext('2d', { willReadFrequently: true })
+    ctx.drawImage(img, 0, 0, SIG, SIG)
+    img.close?.()
+    if (r.ref?.id === id) r.ref.sig = signature(ctx.getImageData(0, 0, SIG, SIG))
+  } catch {
+    /* a damaged image: class + score only */
+  } finally {
+    if (url.startsWith('blob:')) URL.revokeObjectURL(url)
+  }
+  return r.ref
+}
+
+/** A box of the frame with some water around it, scaled to SIG x SIG, as ImageData. */
+function cropSig(r, bmp, b, w, h) {
+  const bw = b.x2 - b.x1, bh = b.y2 - b.y1
+  const x1 = Math.max(0, b.x1 - 0.35 * bw), y1 = Math.max(0, b.y1 - 0.35 * bh)
+  const x2 = Math.min(w, b.x2 + 0.35 * bw), y2 = Math.min(h, b.y2 + 0.35 * bh)
+  if (x2 - x1 < 3 || y2 - y1 < 3) return null
+  const ctx = r.sig.getContext('2d', { willReadFrequently: true })
+  ctx.drawImage(bmp, x1, y1, x2 - x1, y2 - y1, 0, 0, SIG, SIG)
+  return ctx.getImageData(0, 0, SIG, SIG)
 }
 
 function trackView(r) {

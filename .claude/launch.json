@@ -30,6 +30,33 @@
         "8001"
       ],
       "port": 8001
+    },
+    {
+      "name": "scratch-static",
+      "runtimeExecutable": "py",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8765",
+        "--bind",
+        "127.0.0.1",
+        "--directory",
+        "C:/Users/Dell/AppData/Local/Temp/claude/ad8201743ed8d96f/e2c81472-367f-45a5-bede-176ef9b4756a/scratchpad"
+      ],
+      "port": 8765
+    },
+    {
+      "name": "boat-sim-py",
+      "runtimeExecutable": "py",
+      "runtimeArgs": [
+        "boat-pi/main.py",
+        "--sim",
+        "--port",
+        "8001",
+        "--host",
+        "::1"
+      ],
+      "port": 8001
     }
   ]
 }

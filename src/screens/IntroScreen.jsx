@@ -153,7 +153,7 @@ export default function IntroScreen({ onActivate }) {
               <Tag tagRef={droneTagRef} side="left" title="VARUNA · AERIAL SCOUT">
                 SCANNING · TAGGING PLASTIC
               </Tag>
-              <Tag tagRef={boatTagRef} side="right" title="JAL DHARA · COLLECTOR">
+              <Tag tagRef={boatTagRef} side="right" title="NIRMAL DHARA JALYAN · COLLECTOR">
                 <span ref={countRef}>00</span> PIECES COLLECTED
               </Tag>
             </div>
@@ -237,7 +237,7 @@ export default function IntroScreen({ onActivate }) {
                 transition={{ delay: 2.4, duration: 0.8, ease }}
               >
                 <span className="font-mono text-[10.5px] tracking-[0.42em] text-white/50">BOAT</span>
-                <span className="text-xl font-bold tracking-[0.3em] text-white/90 sm:text-2xl">JAL DHARA</span>
+                <span className="text-xl font-bold tracking-[0.3em] text-white/90 sm:text-2xl">NIRMAL DHARA JALYAN</span>
               </motion.div>
 
               <motion.button

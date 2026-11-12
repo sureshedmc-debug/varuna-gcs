@@ -37,8 +37,8 @@ DEFAULTS = {
     "camera_height": 720,
     "camera_fps": 30,
     "camera_quality": 55,             # JPEG quality when the Pi has to encode (CSI / fallback); ~33 KB frames at 720p
-    "camera_codec": "h264",           # camera module: h264 (hardware encoder, ~1/3 the bandwidth) | mjpeg
-    "video_bitrate_kbps": 5000,       # H.264 bitrate; 5 Mbit/s is sharp 720p at 15 fps (MJPEG used ~4)
+    "camera_codec": "h264",           # h264 (Pi hardware encoder: camera module, and USB webcams at 640x480) | mjpeg
+    "video_bitrate_kbps": 3000,       # H.264 bitrate; 3 Mbit/s is clear 720p at 15 fps and keeps the delay low on 4G
     "ffmpeg_path": "ffmpeg",
     # ---- Flight safety (live-tunable)
     "stream_fps": 15,                 # 15 x ~33 KB fits ordinary Wi-Fi; more piles up delay
@@ -47,6 +47,7 @@ DEFAULTS = {
     "loiter_time_s": 10,
     "max_distance_m": 1500,
     "max_waypoints": 100,
+    "mission_fence_m": 30,            # geofence this far around home + the waypoints during a mission; 0 = off
     "operator_lost_action": "none",   # none | rtl | land
     "operator_lost_s": 30,
     # ---- Keyboard flight (app → Control tab; GUIDED velocity, see control.py)
@@ -64,15 +65,14 @@ DEFAULTS = {
 # Live-tunable settings, shown in the app as sliders / fields.
 TUNABLE = {
     "camera_source": {"type": "str", "options": ["auto", "usb", "csi", "off"],
-                      "description": "Which camera: auto (USB webcam if plugged in, else the Pi camera module), "
+                      "description": "Which camera: auto (the Pi camera module if connected, else the USB webcam), "
                                      "usb, csi (Pi camera module) or off. Switches straight away."},
     "camera_quality": {"type": "int", "min": 30, "max": 95,
                        "description": "Video picture quality (JPEG). Lower = smaller frames: smoother, less delay on "
                                       "weak Wi-Fi. Applies to the Pi camera module (and webcams the Pi has to encode)."},
     "camera_codec": {"type": "str", "options": ["h264", "mjpeg"],
-                     "description": "Pi camera module video: h264 (hardware-encoded, about a third of the bandwidth "
-                                    "of mjpeg; the app plays it when its browser can) or mjpeg. USB webcams always "
-                                    "send MJPEG."},
+                     "description": "Video format: h264 (made by the Pi's hardware encoder: cool, low delay, about a "
+                                    "third of the bandwidth of mjpeg; USB webcams send it at 640x480) or mjpeg."},
     "video_bitrate_kbps": {"type": "int", "min": 300, "max": 15000,
                            "description": "H.264 video bitrate in kbit/s. Lower = smoother on weak Wi-Fi, "
                                           "higher = sharper."},
@@ -86,6 +86,10 @@ TUNABLE = {
                       "description": "Seconds the drone hovers at a 'loiter' waypoint."},
     "max_distance_m": {"type": "float", "min": 50, "max": 5000,
                        "description": "Mission points farther than this from home are rejected (metres)."},
+    "mission_fence_m": {"type": "float", "min": 0, "max": 300,
+                        "description": "During a mission the Pixhawk keeps the drone inside a fence drawn this many "
+                                       "metres around home and the waypoints (crossing it makes the drone come home). "
+                                       "0 turns the mission fence off."},
     "operator_lost_action": {"type": "str", "options": ["none", "rtl", "land"],
                              "description": "If the app goes silent during a mission: none, rtl (come home) or land."},
     "operator_lost_s": {"type": "int", "min": 5, "max": 300,
@@ -107,7 +111,7 @@ TUNABLE = {
 _INT = {"usb_baud", "telem2_baud", "http_port", "camera_width", "camera_height", "camera_fps",
         "camera_quality", "video_bitrate_kbps", "stream_fps", "loiter_time_s", "max_waypoints", "operator_lost_s",
         "kb_yaw_dps", "kb_lost_s"}
-_FLOAT = {"takeoff_alt_m", "max_altitude_m", "max_distance_m", "kb_speed_mps", "kb_climb_mps", "kb_min_alt_m"}
+_FLOAT = {"takeoff_alt_m", "max_altitude_m", "max_distance_m", "mission_fence_m", "kb_speed_mps", "kb_climb_mps", "kb_min_alt_m"}
 _CHOICES = {
     "link_prefer": ("auto", "usb", "telem2"),
     "camera_source": ("auto", "usb", "csi", "test", "off"),

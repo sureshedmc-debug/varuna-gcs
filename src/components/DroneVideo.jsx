@@ -38,7 +38,8 @@ export default function DroneVideo({ className, style, alt, onLoad, onError }) {
       setMode('mjpeg')
     }
     const player = playH264({
-      url: api.h264Url(),
+      // Same URL as the detector's player, so the two share one connection.
+      url: api.h264Url() + '?pose=1',
       canvas: canvasRef.current,
       onFirstFrame: () => { gotFrame = true; fails.current = 0; handlers.current.onLoad?.() },
       onFatal: (reason) => toMjpeg(reason === 'decode'),

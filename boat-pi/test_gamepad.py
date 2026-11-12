@@ -96,6 +96,22 @@ def part1():
             time.sleep(0.05)
         turned = (sim.heading - h0 + 540) % 360 - 180
         check(turned > 40, f"right stick turns it right ({turned:.0f}°)")
+        rud, mot = sim._output_pwm(1), sim._output_pwm(3)
+        check(rud > 1800 and 1300 < mot < 2000, f"one motor + rudder: rudder servo (out 1) {rud} µs, motor (out 3) {mot} µs")
+        end = time.time() + 1.0
+        while time.time() < end:
+            drive.input(-1.0, 0)
+            time.sleep(0.05)
+        rud, mot = sim._output_pwm(1), sim._output_pwm(3)
+        check(rud < 1200 and mot == 950 and sim.speed == 0.0, f"stopped, stick left: rudder {rud} µs, motor stopped at {mot} µs")
+        h0 = sim.heading
+        time.sleep(0.5)
+        check(abs((sim.heading - h0 + 540) % 360 - 180) < 1, "a rudder doesn't turn a boat that isn't moving")
+        end = time.time() + 1.0
+        while time.time() < end:
+            drive.input(0, -1.0)
+            time.sleep(0.05)
+        check(sim.speed == 0.0 and sim._output_pwm(3) == 950, "throttle stick back → no reverse (forward-only ESC stays stopped)")
 
         drive.connected(False)                     # the app closed the controller socket
         wait_for(lambda: sim.rc["thr"] == 1500 and sim.speed == 0.0, 1.0, "centred on socket close")
@@ -188,21 +204,24 @@ def part2():
         check(r["success"] and r["report"]["ok"], f"failsafe fix: {r['message']}")
         fs = c.get("/api/pixhawk/failsafe").json()
         check(fs["ok"] and fs["action"] == "hold (stop)", f"failsafe now: {fs['values']}")
-        # ESC calibration (automatic): refused with the battery in; with it out, output 1
-        # goes to full signal, and when the battery goes in the Pi waits, sets minimum,
-        # and puts the thruster back with the range 1000–2000.
+        # ESC calibration (automatic): refused with the battery in; with it out, the
+        # motor's output (3, the one middle motor) goes to full signal, and when the
+        # battery goes in the Pi waits, sets minimum, and puts the motor back with the
+        # range 1000–2000. The rudder servo on output 1 is never touched.
         esc = lambda step, **kw: c.post("/api/pixhawk/esc_calibration", json={"step": step, **kw}, timeout=60).json()
         status = lambda: c.get("/api/pixhawk/esc_calibration").json()
         wait_for(lambda: status()["board_v"], 10, "board voltage from POWER_STATUS")
-        r = esc("auto", outputs=[1])
+        r = esc("auto")
         check(not r["success"] and "battery looks connected" in r["message"], f"refused with the battery in: {r['message'][:70]}")
         with open(board, "w") as f:
             f.write("4200")                        # battery unplugged: Pixhawk on USB
         wait_for(lambda: status()["battery_in"] is False, 5, "battery out seen")
         r = esc("auto", outputs=[1])
+        check(not r["success"] and "isn't a motor" in r["message"], f"the steering servo is refused: {r['message']}")
+        r = esc("auto")
         p = c.get("/api/pixhawk/params?names=SERVO1_FUNCTION,SERVO3_FUNCTION").json()["values"]
-        check(r["success"] and p == {"SERVO1_FUNCTION": 0.0, "SERVO3_FUNCTION": 74.0},
-              "battery out → output 1 freed at full signal, output 3 untouched")
+        check(r["success"] and p == {"SERVO1_FUNCTION": 26.0, "SERVO3_FUNCTION": 0.0},
+              "battery out → the motor's output 3 freed at full signal, the rudder servo (1) untouched")
         check(not c.post("/api/mavlink/arm", json={"arm": True}).json()["success"], "arming is refused during an ESC calibration")
         time.sleep(1.5)
         check(status()["phase"] == "waiting", "…waiting for the battery")
@@ -213,30 +232,40 @@ def part2():
         took = time.time() - t_in
         check(3.9 <= took <= 6.0, f"minimum sent {took:.1f} s after the battery went in (top held ~4 s)")
         wait_for(lambda: status()["phase"] == "done", 10, "calibration done")
+        p = c.get("/api/pixhawk/params?names=SERVO3_FUNCTION,SERVO3_MIN,SERVO3_TRIM,SERVO3_MAX").json()["values"]
+        check(p == {"SERVO3_FUNCTION": 70.0, "SERVO3_MIN": 1000.0, "SERVO3_TRIM": 1000.0, "SERVO3_MAX": 2000.0},
+              f"done: motor back on output 3, range 1000–2000, stopped at 1000 — {status()['message']}")
         p = c.get("/api/pixhawk/params?names=SERVO1_FUNCTION,SERVO1_MIN,SERVO1_TRIM,SERVO1_MAX").json()["values"]
-        check(p == {"SERVO1_FUNCTION": 73.0, "SERVO1_MIN": 1000.0, "SERVO1_TRIM": 1000.0, "SERVO1_MAX": 2000.0},
-              f"done: thruster back on output 1, range 1000–2000, stopped at 1000 — {status()['message']}")
+        check(p == {"SERVO1_FUNCTION": 26.0, "SERVO1_MIN": 1100.0, "SERVO1_TRIM": 1500.0, "SERVO1_MAX": 1900.0},
+              "…the rudder servo keeps its centre (1500) and range")
         # Cancel while waiting: the thruster goes straight back.
         with open(board, "w") as f:
             f.write("4200")
         wait_for(lambda: status()["battery_in"] is False, 5, "battery out seen")
-        check(esc("auto", outputs=[1])["success"], "second run started")
+        check(esc("auto")["success"], "second run started")
         check(esc("cancel")["success"], "cancel")
         wait_for(lambda: not status()["active"], 5, "cancelled")
-        p = c.get("/api/pixhawk/params?names=SERVO1_FUNCTION").json()["values"]
-        check(p["SERVO1_FUNCTION"] == 73.0 and status()["phase"] == "cancelled", "cancel → thruster back on output 1")
+        p = c.get("/api/pixhawk/params?names=SERVO3_FUNCTION").json()["values"]
+        check(p["SERVO3_FUNCTION"] == 70.0 and status()["phase"] == "cancelled", "cancel → motor back on output 3")
         with open(board, "w") as f:
             f.write("5100")
 
-        # Motor matching: spin one thruster at an exact signal, save where it starts.
-        r = c.post("/api/pixhawk/motor_test", json={"motor": "left", "pwm": 1150, "seconds": 2}).json()
+        # Motor matching: spin the motor at an exact signal, save where it starts.
+        r = c.post("/api/pixhawk/motor_test", json={"motor": "motor", "pwm": 1150, "seconds": 2}).json()
         check(r["success"], f"motor test: {r['message']}")
-        check(not c.post("/api/pixhawk/motor_test", json={"motor": "left", "pwm": 1900}).json().get("success", False),
+        check(not c.post("/api/pixhawk/motor_test", json={"motor": "motor", "pwm": 1900}).json().get("success", False),
               "motor test above 1500 µs is refused")
-        r = c.post("/api/pixhawk/motor_start", json={"motor": "right", "pwm": 1130}).json()
+        r = c.post("/api/pixhawk/motor_test", json={"motor": "left", "pwm": 1150}).json()
+        check(not r["success"], f"no left motor on this boat → refused: {r['message']}")
+        r = c.post("/api/pixhawk/motor_start", json={"motor": "motor", "pwm": 1130}).json()
         m = c.get("/api/pixhawk/motors").json()["motors"]
-        check(r["success"] and m["right"] == {"output": 3, "stop": 1115.0, "max": 2000.0} and m["left"]["output"] == 1,
-              f"motor start saved: right (output 3) stopped at 1115 µs, starts at 1130 — {m}")
+        check(r["success"] and m["motor"] == {"output": 3, "stop": 1115.0, "max": 2000.0} and m["left"] is None,
+              f"motor start saved: the motor (output 3) stopped at 1115 µs, starts at 1130 — {m}")
+        # The older twin-motor boat still works.
+        c.post("/api/pixhawk/params", json={"values": {"SERVO1_FUNCTION": 73, "SERVO3_FUNCTION": 74}})
+        m = c.get("/api/pixhawk/motors").json()["motors"]
+        check(m["left"]["output"] == 1 and m["right"]["output"] == 3 and m["motor"] is None, "twin motors: left 1, right 3")
+        c.post("/api/pixhawk/params", json={"values": {"SERVO1_FUNCTION": 26, "SERVO3_FUNCTION": 70}})
 
         r = c.post("/api/mavlink/arm", json={"arm": True}).json()
         check(r["success"], f"arm through the API with no transmitter: {r['message']}")

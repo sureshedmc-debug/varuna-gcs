@@ -136,7 +136,7 @@ def main():
         live = lambda: c.get("/api/live/status").json()
         tele = lambda: c.get("/api/telemetry").json()
         boat = lambda: (lambda t: (t["lat"], t["lng"]))(tele())
-        r = c.post("/api/vision/config", json={"live_dwell_s": 1.5, "collector_servo": 2,
+        r = c.post("/api/vision/config", json={"live_dwell_s": 1.5, "collector_servo": 2, "collector_kind": "roller",
                                                "homing_enabled": False}).json()
         check(r["success"], "live-collect settings tuned for the test (roller on output 2, no camera)")
         check(live()["state"] == "off", "live collect starts off")
@@ -152,6 +152,21 @@ def main():
               f"R1 → roller runs (1800 µs): {r['message']}")
         r = c.post("/api/collector", json={}).json()
         check(r["success"] and servo() == 1500 and not roller()["on"], "R1 again → roller stops (1500 µs)")
+
+        print("Part 0b — the tipping scoop (digital servo)")
+        r = c.post("/api/vision/config", json={"collector_kind": "scoop", "scoop_pwm_zero": 1000,
+                                               "scoop_pwm_extreme": 2000}).json()
+        check(r["success"], "collector switched to the scoop servo (0 = 1000 µs, extreme = 2000 µs)")
+        wait_for(lambda: servo() == 1000, 5, "scoop at its 0 position")
+        check(roller()["kind"] == "scoop" and not roller()["on"], "scoop starts at 0 (1000 µs)")
+        for n in range(2):
+            r = c.post("/api/collector", json={}).json()
+            check(r["success"] and servo() == 2000 and roller()["on"], f"R1 → scoop to its extreme (2000 µs): {r['message']}")
+            r = c.post("/api/collector", json={}).json()
+            check(r["success"] and servo() == 1000 and not roller()["on"], f"R1 again → scoop back to 0 (1000 µs): {r['message']}")
+        r = c.post("/api/vision/config", json={"collector_kind": "roller"}).json()
+        wait_for(lambda: servo() == 1500, 5, "back to the roller's stop signal")
+        check(r["success"], "collector back to the roller for the rest of this test")
 
         print("Part 1 — GPS only")
         A, B = offset(*HOME, 15, 0), offset(*HOME, 0, 25)
@@ -246,7 +261,7 @@ def main():
                                                            {"id": "I", "lat": I[0], "lng": I[1], "source": "drone"}]}).json()
         check(r["added"] == ["H", "I"], "two finds, placed in the simulated river a metre or two off")
         r = c.post("/api/live/start", json={"when_empty": "wait"}).json()
-        check(r["success"], "start with the camera running")
+        check(r["success"], f"start with the camera running ({r.get('message')})")
         st = wait_for(lambda: (lambda s: s if s["phase"] == "camera" else None)(live()), 60, "camera homing takes over")
         check(True, "near the item, the camera homing takes over")
         check(st["roller"], "…with the intake roller already on")

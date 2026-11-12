@@ -35,28 +35,119 @@ export function codecFromKeyframe(data) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const utf8 = new TextDecoder()
 
+/*
+ * One connection per stream URL, shared by every player on it: the Live tab's
+ * detector and its small video tile watch the same picture, and two
+ * connections would send every frame over the link twice. Each player keeps
+ * its own decoder and canvas. The connection closes with its last player.
+ */
+const sources = new Map()   // url -> { url, subs: Set, closed, ctrl }
+
+function subscribe(url, sub) {
+  let src = sources.get(url)
+  if (!src) {
+    src = { url, subs: new Set(), closed: false, ctrl: null }
+    sources.set(url, src)
+    runSource(src)
+  }
+  src.subs.add(sub)
+  return () => {
+    src.subs.delete(sub)
+    if (src.subs.size) return
+    src.closed = true
+    sources.delete(url)
+    try { src.ctrl?.abort() } catch { /* done */ }
+  }
+}
+
+async function runSource(src) {
+  let backoff = 500
+  while (!src.closed) {
+    src.ctrl = new AbortController()
+    let gotData = false
+    let baseline = Infinity     // smallest frame age seen: network delay + the Pi/laptop clock difference
+    let behindSince = 0
+    for (const sub of src.subs) sub.reset()
+    try {
+      const res = await fetch(src.url, { signal: src.ctrl.signal, cache: 'no-store' })
+      if (res.status === 409 || res.status === 404) {
+        for (const sub of [...src.subs]) sub.fatal('mjpeg')
+        return
+      }
+      if (!res.ok || !res.body) throw new Error('HTTP ' + res.status)
+      const reader = res.body.getReader()
+      let buf = new Uint8Array(0)
+      for (;;) {
+        const { value, done } = await reader.read()
+        if (done || src.closed) break
+        gotData = true
+        backoff = 500
+        const joined = new Uint8Array(buf.length + value.length)
+        joined.set(buf)
+        joined.set(value, buf.length)
+        buf = joined
+        let off = 0
+        while (buf.length - off >= HEADER) {
+          const dv = new DataView(buf.buffer, buf.byteOffset + off, HEADER)
+          const len = dv.getUint32(0)
+          if (buf.length - off < HEADER + len) break
+          const flags = dv.getUint8(4)
+          const tsUs = Number(dv.getBigUint64(5))
+          let data = buf.subarray(off + HEADER, off + HEADER + len)
+          let pose = null
+          if (flags & 2) {
+            const n = (data[0] << 8) | data[1]
+            try { pose = JSON.parse(utf8.decode(data.subarray(2, 2 + n))) } catch { /* no pose */ }
+            data = data.subarray(2 + n)
+          }
+          // Falling behind (the link can't carry the stream): reconnect, which
+          // drops whatever is queued on the way and starts at the newest keyframe.
+          const age = Date.now() - tsUs / 1000
+          baseline = Math.min(baseline, age)
+          if (age - baseline > BEHIND_MS) {
+            const now = performance.now()
+            if (!behindSince) behindSince = now
+            else if (now - behindSince > BEHIND_FOR_MS) throw new Error('lagging')
+          } else behindSince = 0
+          for (const sub of src.subs) sub.frame(data, (flags & 1) === 1, tsUs, pose)
+          if (src.closed) return
+          off += HEADER + len
+        }
+        if (off) buf = buf.slice(off)
+      }
+    } catch (e) {
+      if (src.closed) return
+      if (e?.message === 'lagging') console.info('[h264] video fell behind — reconnecting')
+    }
+    try { src.ctrl.abort() } catch { /* done */ }
+    if (src.closed) return
+    if (!gotData) {
+      await sleep(backoff)
+      backoff = Math.min(backoff * 2, 5000)
+    }
+  }
+}
+
 /**
  * Start playing. onFirstFrame() runs when the first picture is drawn.
  * onFatal(reason) means this can't work and the caller should show MJPEG:
- * 'mjpeg' (the camera isn't sending H.264: a USB webcam, or camera_codec =
- * mjpeg) or 'decode' (this browser can't decode the stream). Network drops
- * are retried here. Returns { close(), frame() }: frame() is the picture now
- * on the canvas, { tsUs, pose } (pose null unless the URL asked for ?pose=1
- * and the drone's Pixhawk is connected).
+ * 'mjpeg' (the camera isn't sending H.264, or camera_codec = mjpeg) or
+ * 'decode' (this browser can't decode the stream). Network drops are retried
+ * here. Returns { close(), frame() }: frame() is the picture now on the
+ * canvas, { tsUs, pose } (pose null unless the URL asked for ?pose=1 and the
+ * drone's Pixhawk is connected). Players on the same URL share one connection.
  */
 export function playH264({ url, canvas, onFirstFrame, onFatal }) {
-  const ctx = canvas.getContext('2d')
+  const ctx = canvas.getContext('2d', { alpha: false })
   let closed = false
-  let ctrl = null
   let decoder = null
   let codec = null
   let needKey = true
   let frames = 0
   let decodeErrors = 0
-  let baseline = Infinity     // smallest frame age seen: network delay + the Pi/laptop clock difference
-  let behindSince = 0
   const poses = new Map()     // capture time → pose, for frames in the decoder
   let shown = null            // { tsUs, pose } of the picture on the canvas
+  let unsubscribe = null
 
   function fatal(reason) {
     if (closed) return
@@ -98,14 +189,7 @@ export function playH264({ url, canvas, onFirstFrame, onFatal }) {
   }
 
   function frame(data, key, tsUs, pose) {
-    const age = Date.now() - tsUs / 1000
-    baseline = Math.min(baseline, age)
-    if (age - baseline > BEHIND_MS) {
-      const now = performance.now()
-      if (!behindSince) behindSince = now
-      else if (now - behindSince > BEHIND_FOR_MS) throw new Error('lagging')
-    } else behindSince = 0
-
+    if (closed) return
     if (key) {
       const c = codecFromKeyframe(data)
       if (c && (c !== codec || !decoder || decoder.state === 'closed')) configure(c)
@@ -115,70 +199,20 @@ export function playH264({ url, canvas, onFirstFrame, onFatal }) {
     if (needKey || !decoder || decoder.state !== 'configured') return
     if (!key && decoder.decodeQueueSize > MAX_QUEUE) { needKey = true; return } // can't keep up: skip ahead
     if (pose) poses.set(tsUs, pose)
-    decoder.decode(new EncodedVideoChunk({ type: key ? 'key' : 'delta', timestamp: tsUs, data }))
-  }
-
-  async function run() {
-    let backoff = 500
-    while (!closed) {
-      ctrl = new AbortController()
-      let gotData = false
-      try {
-        const res = await fetch(url, { signal: ctrl.signal, cache: 'no-store' })
-        if (res.status === 409 || res.status === 404) { fatal('mjpeg'); return }
-        if (!res.ok || !res.body) throw new Error('HTTP ' + res.status)
-        const reader = res.body.getReader()
-        let buf = new Uint8Array(0)
-        needKey = true
-        baseline = Infinity
-        behindSince = 0
-        for (;;) {
-          const { value, done } = await reader.read()
-          if (done || closed) break
-          gotData = true
-          backoff = 500
-          const joined = new Uint8Array(buf.length + value.length)
-          joined.set(buf)
-          joined.set(value, buf.length)
-          buf = joined
-          let off = 0
-          while (buf.length - off >= HEADER) {
-            const dv = new DataView(buf.buffer, buf.byteOffset + off, HEADER)
-            const len = dv.getUint32(0)
-            if (buf.length - off < HEADER + len) break
-            const flags = dv.getUint8(4)
-            let data = buf.subarray(off + HEADER, off + HEADER + len)
-            let pose = null
-            if (flags & 2) {
-              const n = (data[0] << 8) | data[1]
-              try { pose = JSON.parse(utf8.decode(data.subarray(2, 2 + n))) } catch { /* no pose */ }
-              data = data.subarray(2 + n)
-            }
-            frame(data, (flags & 1) === 1, Number(dv.getBigUint64(5)), pose)
-            if (closed) return
-            off += HEADER + len
-          }
-          if (off) buf = buf.slice(off)
-        }
-      } catch (e) {
-        if (closed) return
-        if (e?.message === 'lagging') console.info('[h264] video fell behind — reconnecting')
-      }
-      try { ctrl.abort() } catch { /* done */ }
-      if (closed) return
-      if (!gotData) {
-        await sleep(backoff)
-        backoff = Math.min(backoff * 2, 5000)
-      }
-    }
+    decoder.decode(new EncodedVideoChunk({ type: key ? 'key' : 'delta', timestamp: tsUs, data }))  // copies data
   }
 
   function close() {
+    if (closed) return
     closed = true
-    try { ctrl?.abort() } catch { /* done */ }
+    unsubscribe?.()
     try { if (decoder && decoder.state !== 'closed') decoder.close() } catch { /* done */ }
   }
 
-  run()
+  unsubscribe = subscribe(url, {
+    frame,
+    reset: () => { needKey = true },
+    fatal,
+  })
   return { close, frame: () => shown }
 }

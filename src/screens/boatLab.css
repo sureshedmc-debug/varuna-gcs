@@ -147,3 +147,66 @@ button.nl-tile:hover { transform: translateY(-2px); border-color: #c4b5fd; box-s
   .nl-btn, button.nl-tile, .nl-fill, .nl-switch .knob { transition: none; }
   .nl-dot.pulse { animation: none; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Dark themes: the same navy/teal/violet look as Home. Colours only.
+   ═══════════════════════════════════════════════════════════════════════ */
+:root:not([data-theme='light']):not([data-look='classic']) .nl {
+  --nl-ink: #ffffff;
+  --nl-sub: #5eead4;
+  --nl-muted: rgba(226, 232, 255, 0.66);
+  --nl-faint: rgba(226, 232, 255, 0.42);
+  --nl-line: rgba(148, 163, 255, 0.16);
+  --nl-soft: rgba(255, 255, 255, 0.04);
+  --nl-track: rgba(255, 255, 255, 0.08);
+  --nl-purple: #5eead4;
+  --nl-ok: #86efac;
+  --nl-warn: #fcd34d;
+  --nl-bad: #fca5a5;
+  --nl-blue: #93c5fd;
+}
+:root:not([data-theme='light']):not([data-look='classic']) .nl-panel {
+  background: rgba(10, 15, 32, 0.88);
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+:root:not([data-theme='light']):not([data-look='classic']) .nl-card { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04); }
+:root:not([data-theme='light']):not([data-look='classic']) .nl-card.alert { background: rgba(248, 113, 113, 0.08); border-color: rgba(248, 113, 113, 0.32); }
+:root:not([data-theme='light']):not([data-look='classic']) .nl-card.live { border-color: rgba(94, 234, 212, 0.4); box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.12); }
+:root:not([data-theme='light']):not([data-look='classic']) .nl-pill {
+  background: rgba(10, 15, 32, 0.85); border-color: rgba(94, 234, 212, 0.22); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+}
+:root:not([data-theme='light']):not([data-look='classic']) .nl-tile,
+:root:not([data-theme='light']):not([data-look='classic']) .nl-row { background: rgba(255, 255, 255, 0.04); box-shadow: none; }
+:root:not([data-theme='light']) button.nl-tile:hover { border-color: rgba(94, 234, 212, 0.45); box-shadow: 0 8px 22px rgba(0, 0, 0, 0.35); }
+:root:not([data-theme='light']):not([data-look='classic']) .nl-text,
+:root:not([data-theme='light']):not([data-look='classic']) .nl-switch { color: rgba(226, 232, 255, 0.78); }
+
+:root:not([data-theme='light']):not([data-look='classic']) .nl-chip.ok   { background: rgba(74, 222, 128, 0.12); }
+:root:not([data-theme='light']):not([data-look='classic']) .nl-chip.warn { background: rgba(251, 191, 36, 0.12); }
+:root:not([data-theme='light']):not([data-look='classic']) .nl-chip.bad  { background: rgba(248, 113, 113, 0.14); }
+:root:not([data-theme='light']):not([data-look='classic']) .nl-chip.blue { background: rgba(96, 165, 250, 0.14); }
+:root:not([data-theme='light']):not([data-look='classic']) .nl-chip.off  { background: rgba(255, 255, 255, 0.06); }
+
+:root:not([data-theme='light']):not([data-look='classic']) .nl-btn {
+  color: #062925; background: linear-gradient(90deg, #5eead4, #a5f3fc); box-shadow: 0 6px 18px rgba(45, 212, 191, 0.28);
+}
+:root:not([data-theme='light']):not([data-look='classic']) .nl-btn:hover:not(:disabled) { box-shadow: 0 8px 24px rgba(45, 212, 191, 0.42); }
+:root:not([data-theme='light']):not([data-look='classic']) .nl-btn.soft { background: transparent; color: #5eead4; border-color: rgba(94, 234, 212, 0.4); box-shadow: none; }
+:root:not([data-theme='light']):not([data-look='classic']) .nl-btn.ghost { background: transparent; color: var(--nl-muted); box-shadow: none; }
+:root:not([data-theme='light']):not([data-look='classic']) .nl-btn.on { color: #fff; }
+:root:not([data-theme='light']):not([data-look='classic']) .nl-btn.amber { color: #1f1400; }
+:root:not([data-theme='light']):not([data-look='classic']) .nl-btn:focus-visible { outline-color: #5eead4; }
+
+:root:not([data-theme='light']):not([data-look='classic']) .nl-seg button.on { background: rgba(94, 234, 212, 0.16); color: #5eead4; box-shadow: none; }
+:root:not([data-theme='light']):not([data-look='classic']) .nl-switch .track { background: rgba(255, 255, 255, 0.12); box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.4); }
+:root:not([data-theme='light']):not([data-look='classic']) .nl-switch.on .track { background: linear-gradient(135deg, #0d9488, #2dd4bf); }
+:root:not([data-theme='light']):not([data-look='classic']) .nl-fill { background: linear-gradient(90deg, #14b8a6, #5eead4, #a5f3fc); box-shadow: 0 0 10px rgba(45, 212, 191, 0.4); }
+
+:root:not([data-theme='light']):not([data-look='classic']) .nl-input,
+:root:not([data-theme='light']):not([data-look='classic']) .nl-select { background: rgba(255, 255, 255, 0.04); border-color: rgba(148, 163, 255, 0.22); }
+:root:not([data-theme='light']):not([data-look='classic']) .nl-select option { background: #0d1326; color: #fff; }
+:root:not([data-theme='light']):not([data-look='classic']) .nl-input:focus,
+:root:not([data-theme='light']):not([data-look='classic']) .nl-select:focus { border-color: #2dd4bf; box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.2); }
+:root:not([data-theme='light']):not([data-look='classic']) .nl-range { accent-color: #2dd4bf; }
+:root:not([data-theme='light']):not([data-look='classic']) .nl-scroll { scrollbar-color: rgba(94, 234, 212, 0.35) transparent; }
+:root:not([data-theme='light']):not([data-look='classic']) .nl-scroll::-webkit-scrollbar-thumb { background: rgba(94, 234, 212, 0.3); }

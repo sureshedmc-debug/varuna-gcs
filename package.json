@@ -1,7 +1,7 @@
 {
   "name": "varuna-gcs",
   "private": true,
-  "version": "2.1.4",
+  "version": "2.1.8",
   "type": "module",
   "description": "VARUNA AI — ground-control UI for the river-cleanup drone (Raspberry Pi + FastAPI backend).",
   "author": "VARUNA AI",
@@ -16,7 +16,9 @@
     "electron:dev": "node electron/launch.cjs --dev",
     "electron:local": "node electron/launch.cjs --local",
     "electron:start": "vite build && node electron/launch.cjs",
-    "electron:build": "vite build && electron-builder --win"
+    "electron:build": "vite build && electron-builder --win",
+    "desktop:update": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/update-desktop.ps1",
+    "desktop:shortcut": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/make-update-shortcut.ps1"
   },
   "dependencies": {
     "@emailjs/browser": "^4.4.1",
@@ -30,6 +32,7 @@
     "@turf/helpers": "^7.4.0",
     "@turf/intersect": "^7.4.0",
     "@turf/length": "^7.4.0",
+    "@vladmandic/face-api": "1.7.15",
     "framer-motion": "^11.3.0",
     "http-proxy": "^1.18.1",
     "leaflet": "^1.9.4",

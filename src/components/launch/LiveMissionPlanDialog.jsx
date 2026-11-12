@@ -6,11 +6,10 @@ import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
 import { fetchCatalog } from '../../lib/localData'
 import { startLivePlan, checkSections, MAX_SECTIONS } from '../../lib/liveMissionPlan'
-import { planRiverSections } from '../../lib/riverSections'
-import { useHomeMode } from '../../lib/homeMode'
+import { planRiverSections, prefetchRiver } from '../../lib/riverSections'
 
 /** The catalog from the store, or the bundled default list if the store is absent. */
-async function loadCatalog() {
+export async function loadCatalog() {
   try {
     return await fetchCatalog()
   } catch (err) {
@@ -31,7 +30,6 @@ export default function LiveMissionPlanDialog({ onClose, onProceed }) {
   const [error, setError] = useState('')
   const [reload, setReload] = useState(0)
   const [planning, setPlanning] = useState(false)
-  const plain = useHomeMode() === 'simple'
   const [planFailed, setPlanFailed] = useState(false)
   const planAbort = useRef(null)
   useEffect(() => () => planAbort.current?.abort(), [])
@@ -63,6 +61,12 @@ export default function LiveMissionPlanDialog({ onClose, onProceed }) {
   const state = states.find((s) => s.id === stateId)
   const rivers = state?.rivers || []
   const river = rivers.find((r) => r.id === riverId)
+
+  // Look the river's line up as soon as it is picked, so it is ready by the
+  // time the sections are entered (instant for the rivers bundled with the app).
+  useEffect(() => {
+    if (river) prefetchRiver(river)
+  }, [river])
 
   function next() {
     setError('')
@@ -121,7 +125,7 @@ export default function LiveMissionPlanDialog({ onClose, onProceed }) {
         transition={{ type: 'tween', ease: [0.16, 1, 0.3, 1], duration: 0.32 }}
       >
         <h2 className="vl-h1" id="vl-lmp-title">Live Mission Plan</h2>
-        <p className="vl-sub">Step {step} of 3 · {step === 1 ? 'Select State' : step === 2 ? 'Select River' : plain ? 'How many parts' : 'Sections'}</p>
+        <p className="vl-sub">Step {step} of 3 · {step === 1 ? 'Select State' : step === 2 ? 'Select River' : 'Sections'}</p>
         <div className="vl-steps" aria-hidden="true">
           {[1, 2, 3].map((n) => <span key={n} className={`vl-step ${n <= step ? 'on' : ''}`} />)}
         </div>
@@ -179,7 +183,7 @@ export default function LiveMissionPlanDialog({ onClose, onProceed }) {
         {catalog && step === 3 && (
           <form onSubmit={proceed} noValidate>
             <label className="vl-field">
-              <span className="vl-label">{plain ? 'How many parts should the river be split into? Each part is one short flight.' : 'How many sections should this mission contain?'}</span>
+              <span className="vl-label">How many sections should this mission contain?</span>
               <input
                 ref={firstRef}
                 className="vl-input"
@@ -196,8 +200,8 @@ export default function LiveMissionPlanDialog({ onClose, onProceed }) {
             </label>
             <div className="vl-summary">
               <b>{state?.name}</b> → <b>{river?.name}</b>
-              {checkSections(sections).value ? <> → <b>{checkSections(sections).value}</b> {plain ? 'part' : 'section'}{checkSections(sections).value > 1 ? 's' : ''}</> : null}
-              <div style={{ fontSize: 12, marginTop: 4 }}>{plain ? 'The app plans the route for every part, then opens the map on part 1. Check it, then send it to the drone.' : 'Waypoints are planned along the river for every section, then the mission planner opens on section 1. Review and upload one section at a time.'}</div>
+              {checkSections(sections).value ? <> → <b>{checkSections(sections).value}</b> section{checkSections(sections).value > 1 ? 's' : ''}</> : null}
+              <div style={{ fontSize: 12, marginTop: 4 }}>Waypoints are planned along the river for every section, then the mission planner opens on section 1. Review and upload one section at a time.</div>
             </div>
           </form>
         )}

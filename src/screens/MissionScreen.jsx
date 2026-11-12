@@ -16,8 +16,8 @@ import { cmd, isOk } from '../lib/commands'
 import { planKey, useActiveMission, getActiveMission, missionFor } from '../lib/missionStore'
 import { usePlanDraft, consumePlanDraft, setMissionMapView } from '../lib/planDraftStore'
 import { MAX_ALT, MAX_SPEED, distanceM } from '../lib/missionPatterns'
-import { useHomeMode } from '../lib/homeMode'
 import SavePlanMapButton from '../components/SavePlanMapButton'
+import MissionFenceLayer from '../components/MissionFenceLayer'
 import { useLivePlan, setActiveSection, endLivePlan, claimPlanName, isSectionUploaded } from '../lib/liveMissionPlan'
 
 const DEFAULT_HOME = [17.385, 78.4867]
@@ -146,10 +146,10 @@ function Slider({ label, value, set, min, max, step, unit }) {
 }
 
 // ── Pipeline step indicator ───────────────────────────────────────────────────
-function PipelineSteps({ isSaved, isUploaded, plain }) {
+function PipelineSteps({ isSaved, isUploaded }) {
   const steps = [
     { label: 'Save',   done: isSaved,    active: !isSaved },
-    { label: plain ? 'Send' : 'Upload', done: isUploaded, active: isSaved && !isUploaded },
+    { label: 'Upload', done: isUploaded, active: isSaved && !isUploaded },
     { label: 'Start',  done: false,       active: isUploaded },
   ]
   return (
@@ -187,12 +187,12 @@ function PipelineSteps({ isSaved, isUploaded, plain }) {
 let wpid = 1
 
 // ── Waypoint rows (redesigned look, same logic) ───────────────────────────────
-const WaypointRows = memo(function WaypointRows({ wps, onPatch, onReorder, onRemove, plain }) {
+const WaypointRows = memo(function WaypointRows({ wps, onPatch, onReorder, onRemove }) {
   return (
     <div className="mb-3 flex max-h-[28vh] flex-col gap-1.5 overflow-y-auto pr-1">
       {wps.length === 0 && (
         <div className="py-5 text-center text-sm text-muted">
-          {plain ? 'No stops yet — tap the map to add one.' : 'No waypoints yet — tap the map to add.'}
+          No waypoints yet — tap the map to add.
         </div>
       )}
       {wps.map((w, i) => (
@@ -282,8 +282,6 @@ export default function MissionScreen() {
 
   // Live Mission Plan (Home → Direct Mission Plan): name each section's upload.
   const livePlan = useLivePlan()
-  // Simple mode (set on Home) uses plain words: stops, parts, send to drone.
-  const plain = useHomeMode() === 'simple'
   useEffect(() => {
     if (!livePlan) return
     const fresh = claimPlanName(livePlan)
@@ -295,7 +293,7 @@ export default function MissionScreen() {
     if (reload) {
       setWps(sp.waypoints.map(([lat, lng]) => ({ id: wpid++, lat, lng, action: 'waypoint' })))
       setAiDraft({ id: `live-${livePlan.missionId}-${livePlan.activeSection}`, planId: livePlan.missionId, area: planArea(livePlan), waypoints: sp.waypoints, name: `Section ${livePlan.activeSection}`,
-        summary: `Auto-planned along the ${livePlan.river.name}: ${sp.waypoints.length} ${plain ? 'stops' : 'waypoints'}, ${sp.lengthM} m, about ${sp.minutes} min.`, live: true, warnings: sp.warnings })
+        summary: `Auto-planned along the ${livePlan.river.name}: ${sp.waypoints.length} waypoints, ${sp.lengthM} m, about ${sp.minutes} min.`, live: true, warnings: sp.warnings })
     }
     if (fresh) setOpen(true)
   }, [livePlan?.missionId, livePlan?.activeSection]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -315,6 +313,21 @@ export default function MissionScreen() {
   const moveWp   = useCallback((id, ll) => setWps((s) => s.map((w) => (w.id === id ? { ...w, lat: ll.lat, lng: ll.lng } : w))), [])
   const patchWp  = useCallback((id, p)  => setWps((s) => s.map((w) => (w.id === id ? { ...w, ...p } : w))), [])
   const removeWp = useCallback((id)     => setWps((s) => s.filter((w) => w.id !== id)), [])
+  // Delete every waypoint: first tap arms it (3 s), second tap clears. Only the
+  // plan on this screen — a mission already uploaded to the drone is untouched.
+  const [confirmClear, setConfirmClear] = useState(false)
+  useEffect(() => {
+    if (!confirmClear) return undefined
+    const t = setTimeout(() => setConfirmClear(false), 3000)
+    return () => clearTimeout(t)
+  }, [confirmClear])
+  function clearAllWps() {
+    if (!confirmClear) return setConfirmClear(true)
+    setConfirmClear(false)
+    setWps([])
+    setAiDraft(null)
+    toast.push({ level: 'ok', title: 'All waypoints deleted', msg: 'Tap the map to start a new plan.' })
+  }
   const reorder  = useCallback((id, d)  => setWps((s) => {
     const i = s.findIndex((w) => w.id === id), j = i + d
     if (i < 0 || j < 0 || j >= s.length) return s
@@ -409,6 +422,7 @@ export default function MissionScreen() {
           {aiDraft?.polygon && <Polygon positions={lakePositions} pathOptions={LAKE_STYLE} interactive={false} />}
           {live.source && <Marker position={home} icon={homeIcon()} interactive={false} />}
           {dronePos && <Drone3DMarker position={dronePos} size={64} />}
+          <MissionFenceLayer home={home} waypoints={wps} />
           {planLayers}
         </MapContainer>
       </div>
@@ -427,7 +441,7 @@ export default function MissionScreen() {
             <path d="M12 2l7 4v12l-7 4-7-4V6l7-4z" />
           </svg>
           <span className="text-[13px] font-bold text-ink">MISSION PLANNER</span>
-          <span className="hidden text-xs text-muted sm:inline">· tap map to add {plain ? 'stops' : 'waypoints'}</span>
+          <span className="hidden text-xs text-muted sm:inline">· tap map to add waypoints</span>
           <span className="rounded-full px-2 py-0.5 text-[10px] font-bold"
             style={{ background: gpsStyle.bg, color: gpsStyle.color }}
             title={live.error || undefined}>
@@ -476,7 +490,7 @@ export default function MissionScreen() {
               </div>
               <div className="mt-1 text-ink">{livePlan.state.name} · {livePlan.river.name}</div>
               <label className="mt-1.5 flex items-center gap-2 text-muted">
-                {plain ? 'Part' : 'Section'}
+                Section
                 <select
                   value={livePlan.activeSection}
                   onChange={(e) => setActiveSection(e.target.value)}
@@ -487,7 +501,7 @@ export default function MissionScreen() {
                   ))}
                 </select>
               </label>
-              <div className="mt-1 text-muted">{livePlan.missionId} · {plain ? 'each send is saved as this part' : 'each upload is saved as this section'}</div>
+              <div className="mt-1 text-muted">{livePlan.missionId} · each upload is saved as this section</div>
               <SavePlanMapButton area={area} />
             </div>
           )}
@@ -532,14 +546,33 @@ export default function MissionScreen() {
               >
                 <Slider label="Altitude" value={alt}   set={setAlt}   min={2} max={MAX_ALT}   step={1}   unit="m" />
                 <Slider label="Speed"    value={speed} set={setSpeed} min={1} max={MAX_SPEED} step={0.5} unit="km/h" />
-                <div className="text-[10px] text-faint">{plain ? 'All stops' : 'All waypoints'} · altitude capped at {MAX_ALT} m</div>
+                <div className="text-[10px] text-faint">All waypoints · altitude capped at {MAX_ALT} m</div>
               </div>
 
+              {/* Waypoint count + delete all */}
+              {wps.length > 0 && (
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-semibold text-muted">
+                    {wps.length} waypoint{wps.length === 1 ? '' : 's'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={clearAllWps}
+                    className="rounded-lg px-3 py-1.5 text-[11.5px] font-bold transition-all active:scale-95"
+                    style={confirmClear
+                      ? { background: 'rgba(255,69,58,0.9)', color: '#fff', border: '1px solid rgba(255,69,58,0.9)' }
+                      : { background: 'rgba(255,69,58,0.10)', color: '#FF8A80', border: '1px solid rgba(255,69,58,0.35)' }}
+                  >
+                    {confirmClear ? `Tap again to delete all ${wps.length}` : '🗑 Clear all waypoints'}
+                  </button>
+                </div>
+              )}
+
               {/* Waypoint list */}
-              <WaypointRows wps={wps} onPatch={patchWp} onReorder={reorder} onRemove={removeWp} plain={plain} />
+              <WaypointRows wps={wps} onPatch={patchWp} onReorder={reorder} onRemove={removeWp} />
 
               {/* Pipeline steps */}
-              <PipelineSteps isSaved={isSaved} isUploaded={isUploaded} plain={plain} />
+              <PipelineSteps isSaved={isSaved} isUploaded={isUploaded} />
 
               {/* Save / Upload buttons */}
               <div className="mb-3 grid grid-cols-2 gap-2">
@@ -547,9 +580,7 @@ export default function MissionScreen() {
                   {isSaved ? '✓ Saved' : 'Save'}
                 </Btn>
                 <Btn variant={isUploaded ? 'secondary' : 'primary'} disabled={!isSaved || busy === 'upload'} onClick={askUpload}>
-                  {plain
-                    ? busy === 'upload' ? 'Sending…' : isUploaded ? '✓ Sent' : 'Send to drone'
-                    : busy === 'upload' ? 'Uploading…' : isUploaded ? '✓ Uploaded' : 'Upload'}
+                  {busy === 'upload' ? 'Uploading…' : isUploaded ? '✓ Uploaded' : 'Upload'}
                 </Btn>
               </div>
 
@@ -558,9 +589,9 @@ export default function MissionScreen() {
                 <CommandButton cmd="mission" disabled={!isUploaded || running || busy === 'start'} onConfirm={start} />
                 <span className="text-center text-[10px] text-faint">
                   {!isSaved
-                    ? plain ? 'Save the plan, send it to the drone, then Start.' : 'Save the plan, then upload it, then Start.'
+                    ? 'Save the plan, then upload it, then Start.'
                     : !isUploaded
-                      ? plain ? 'Send the saved mission to the drone to enable Start.' : 'Upload the saved mission to enable Start.'
+                      ? 'Upload the saved mission to enable Start.'
                       : running ? 'Mission running…' : 'Ready — press Start to fly it.'}
                 </span>
               </div>

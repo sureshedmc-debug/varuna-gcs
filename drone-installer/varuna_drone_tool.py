@@ -46,7 +46,7 @@ from pathlib import Path
 
 import paramiko
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 APP_DIR_NAME = "varuna-drone"
 SERVICE = "varuna-drone"
 HTTP_PORT = 8000
@@ -54,7 +54,7 @@ CAMERA_LABEL = {"usb": "USB webcam", "csi": "Pi camera module",
                 "auto": "auto-detect (USB webcam if plugged in, else the Pi camera module)",
                 "test": "test picture", "off": "off"}
 PAYLOAD_FILES = [
-    "main.py", "config.py", "mav_link.py", "mission.py", "camera.py", "system_info.py", "control.py",
+    "main.py", "config.py", "mav_link.py", "mission.py", "fence.py", "camera.py", "system_info.py", "control.py",
     "requirements.txt", "README.md", "drone_config.example.json", "test_e2e.py",
 ]
 APT_PACKAGES = "python3-venv python3-dev python3-pip libxml2-dev libxslt1-dev curl ffmpeg v4l-utils"

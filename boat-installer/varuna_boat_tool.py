@@ -24,6 +24,8 @@ once, then offers:
  14. Boat camera: a USB webcam or an Android phone on the USB cable (1080p /
      30 fps; USB webcam mode, or the IP Webcam app for phones without it), how
      many frames a second go to the app, and the data rate.
+ 15. Collector scoop servo: which Pixhawk output the digital servo is on and
+     its two positions (R1 on the controller: 0 position <-> extreme).
 
 Works on 64-bit and 32-bit Raspberry Pi OS (Pi Zero, Pi 3/4/5). On 32-bit,
 FastAPI and pydantic come from the OS packages, because building pydantic
@@ -51,19 +53,19 @@ from pathlib import Path
 
 import paramiko
 
-VERSION = "1.7.0"
+VERSION = "1.8.0"
 APP_DIR_NAME = "varuna-boat"
 SERVICE = "varuna-boat"
 HTTP_PORT = 8000
 PAYLOAD_FILES = [
     "main.py", "config.py", "mav_link.py", "mission.py", "sim_vehicle.py",
     "camera.py", "camera_model.py", "vision.py", "turbidity.py", "sim_world.py", "drive.py",
-    "live_collect.py", "collector.py", "setup_wifi.sh",
+    "live_collect.py", "collector.py", "target_match.py", "servos.py", "setup_wifi.sh",
     "requirements.txt", "README.md", "boat_config.example.json", "test_e2e.py",
 ]
 APT_PACKAGES = "python3-venv python3-dev python3-pip libxml2-dev libxslt1-dev curl i2c-tools usb-modeswitch"
 # 32-bit Pis: the web framework comes from the OS (no compiling pydantic on a Pi Zero).
-APT_PACKAGES_32 = ("python3-fastapi python3-uvicorn python3-pydantic python3-psutil python3-serial "
+APT_PACKAGES_32 = ("python3-pil python3-fastapi python3-uvicorn python3-pydantic python3-psutil python3-serial "
                    "python3-smbus2 python3-websockets python3-lxml")
 # The boat camera is a USB webcam: ffmpeg passes its MJPEG through to the app,
 # v4l-utils lists the camera and what it can send.
@@ -1079,6 +1081,7 @@ def action_update(pi, ctx):
     ])
     say("")
     ok("Boat code updated.")
+    _scoop_note(pi, ctx)
 
 
 def action_status(pi, ctx):
@@ -1304,10 +1307,11 @@ def _check_failsafe(pi, ctx, offer_fix=True):
 
 def _drive_help():
     say("  In the VARUNA app → Boat tab → Game controller: plug the controller into the PC and press any button.", "dim")
-    say("  Left stick = throttle, right stick = steering (only in MANUAL or ACRO).", "dim")
+    say("  PS2 pad on a USB adapter: press ANALOG (red light), then Game controller → Set up buttons.", "dim")
+    say("  Left stick = throttle (the middle motor, forward only), right stick = rudder (only in MANUAL or ACRO).", "dim")
     say("  Boat tab → Flight mode switches modes; MANUAL, ACRO and HOLD need no GPS or compass.", "dim")
-    say("  A = MANUAL   B = HOLD (stop)   X = resume mission   Y = return home", "dim")
-    say("  Hold START 1 s = arm, hold BACK 1 s = disarm. Controller lost 3 s while driving → the boat holds.", "dim")
+    say("  A/✕ = MANUAL   B/○ = HOLD (stop)   X/□ = resume mission   Y/△ = return home   R1 = scoop 0 ↔ extreme", "dim")
+    say("  Hold START 1 s = arm, hold BACK/SELECT 1 s = disarm. Controller lost 3 s while driving → the boat holds.", "dim")
 
 
 def step_drive(pi, ctx):
@@ -1352,6 +1356,68 @@ def action_drive(pi, ctx):
             h = _api(pi, "/api/health") or {}
         _check_failsafe(pi, ctx)
         _drive_help()
+
+
+SCOOP_HELP = ("R1 on the game controller moves the scoop to its extreme position; R1 again brings it "
+              "back to its 0 position. It starts at 0 and never moves by itself.")
+
+
+def _scoop_note(pi, ctx):
+    """After an update: where the collector scoop servo is, or how to set it up."""
+    cfg = _boat_config(pi, ctx)
+    kind = cfg.get("collector_kind", "scoop")
+    out = int(cfg.get("collector_servo") or 0)
+    if kind != "scoop":
+        say("  Collector: the old intake roller. For the scoop servo: 15) Collector scoop servo.", "dim")
+    elif out:
+        say(f"  Collector scoop servo on Pixhawk output {out}: 0 position {cfg.get('scoop_pwm_zero', 1000)} µs, "
+            f"extreme {cfg.get('scoop_pwm_extreme', 2000)} µs. {SCOOP_HELP}", "dim")
+    else:
+        warn("No Pixhawk output set for the collector scoop servo yet — run 15) Collector scoop servo.")
+
+
+def _ask_us(prompt, default):
+    while True:
+        v = ask(prompt, str(default))
+        if v.isdigit() and 500 <= int(v) <= 2500:
+            return int(v)
+        warn("A pulse width in microseconds, 500 to 2500.")
+
+
+def action_scoop(pi, ctx):
+    """The collector scoop's digital servo: its Pixhawk output and its two positions."""
+    if not ctx.get("installed"):
+        warn("The boat backend isn't installed on this Pi yet — run 1) Full setup first.")
+        return
+    cfg = _boat_config(pi, ctx)
+    cur_out = int(cfg.get("collector_servo") or 0) or 2
+    say(SCOOP_HELP)
+    say("  The servo's signal wire goes on a free Pixhawk MAIN OUT (the old belt ESC was on 2). That output's", "dim")
+    say("  SERVOn_FUNCTION must be 0 (Disabled) in Mission Planner, or the Pixhawk ignores the boat Pi.", "dim")
+    say("  Power the servo from a 5–6 V BEC that can give 3 A — not from the Pixhawk's servo rail on its own.", "dim")
+    while True:
+        v = ask("Pixhawk output for the scoop servo (1-8)", str(cur_out))
+        if v.isdigit() and 1 <= int(v) <= 8:
+            out = int(v)
+            break
+        warn("A number from 1 to 8.")
+    say("  Most digital servos turn their full range on 500–2500 µs; 1000 / 2000 is a safe start.", "dim")
+    say("  Don't make the scoop push against the hull or a stop: the servo stalls, gets hot and draws a lot of current.", "dim")
+    zero = _ask_us("0 / original position, µs", cfg.get("scoop_pwm_zero", 1000))
+    extreme = _ask_us("Extreme position, µs", cfg.get("scoop_pwm_extreme", 2000))
+    if zero == extreme:
+        warn("The two positions are the same — the scoop wouldn't move. Nothing changed.")
+        return
+    _patch_config(pi, ctx, {"collector_kind": "scoop", "collector_servo": out, "scoop_pwm_zero": zero,
+                            "scoop_pwm_extreme": extreme, "collector_relay_gpio": 0})
+    pi.run(f"systemctl restart {SERVICE}", sudo=True, timeout=120)
+    for _ in range(15):
+        time.sleep(2)
+        info = _api(pi, "/api/boat/info")
+        if info and info.get("collector_servo") == out:
+            break
+    ok(f"Scoop servo on output {out}: 0 position {zero} µs, extreme {extreme} µs (the scoop goes to 0 now)")
+    say("  Try it: VARUNA app → Boat tab → Game controller → press R1 (or the 'To extreme' button).", "dim")
 
 
 def _report_data_rate(cam):
@@ -1443,6 +1509,7 @@ MENU = [
     ("12", "Find the Pixhawk (what the boat tried)", action_find_pixhawk),
     ("13", "Driving by hand: game controller or RC transmitter", action_drive),
     ("14", "Boat camera: USB webcam or Android phone (1080p)", action_camera),
+    ("15", "Collector scoop servo: output and positions (R1)", action_scoop),
     ("0", "Exit", None),
 ]
 

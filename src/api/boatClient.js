@@ -78,9 +78,18 @@ export const boatApi = {
   liveStop: (rtl = false) => post('/api/live/stop', { rtl }, 15000),
   liveSkip: (id) => post('/api/live/skip', { id }, 10000),
   liveClear: () => post('/api/live/clear', undefined, 10000),
+  liveRetry: (id) => post('/api/live/retry', { id }, 10000),
 
   // The intake roller: on = true / false, or no argument to toggle (R1 on the controller).
   collector: (on) => post('/api/collector', on === undefined ? {} : { on }, 10000),
+
+  // The two extra servos (1 or 2): on = true / false, or no argument to toggle
+  // (D-pad left / right). With a transmitter, the app holds a servo it moved
+  // until it is given back (servoRelease, D-pad down).
+  servo: (n, on) => post('/api/servo', on === undefined ? { servo: n } : { servo: n, on }, 10000),
+  servoRelease: (n) => post('/api/servo/release', n === undefined ? {} : { servo: n }, 10000),
+  servosSetup: () => req('/api/servos/setup', { timeout: 15000 }),
+  fixServosSetup: () => post('/api/servos/setup', undefined, 20000),
 
   // Motor matching: spin one thruster at an exact signal (the Pixhawk stops it
   // itself), then save where it starts turning.
@@ -140,6 +149,7 @@ export const boatUrls = {
   snapshot: () => boatUrl(`/api/camera/snapshot?t=${Date.now()}`),
   catchPhoto: (id) => boatUrl(`/api/catch/photo/${encodeURIComponent(id)}`),
   wildlifePhoto: (id) => boatUrl(`/api/wildlife/photo/${encodeURIComponent(id)}`),
+  liveReference: (id) => boatUrl(`/api/live/reference?id=${encodeURIComponent(id)}`),
 }
 
 /** WebSocket URL for live boat telemetry, following the configured base. */

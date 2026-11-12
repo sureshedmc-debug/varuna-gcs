@@ -1,50 +1,36 @@
-// Top of the Home tab: the ways in (left) and the VARUNA AI artwork (right).
-// Simple mode shows one guided path (sign in → plan → fly) with a single big
-// button and a plain-words readiness card; Expert mode shows the three options.
+// Top of the Home tab: a full-width hero playing the VARUNA ecosystem, with
+// the account buttons and Direct Mission Plan floating on it, then the
+// drone/boat status cards.
 import { useState } from 'react'
 import './launch.css'
-import { useUser, displayName, logout } from '../../lib/auth'
-import { useLivePlan, endLivePlan } from '../../lib/liveMissionPlan'
-import { useActiveMission } from '../../lib/missionStore'
-import { useImpactStats } from '../../lib/impactStats'
+import { useUser, displayName } from '../../lib/auth'
+import { useLivePlan } from '../../lib/liveMissionPlan'
 import { useSystem } from '../SystemContext'
 import { useBoat } from '../BoatContext'
 import { pick } from '../../lib/format'
-import { UserIcon, RouteIcon, DataIcon, ChevronRight } from './icons'
+import { UserIcon, RouteIcon, ChevronRight } from './icons'
 
-function Option({ icon, tone = '', title, sub, onClick }) {
+// The ecosystem in daylight, rendered from the intro's own 3D scene (its
+// lighter 'day' mood): the drone scouts and tags plastic, the boat belts it
+// aboard. A seamless 16 s loop; a still frame when motion is reduced.
+function EcosystemLoop() {
+  const [still] = useState(() => {
+    try {
+      return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    } catch {
+      return false
+    }
+  })
+  if (still) return <img className="vl-hero-video" src="/ecosystem-day-poster.jpg" alt="" aria-hidden="true" />
   return (
-    <button type="button" className="vl-option" onClick={onClick}>
-      <span className={`vl-option-icon ${tone}`}>{icon}</span>
-      <span>
-        <span className="vl-option-title" style={{ display: 'block' }}>{title}</span>
-        <span className="vl-option-sub" style={{ display: 'block' }}>{sub}</span>
-      </span>
-      <span className="vl-option-go"><ChevronRight size={26} /></span>
-    </button>
+    <video className="vl-hero-video" autoPlay muted loop playsInline preload="auto" poster="/ecosystem-day-poster.jpg" aria-hidden="true">
+      <source src="/ecosystem-day.mp4" type="video/mp4" />
+      <source src="/ecosystem-day.webm" type="video/webm" />
+    </video>
   )
 }
 
-// ---------------------------------------------------------------- simple mode
-function Step({ n, title, state, hint, action, children }) {
-  return (
-    <li className={`vl-step-row ${state}`} aria-current={state === 'now' ? 'step' : undefined}>
-      <span className="vl-step-num" aria-hidden="true">{state === 'done' ? '✓' : n}</span>
-      <span style={{ minWidth: 0 }}>
-        <span className="vl-step-title">
-          {title}
-          {state === 'done' && <span className="vl-step-tag done">done</span>}
-          {state === 'now' && <span className="vl-step-tag now">next</span>}
-          {state === 'skipped' && <span className="vl-step-tag">skipped</span>}
-        </span>
-        {hint && <span className="vl-step-hint">{hint}</span>}
-        {children}
-      </span>
-      {action && <span className="vl-step-action">{action}</span>}
-    </li>
-  )
-}
-
+// ---------------------------------------------------------------- link status
 const CONNECT_HELP = [
   'Switch on the drone (or the boat) and wait about a minute.',
   'Connect this laptop to the same Wi-Fi network as the drone.',
@@ -115,12 +101,12 @@ function BoatReadiness() {
     tone = !boat.fcConnected || (batt != null && batt < 30) ? 'warn' : 'ok'
     title = !boat.fcConnected ? 'Boat found, not ready' : tone === 'ok' ? 'Boat ready' : 'Boat battery is low'
     text = !boat.fcConnected
-      ? 'Jal Dhara is on, but its flight controller is not answering yet.'
-      : batt == null ? 'Jal Dhara is connected.' : tone === 'ok' ? `Jal Dhara is connected. Battery ${batt}%.` : `Battery ${batt}%. Charge Jal Dhara before you go.`
+      ? 'Nirmal Dhara Jalyan is on, but its flight controller is not answering yet.'
+      : batt == null ? 'Nirmal Dhara Jalyan is connected.' : tone === 'ok' ? `Nirmal Dhara Jalyan is connected. Battery ${batt}%.` : `Battery ${batt}%. Charge Nirmal Dhara Jalyan before you go.`
   } else if (boat?.reachable === false) {
     tone = 'warn'
     title = 'Boat not connected'
-    text = boat.wrongTarget ? "The boat's address points at something that is not the boat." : 'The app keeps trying to reach Jal Dhara.'
+    text = boat.wrongTarget ? "The boat's address points at something that is not the boat." : 'The app keeps trying to reach Nirmal Dhara Jalyan.'
   }
   return (
     <div className={`vl-ready ${tone}`} role="status">
@@ -145,135 +131,78 @@ function BoatReadiness() {
   )
 }
 
-function SimpleStart({ onOpen, onNavigate }) {
-  const user = useUser()
-  const plan = useLivePlan()
-  const mission = useActiveMission()
-  const impact = useImpactStats()
-  const firstTime = !(impact.missionsCompleted > 0)
-  const flying = mission?.status === 'running'
-  const [confirmCancel, setConfirmCancel] = useState(false)
-
-  const step = !user && !plan ? 1 : !plan ? 2 : 3
-  const where = plan && `${plan.river.name}, part ${plan.activeSection} of ${plan.sections}`
-  const go =
-    step === 1 ? { label: 'Sign in to start', sub: 'With Google or a username', run: () => onOpen('login') }
-      : step === 2 ? { label: 'Start a mission', sub: 'Pick a river and the app plans the route', run: () => onOpen('plan-new') }
-        : flying ? { label: 'Watch the flight', sub: where, run: () => onNavigate('live') }
-          : { label: 'Open the map and fly', sub: where, run: () => onNavigate('mission') }
-
+/** Top-right of the hero: Login / Create account, or the signed-in account. */
+function AccountButtons({ user, onOpen }) {
+  if (user) {
+    const name = displayName(user)
+    return (
+      <button type="button" className="vl-glass-btn vl-account-chip" onClick={() => onOpen('login')} aria-label={`Account: ${name}`}>
+        <span className="vl-avatar-sm">{user.picture ? <img src={user.picture} alt="" referrerPolicy="no-referrer" /> : name[0]?.toUpperCase()}</span>
+        <span className="vl-account-name">{name}</span>
+      </button>
+    )
+  }
   return (
     <>
-      <div>
-        <h1 className="vl-greet">{user ? <>Hi, <b>{displayName(user)}</b></> : <>Welcome to <b>VARUNA AI</b></>}</h1>
-        <p className="vl-greet-sub">
-          {firstTime ? 'Your first mission takes three steps.' : 'Three steps to your next mission.'}
-        </p>
-      </div>
-
-      <ol className="vl-steps-list">
-        <Step n={1} title="Sign in" state={user ? 'done' : step === 1 ? 'now' : 'skipped'}
-          hint={user ? `As ${displayName(user)}` : firstTime ? 'So your missions and findings are saved under your name.' : null}
-          action={user
-            ? <button type="button" className="vl-step-btn" onClick={() => logout()}>Sign out</button>
-            : step !== 1 && <button type="button" className="vl-step-btn" onClick={() => onOpen('login')}>Sign in</button>} />
-        <Step n={2} title="Plan a mission" state={plan ? 'done' : step === 2 ? 'now' : 'todo'}
-          hint={plan ? `${plan.river.name} · ${plan.state.name}, ${plan.sections} part${plan.sections > 1 ? 's' : ''}` : firstTime ? 'Pick a state and a river, and say how many parts to split it into. The app plans the route.' : null}
-          // Not while flying: the plan is what this flight is being recorded under.
-          action={plan && !flying && !confirmCancel && <button type="button" className="vl-step-btn" onClick={() => setConfirmCancel(true)}>Cancel plan</button>}>
-          {plan && confirmCancel && (
-            <span className="vl-step-confirm" role="group" aria-label="Cancel this plan?">
-              Cancel this plan? What was already saved stays in My records.
-              <span>
-                <button type="button" className="vl-step-btn danger" onClick={() => { endLivePlan(); setConfirmCancel(false) }}>Yes, cancel it</button>
-                <button type="button" className="vl-step-btn" onClick={() => setConfirmCancel(false)}>Keep it</button>
-              </span>
-            </span>
-          )}
-        </Step>
-        <Step n={3} title={flying ? 'Flying now' : 'Fly it'} state={step === 3 ? 'now' : 'todo'}
-          hint={firstTime ? 'Check the route on the map, then press Save, Send to drone and Start.' : null} />
-      </ol>
-
-      <button type="button" className="vl-go" onClick={go.run}>
-        <span>
-          <span className="vl-go-label">{go.label}</span>
-          {go.sub && <span className="vl-go-sub">{go.sub}</span>}
-        </span>
-        <ChevronRight size={30} />
+      <button type="button" className="vl-glass-btn" onClick={() => onOpen('register')}>Create account</button>
+      <button type="button" className="vl-solid-btn" onClick={() => onOpen('login')}>
+        <UserIcon size={16} /> Login
       </button>
-
-      <div className="vl-quiet-links">
-        {step === 1 && <button type="button" className="vl-link" onClick={() => onOpen('plan-new')}>Skip and plan without signing in</button>}
-        {step === 3 && <button type="button" className="vl-link" onClick={() => onOpen('plan-new')}>Plan a different river</button>}
-        {user && <button type="button" className="vl-link" onClick={() => onOpen('login')}>My account</button>}
-        <button type="button" className="vl-link" onClick={() => onOpen('data')}>My records</button>
-      </div>
-
-      <Readiness />
-      <BoatReadiness />
     </>
   )
 }
 
-export default function HomeLaunchpad({ onOpen, onNavigate, simple = false }) {
+export default function HomeLaunchpad({ onOpen }) {
   const user = useUser()
   const plan = useLivePlan()
+  const toStatus = () => document.getElementById('home-status')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   return (
-    <section className={`vl-launch vh-animate vh-animate-2 ${simple ? 'simple' : ''}`} aria-label="Start">
-      <div className="vl-options">
-        {simple ? (
-          <SimpleStart onOpen={onOpen} onNavigate={onNavigate} />
-        ) : (
-          <>
-            <div>
-              <h1 className="vl-greet">{user ? <>Hi, <b>{displayName(user)}</b></> : <>Welcome to <b>VARUNA AI</b></>}</h1>
-              <p className="vl-greet-sub">
-                {plan ? `Live plan in progress: ${plan.name}, section ${plan.activeSection} of ${plan.sections}.` : 'Drones and AI for cleaner water, greener environment.'}
-              </p>
-            </div>
-            <Option
-              icon={<UserIcon size={30} />}
-              title={user ? 'Account' : 'Login'}
-              sub={user ? `Signed in as ${user.email || user.username}` : 'Google or username & password'}
-              onClick={() => onOpen('login')}
-            />
-            <Option
-              icon={<RouteIcon size={30} />}
-              tone="teal"
-              title="Direct Mission Plan"
-              sub={plan ? 'Continue the live plan, or start a new one' : 'Choose state, river and sections, then plan'}
-              onClick={() => onOpen('plan')}
-            />
-            <Option icon={<DataIcon size={30} />} tone="amber" title="Data" sub="Saved records, CSV files and river list" onClick={() => onOpen('data')} />
-          </>
-        )}
-      </div>
+    <>
+      <section className="vl-hero" aria-label="Welcome">
+        <EcosystemLoop />
+        <div className="vl-hero-scrim" aria-hidden="true" />
 
-      <div className="vl-brand" role="img" aria-label="VARUNA AI drone over a lake">
-        <div className="vl-brand-top">
-          <div className="vl-brand-eyebrow">Welcome to</div>
-          <div className="vl-brand-title">VARUNA AI</div>
-        </div>
-        <div className="vl-brand-art" />
-        <div className="vl-brand-bottom">
-          <span className="vl-brand-bar" />
-          <span className="vl-brand-tag">Cleaner water<br />Greener tomorrow</span>
-        </div>
-      </div>
-    </section>
-  )
-}
+        <header className="vl-hero-bar">
+          <span className="vl-hero-badge"><i className="vl-dot live" aria-hidden="true" />River patrol · live demo</span>
+          <nav className="vl-hero-account" aria-label="Account">
+            <AccountButtons user={user} onOpen={onOpen} />
+          </nav>
+        </header>
 
-/** Simple / Expert switch shown at the top of Home. */
-export function ModeSwitch({ mode, onChange }) {
-  return (
-    <div className="vl-mode" role="radiogroup" aria-label="Home view">
-      {[['simple', 'Simple'], ['expert', 'Expert']].map(([id, label]) => (
-        <button key={id} type="button" role="radio" aria-checked={mode === id} className={mode === id ? 'on' : ''} onClick={() => onChange(id)}>
-          {label}
+        <div className="vl-hero-copy">
+          <div className="vl-hero-eyebrow">Autonomous river cleanup</div>
+          <h1 className="vl-hero-title">
+            {user ? <>Hi, {displayName(user)}</> : <>VARUNA <span className="vl-brand-ai">AI</span></>}
+          </h1>
+          <p className="vl-hero-sub">
+            {plan
+              ? `Live plan in progress: ${plan.name}, section ${plan.activeSection} of ${plan.sections}.`
+              : 'A drone that finds the waste, a boat that collects it. Cleaner water, greener tomorrow.'}
+          </p>
+          <button type="button" className="vl-float-plan" onClick={() => onOpen('plan')}>
+            <span className="vl-float-plan-icon"><RouteIcon size={22} /></span>
+            <span className="vl-float-plan-text">
+              <b>Direct Mission Plan</b>
+              <small>{plan ? 'Continue the live plan, or start a new one' : 'Choose state, river and sections, then plan'}</small>
+            </span>
+            <ChevronRight size={20} />
+          </button>
+        </div>
+
+        <ul className="vl-hero-roles" aria-label="In the video">
+          <li><i className="vl-dot cyan" aria-hidden="true" />Varuna · aerial scout</li>
+          <li><i className="vl-dot saffron" aria-hidden="true" />Nirmal Dhara Jalyan · collector</li>
+        </ul>
+
+        <button type="button" className="vl-hero-scroll" onClick={toStatus}>
+          Status &amp; stats <span aria-hidden="true">↓</span>
         </button>
-      ))}
-    </div>
+      </section>
+
+      <section id="home-status" className="vl-status-row" aria-label="Drone and boat status">
+        <Readiness />
+        <BoatReadiness />
+      </section>
+    </>
   )
 }

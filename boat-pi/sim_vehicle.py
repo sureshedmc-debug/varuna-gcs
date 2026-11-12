@@ -65,6 +65,7 @@ class SimBoat:
         self.reached_sent = set()
         self.rtl_done = False
         self.guided_target = None     # (lat, lng) in GUIDED
+        self.gps_ok = True            # False: the GPS reports no fix (tests of GPS loss)
         self.upload = None            # {"count": n, "items": {}, "next": seq, "last": t}
         # No RC transmitter (driven by a game controller through the Pi): like
         # ArduRover, the only "radio" is RC override. With no receiver, the last
@@ -79,16 +80,27 @@ class SimBoat:
         self.gcs_failsafe = False
         self.params = {"FS_THR_ENABLE": 1.0, "FS_ACTION": 2.0, "FS_TIMEOUT": 1.5, "RC_OVERRIDE_TIME": 3.0,
                        "FS_GCS_ENABLE": 0.0, "FS_GCS_TIMEOUT": 5.0,
-                       # Skid-steer thrusters on outputs 1 (left) and 3 (right).
-                       "SERVO1_FUNCTION": 73.0, "SERVO1_MIN": 1100.0, "SERVO1_TRIM": 1100.0, "SERVO1_MAX": 1900.0,
-                       "SERVO3_FUNCTION": 74.0, "SERVO3_MIN": 1100.0, "SERVO3_TRIM": 1100.0, "SERVO3_MAX": 1900.0,
+                       # As the real boat: the rudder servo on output 1 (GroundSteering, 26) and
+                       # one forward-only motor in the middle on output 3 (Throttle, 70: stopped
+                       # at TRIM = MIN). Set them to 73 / 74 for the older twin-motor skid steering.
+                       "SERVO1_FUNCTION": 26.0, "SERVO1_MIN": 1100.0, "SERVO1_TRIM": 1500.0, "SERVO1_MAX": 1900.0,
+                       "SERVO1_REVERSED": 0.0,
+                       "SERVO3_FUNCTION": 70.0, "SERVO3_MIN": 950.0, "SERVO3_TRIM": 950.0, "SERVO3_MAX": 2000.0,
                        "SERVO2_FUNCTION": 0.0, "SERVO4_FUNCTION": 0.0,
-                       # How the sticks become the two motors (see _skid_mix).
+                       "SERVO5_FUNCTION": 0.0, "SERVO6_FUNCTION": 0.0, "SERVO7_FUNCTION": 0.0, "SERVO8_FUNCTION": 0.0,
+                       "RC5_OPTION": 0.0, "RC6_OPTION": 0.0, "RC7_OPTION": 0.0, "RC8_OPTION": 0.0,
+                       # How the sticks become the motors (see _pilot_mix).
                        "FRAME_CLASS": 2.0, "PILOT_STEER_TYPE": 0.0, "MOT_STR_THR_MIX": 0.5,
                        "RC1_MIN": 1100.0, "RC1_TRIM": 1500.0, "RC1_MAX": 1900.0, "RC1_DZ": 30.0, "RC1_REVERSED": 0.0,
                        "RC3_MIN": 1100.0, "RC3_TRIM": 1500.0, "RC3_MAX": 1900.0, "RC3_DZ": 30.0, "RC3_REVERSED": 0.0}
-        self.motors = (0.0, 0.0)      # left, right: -1…1, what the skid-steer mix sends the thrusters
+        self.motors = (0.0, 0.0)      # left, right (one motor: both the same): -1…1, what goes to the motors
+        self.rudder = 0.0             # steering servo -1 (left) … 1 (right)
         self.servo_out = {}           # output → PWM set by DO_SET_SERVO
+        # Per-channel RC overrides {channel: (µs, time)}, and the transmitter's
+        # switches {channel: µs} (none with no transmitter). An output whose
+        # SERVOn_FUNCTION is 51…66 (RCIN1…16) passes its channel through.
+        self.rc_over = {}
+        self.tx = {} if no_transmitter else {ch: 1100 for ch in range(5, 17)}
         self.motor_tests = []         # (motor seq, PWM, seconds) from DO_MOTOR_TEST
         # Tests can start the simulated Pixhawk with other values, e.g. '{"FS_ACTION": 0}'.
         try:
@@ -170,6 +182,33 @@ class SimBoat:
         v = max(-1.0, min(1.0, v))
         return -v if p[f"RC{ch}_REVERSED"] else v
 
+    def _skid(self):
+        """Twin-motor skid steering (outputs set to 73 / 74), else one motor + a steering servo."""
+        fns = {self.params.get(f"SERVO{n}_FUNCTION", 0.0) for n in range(1, 9)}
+        return 70.0 not in fns and bool(fns & {73.0, 74.0})
+
+    def _forward_only(self):
+        """The throttle ESC has no reverse: its stopped point (TRIM) is its minimum."""
+        p = self.params
+        for n in range(1, 9):
+            if p.get(f"SERVO{n}_FUNCTION") == 70.0:
+                return p[f"SERVO{n}_TRIM"] <= p[f"SERVO{n}_MIN"]
+        return False
+
+    def _pilot_mix(self):
+        """ArduRover MANUAL: (left, right, rudder). One motor + steering servo:
+        throttle stick → motor (none below stopped on a forward-only ESC),
+        steering stick → servo. Twin motors: the skid-steer mix."""
+        if self._skid():
+            return (*self._skid_mix(), 0.0)
+        fresh = self.no_rc or time.time() - self.rc["t"] <= self.params["RC_OVERRIDE_TIME"]
+        if not fresh:
+            return 0.0, 0.0, 0.0
+        thr, steer = self._norm_dz(3, self.rc["thr"]), self._norm_dz(1, self.rc["steer"])
+        if self._forward_only():
+            thr = max(0.0, thr)
+        return thr, thr, steer
+
     def _skid_mix(self):
         """ArduRover MANUAL with skid steering (mode.cpp get_pilot_input +
         AP_MotorsUGV::output_skid_steering): (left, right) motor commands, -1…1.
@@ -193,19 +232,31 @@ class SimBoat:
         """The µs on output n, like SRV_Channel: trim ± the motor command over the range."""
         p = self.params
         fn = p.get(f"SERVO{n}_FUNCTION", 0.0)
-        if fn in (73.0, 74.0):
-            v = self.motors[0] if fn == 73.0 else self.motors[1]
+        if fn in (70.0, 73.0, 74.0, 26.0):
+            v = self.rudder if fn == 26.0 else self.motors[1] if fn == 74.0 else self.motors[0]
+            if fn == 26.0 and p.get(f"SERVO{n}_REVERSED"):
+                v = -v
             tr = p[f"SERVO{n}_TRIM"]
             return int(round(tr + v * ((p[f"SERVO{n}_MAX"] - tr) if v >= 0 else (tr - p[f"SERVO{n}_MIN"]))))
+        if 51.0 <= fn <= 66.0:
+            return self.rc_in(int(fn) - 50)
         return int(self.servo_out.get(n, 0))
+
+    def rc_in(self, ch):
+        """What the Pixhawk sees on RC channel ch: a fresh override, else the
+        transmitter; with no receiver the last override stays in force."""
+        got = self.rc_over.get(ch)
+        if got and (self.no_rc or time.time() - got[1] <= self.params["RC_OVERRIDE_TIME"]):
+            return int(got[0])
+        return int(self.tx.get(ch, 0))
 
     def _send_telemetry(self):
         self.m.mav.power_status_send(self._board_mv(), 5000, 0)
         if not self.armed:
-            self.motors = (0.0, 0.0)
+            self.motors, self.rudder = (0.0, 0.0), 0.0
         elif MODE_NAMES.get(self.mode) != "MANUAL":
             v = max(-1.0, min(1.0, self.speed / MANUAL_MAX_MPS))   # autopilot modes: both thrusters alike
-            self.motors = (v, v)
+            self.motors, self.rudder = (v, v), 0.0
         self.m.mav.servo_output_raw_send(int(time.time() * 1e6) & 0xFFFFFFFF, 0,
                                          *[self._output_pwm(n) for n in range(1, 9)])
         vn = self.speed * math.cos(math.radians(self.heading))
@@ -213,7 +264,7 @@ class SimBoat:
         t_ms = int(time.time() * 1000) & 0xFFFFFFFF
         self.m.mav.global_position_int_send(t_ms, int(self.lat * 1e7), int(self.lng * 1e7), 0, 0,
                                             int(vn * 100), int(ve * 100), 0, int(self.heading * 100) % 36000)
-        self.m.mav.gps_raw_int_send(t_ms * 1000, 3, int(self.lat * 1e7), int(self.lng * 1e7), 0, 90, 120,
+        self.m.mav.gps_raw_int_send(t_ms * 1000, 3 if self.gps_ok else 1, int(self.lat * 1e7), int(self.lng * 1e7), 0, 90, 120,
                                     int(self.speed * 100), int(self.heading * 100) % 36000, 12)
         pct = max(0, min(100, int((self.battery - 10.5) / 2.1 * 100)))
         self.m.mav.sys_status_send(0, 0, 0, 200, int(self.battery * 1000), 150, pct, 0, 0, 0, 0, 0, 0)
@@ -280,6 +331,22 @@ class SimBoat:
             if msg.chan3_raw not in (0, 65535):
                 self.rc["thr"] = msg.chan3_raw
             self.rc["t"] = time.time()
+            now = time.time()
+            for ch in range(1, 17):
+                v = getattr(msg, f"chan{ch}_raw", 0) or 0
+                if ch <= 8:
+                    if v == 65535:
+                        continue
+                    if v == 0:
+                        self.rc_over.pop(ch, None)          # back to the radio
+                        continue
+                else:
+                    if v in (0, 65535):
+                        continue
+                    if v == 65534:
+                        self.rc_over.pop(ch, None)
+                        continue
+                self.rc_over[ch] = (v, now)
         elif t == "PARAM_REQUEST_READ":
             name = msg.param_id
             if name in self.params:
@@ -452,11 +519,16 @@ class SimBoat:
                 self.speed = 0.0
             return
         if name == "MANUAL":
-            # The sticks, mixed into the two thrusters as ArduRover does (_skid_mix).
-            # With no receiver the last override stays in force once it times out.
-            self.motors = left, right = self._skid_mix()
+            # The sticks, as ArduRover sends them to the motor(s) and the rudder
+            # (_pilot_mix). With no receiver the last override stays in force.
+            left, right, self.rudder = self._pilot_mix()
+            self.motors = (left, right)
             self.speed = MANUAL_MAX_MPS * 0.5 * (left + right)
-            self.heading = (self.heading + TURN_RATE * dt * (left - right)) % 360
+            if self._skid():
+                turn = left - right
+            else:                                  # a rudder only steers with water flowing past it
+                turn = self.rudder * min(1.0, abs(self.speed) / (0.5 * MANUAL_MAX_MPS))
+            self.heading = (self.heading + TURN_RATE * dt * turn) % 360
             step = self.speed * dt
             self.lat, self.lng = _offset(self.lat, self.lng, step * math.cos(math.radians(self.heading)),
                                          step * math.sin(math.radians(self.heading)))

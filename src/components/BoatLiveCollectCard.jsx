@@ -97,7 +97,9 @@ export function BoatLiveCollectCard() {
             <>
               {PHASE_TEXT[live.phase] || 'Starting…'}
               {cur && <b className="text-ink"> {cur.number}{Number.isFinite(cur.distance_m) ? ` · ${Math.round(cur.distance_m)} m` : ''}</b>}
-              {' · roller '}<b style={{ color: live.roller ? GREEN : undefined }} className={live.roller ? '' : 'text-ink'}>{live.roller ? 'ON' : 'off'}</b>
+              {live.collector_kind === 'scoop'
+                ? <>{' · scoop '}<b className="text-ink">{live.roller ? 'extreme' : '0'}</b> (R1)</>
+                : <>{' · roller '}<b style={{ color: live.roller ? GREEN : undefined }} className={live.roller ? '' : 'text-ink'}>{live.roller ? 'ON' : 'off'}</b></>}
             </>
           )}
         </div>
@@ -151,7 +153,7 @@ export function BoatLiveCollectCard() {
       </div>
 
       {!active && !gpsOk && <div className="mt-1.5 text-[10.5px] text-warn">Needs a GPS fix on the boat (GUIDED mode).</div>}
-      {!live.roller_output && <div className="mt-1.5 text-[10.5px] text-muted">No intake-roller output set yet (collector_servo): the roller isn&apos;t switched.</div>}
+      {!live.roller_output && live.collector_kind !== 'scoop' && <div className="mt-1.5 text-[10.5px] text-muted">No intake-roller output set yet (collector_servo): the roller isn&apos;t switched.</div>}
 
       {(live.events || []).length > 0 && (
         <div className="mt-2 flex flex-col gap-0.5">

@@ -42,7 +42,7 @@ def main():
     col.subprocess.run = fake_run
     print("Relay roller")
     link = FakeLink()
-    cfg = {"collector_servo": 2, "collector_pwm_on": 1800, "collector_pwm_off": 1500,
+    cfg = {"collector_kind": "roller", "collector_servo": 2, "collector_pwm_on": 1800, "collector_pwm_off": 1500,
            "collector_relay_gpio": 17, "collector_relay_active_low": True, "live_roller_on_m": 5}
     c = col.Collector(link, cfg)
     c._tick()

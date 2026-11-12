@@ -27,15 +27,36 @@ the same time.
 
 Everything that commands the Pixhawk runs in one thread (`_tick`); the web
 handlers only change the queue and the state.
+
+Drone-to-boat visual collection: each target is the drone's detection record
+(id, position, object_class, confidence, timestamp and a reference crop of
+the item), and carries a workflow `state` next to the queue `status`:
+
+    DETECTED -> SENT -> NAVIGATING -> SEARCHING -> MATCHED -> APPROACHING ->
+    COLLECTING -> VERIFYING -> COLLECTED   (or NOT_FOUND / RETRY_REQUIRED)
+
+DETECTED (drone, with its timestamp) and SENT (arrived on the boat) are
+recorded when it arrives; NAVIGATING while the boat drives to the GPS point;
+the camera states are set by the homing in vision.py, which compares what the
+camera sees with the reference crop (target_match.py), verifies the pick-up
+and re-tries a failed one up to collect_max_retries times. Every transition
+is logged and kept in the target's `history`. `status` (pending / active /
+collected / missed) stays as the app's queue view.
+
+GPS lost for gps_lost_hold_s: the boat holds (HOLD) and carries on by itself
+once the fix has been back for a few seconds.
 """
 
+import hashlib
 import json
 import logging
 import math
+import re
 import threading
 import time
 from collections import deque
 
+import target_match
 from mav_link import LinkError, haversine_m
 
 log = logging.getLogger("boat.live")
@@ -45,6 +66,10 @@ GOTO_EVERY_S = 2.0          # re-send the GUIDED target (in case one was lost)
 MODE_GRACE_S = 3.0          # after our own mode change, before the reported mode must match
 STATES = ("off", "running", "paused", "returning")
 ACTIVE = ("pending", "active")
+WORKFLOW = ("DETECTED", "SENT", "NAVIGATING", "SEARCHING", "MATCHED", "APPROACHING", "COLLECTING",
+            "VERIFYING", "COLLECTED", "NOT_FOUND", "RETRY_REQUIRED", "SKIPPED")
+FINAL = ("COLLECTED", "NOT_FOUND", "RETRY_REQUIRED", "SKIPPED")
+GPS_BACK_S = 3.0            # the fix must be back this long before carrying on
 
 
 def _offset(lat, lng, north_m, east_m):
@@ -86,6 +111,9 @@ class LiveCollect:
         self._through = None
         self._empty_since = None
         self._camera_tried = set()           # items the camera homing already had a go at
+        self._gps_bad_since = None
+        self._gps_ok_since = None
+        self.ref_dir = data_dir / "targets"  # the drone's reference crops, one JPEG per target
         self._load()
         self._stop = threading.Event()
         self._thread = None
@@ -98,6 +126,12 @@ class LiveCollect:
             for t in data.get("targets", []):
                 if t.get("status") == "active":
                     t["status"] = "pending"
+                t.setdefault("retry_count", 0)
+                t.setdefault("history", [])
+                if not t.get("state"):
+                    t["state"] = {"collected": "COLLECTED", "missed": "NOT_FOUND"}.get(t.get("status"), "SENT")
+                elif t["state"] not in FINAL:
+                    t["state"] = "SENT"     # was on its way when the Pi stopped: queued again
                 self.targets[t["id"]] = t
         except (OSError, ValueError, KeyError, TypeError):
             pass
@@ -121,6 +155,66 @@ class LiveCollect:
     def _event(self, text, level="info"):
         self.events.append({"t": round(time.time(), 1), "text": text, "level": level})
         (log.warning if level == "warn" else log.info)("Live collect: %s", text)
+
+    # ------------------------------------------------------------------ workflow state
+    def _set_state(self, t, state, note=None, at=None):
+        """Lock held. Move a target to a workflow state; every transition is logged."""
+        prev = t.get("state")
+        if prev == state and not note:
+            return
+        t["state"] = state
+        h = t.setdefault("history", [])
+        h.append({"t": round(at or time.time(), 2), "state": state, **({"note": note} if note else {})})
+        del h[:-40]
+        log.info("Target %s: %s -> %s%s", t["id"], prev or "-", state, f" ({note})" if note else "")
+
+    def target_state(self, tid, state, note=None, **fields):
+        """For vision.py: the camera homing moved a target on (SEARCHING, MATCHED...)."""
+        with self._lock:
+            t = self.targets.get(tid)
+            if t is None or t.get("state") in FINAL:
+                return
+            t.update(fields)
+            self._set_state(t, state, note)
+
+    def target_info(self, tid):
+        """What the camera homing needs to recognise a target."""
+        with self._lock:
+            t = self.targets.get(tid)
+            if t is None:
+                return None
+            p = self.reference_path(tid)
+            return {"id": tid, "lat": t["lat"], "lng": t["lng"], "object_class": t.get("object_class"),
+                    "confidence": t.get("confidence"), "retry_count": t.get("retry_count", 0),
+                    "reference_path": str(p) if p else None}
+
+    # ------------------------------------------------------------------ reference crops
+    def _ref_file(self, tid):
+        safe = re.sub(r"[^A-Za-z0-9_.-]", "_", tid)[:60]
+        return self.ref_dir / f"{safe}-{hashlib.md5(tid.encode()).hexdigest()[:8]}.jpg"
+
+    def reference_path(self, tid):
+        p = self._ref_file(str(tid))
+        return p if p.exists() else None
+
+    def _save_reference(self, tid, data):
+        raw = target_match.decode_b64(data)
+        if not raw or not (raw[:2] == b"\xff\xd8" or raw[:4] == b"\x89PNG"):
+            return False
+        try:
+            self.ref_dir.mkdir(parents=True, exist_ok=True)
+            self._ref_file(tid).write_bytes(raw)
+            return True
+        except OSError as exc:
+            log.warning("Could not save the reference image of %s: %s", tid, exc)
+            return False
+
+    def _drop_references(self, tids):
+        for tid in tids:
+            try:
+                self._ref_file(tid).unlink()
+            except OSError:
+                pass
 
     # ------------------------------------------------------------------ lifecycle
     def start_thread(self):
@@ -151,15 +245,22 @@ class LiveCollect:
             for it in items or []:
                 try:
                     tid = str(it["id"])[:80]
-                    lat, lng = float(it["lat"]), float(it["lng"])
+                    lat = float(it["lat"] if it.get("lat") is not None else it["latitude"])
+                    lng = float(it["lng"] if it.get("lng") is not None else it["longitude"])
                 except (KeyError, TypeError, ValueError):
                     rejected.append({"id": str(it.get("id")) if isinstance(it, dict) else None, "reason": "no position"})
                     continue
                 if not (-90 <= lat <= 90 and -180 <= lng <= 180) or (lat == 0 and lng == 0) or not tid:
                     rejected.append({"id": tid, "reason": "invalid position"})
                     continue
+                cls = str(it.get("object_class") or it.get("label") or "")[:40] or None
+                ref_img = it.get("reference_image")
                 t = self.targets.get(tid)
                 if t is not None:
+                    if cls and not t.get("object_class"):
+                        t["object_class"] = cls
+                    if ref_img and not t.get("has_reference") and self._save_reference(tid, ref_img):
+                        t["has_reference"] = True
                     if t["status"] in ACTIVE and haversine_m(t["lat"], t["lng"], lat, lng) > 0.3:
                         t["lat"], t["lng"] = lat, lng   # the app refined the spot (more drone sightings)
                         updated.append(tid)
@@ -177,13 +278,28 @@ class LiveCollect:
                     merged.append({"id": tid, "into": twin["id"]})
                     twin.setdefault("aliases", []).append(tid)
                     continue
-                self.targets[tid] = {
+                try:
+                    detected_at = float(it["timestamp"]) if it.get("timestamp") is not None else None
+                    if detected_at and detected_at > 1e11:
+                        detected_at /= 1000.0           # the app's milliseconds
+                except (TypeError, ValueError):
+                    detected_at = None
+                t = self.targets[tid] = {
                     "id": tid, "lat": lat, "lng": lng, "status": "pending", "how": None,
                     "source": str(it.get("source") or "app")[:20], "confidence": it.get("confidence"),
+                    "object_class": cls, "detected_at": detected_at,
+                    "has_reference": bool(ref_img) and self._save_reference(tid, ref_img),
                     "added_at": round(time.time(), 1), "done_at": None,
+                    "state": None, "retry_count": 0, "match_score": None, "verified": None, "history": [],
                 }
+                conf = it.get("confidence")
+                self._set_state(t, "DETECTED", f"drone: {cls or 'plastic'}"
+                                + (f", {float(conf):.2f}" if isinstance(conf, (int, float)) else ""),
+                                at=detected_at)
+                self._set_state(t, "SENT", "received by the boat"
+                                + (", with the drone's image" if t["has_reference"] else ""))
                 added.append(tid)
-                new_points.append({"id": tid, "lat": lat, "lng": lng})
+                new_points.append({"id": tid, "lat": lat, "lng": lng, "object_class": cls})
             if added or updated:
                 self._save()
             if added:
@@ -200,7 +316,9 @@ class LiveCollect:
             if self.state in ("running", "returning") and not done_only:
                 raise LinkError("Pause or stop live collect before clearing its queue.")
             before = len(self.targets)
-            self.targets = {k: v for k, v in self.targets.items() if done_only and v["status"] in ACTIVE}
+            keep = {k: v for k, v in self.targets.items() if done_only and v["status"] in ACTIVE}
+            self._drop_references([k for k in self.targets if k not in keep])
+            self.targets = keep
             if not done_only:
                 self.current = None
             self._save()
@@ -213,8 +331,24 @@ class LiveCollect:
                 raise LinkError("That item isn't waiting to be collected.")
             if tid == self.current and self.phase == "camera":
                 raise LinkError("The camera is homing onto it right now — wait a moment.")
-            self._finish(t, False, "skipped")
+            self._finish(t, False, "skipped", state="SKIPPED")
             return "Skipped."
+
+    def retry(self, tid):
+        """Put a target that wasn't collected (NOT_FOUND / RETRY_REQUIRED / skipped) back in the queue."""
+        with self._lock:
+            t = self.targets.get(str(tid))
+            if t is None:
+                raise LinkError("No such item.")
+            if t["status"] in ACTIVE:
+                return "It is already waiting to be collected."
+            if t["status"] == "collected":
+                raise LinkError("That item was collected.")
+            t["status"], t["how"], t["done_at"], t["retry_count"] = "pending", None, None, 0
+            self._camera_tried.discard(t["id"])
+            self._set_state(t, "SENT", "retry requested")
+            self._save()
+            return "Back in the queue."
 
     # ------------------------------------------------------------------ start / pause / stop
     def start(self, when_empty="wait", speed_mps=None):
@@ -289,6 +423,7 @@ class LiveCollect:
         t = self.targets.get(self.current) if self.current else None
         if t is not None and t["status"] == "active":
             t["status"] = "pending"
+            self._set_state(t, "SENT", f"paused: {reason}")
         self.current, self.phase = None, None
         self._set_roller(False)
         self._event(f"Paused ({reason})", "warn")
@@ -300,6 +435,7 @@ class LiveCollect:
             t = self.targets.get(self.current) if self.current else None
             if t is not None and t["status"] == "active":
                 t["status"] = "pending"
+                self._set_state(t, "SENT", "live collect stopped")
             self.current, self.phase = None, None
             self._set_roller(False)
             self.state, self.reason = "off", "stopped"
@@ -328,22 +464,28 @@ class LiveCollect:
             self._set_roller(True)
             return t["id"], t["lat"], t["lng"]
 
-    def homing_finished(self, tid, collected, how):
-        """The camera homing is done with an item: collected, or missed (the camera
-        never saw it near the drone's position, or nothing came up the ramp)."""
+    def homing_finished(self, tid, collected, how, state=None, verified=None, note=None, **fields):
+        """The camera homing is done with an item: COLLECTED (counted on the ramp,
+        or verified gone from the spot), NOT_FOUND (the camera never saw it near
+        the drone's position) or RETRY_REQUIRED (pick-up failed too often)."""
         with self._lock:
             t = self.targets.get(tid)
             if t is None:
                 return
-            self._finish(t, bool(collected), (how or "camera") if collected else "missed")
+            t.update(fields)
+            self._finish(t, bool(collected), (how or "camera") if collected else "missed",
+                         state=state, verified=verified, note=note)
             self._t_goto = 0.0
 
-    def homing_aborted(self, tid):
+    def homing_aborted(self, tid, why="camera homing stopped"):
         """The homing stopped without an answer (camera link lost): carry on by GPS."""
         with self._lock:
             if tid == self.current and self.phase == "camera":
                 self.phase = "approach"
                 self._t_goto = 0.0
+                t = self.targets.get(tid)
+                if t is not None:
+                    self._set_state(t, "NAVIGATING", f"{why} - going on by GPS")
 
     def item_number(self, tid):
         for i, k in enumerate(self.targets, 1):
@@ -372,10 +514,13 @@ class LiveCollect:
         if self.collector is not None:
             self.collector.auto(on)
 
-    def _finish(self, t, collected, how):
+    def _finish(self, t, collected, how, state=None, verified=None, note=None):
         t["status"] = "collected" if collected else "missed"
         t["how"] = how
         t["done_at"] = round(time.time(), 1)
+        if verified is not None:
+            t["verified"] = bool(verified)
+        self._set_state(t, state or ("COLLECTED" if collected else "NOT_FOUND"), note or how)
         if t["id"] == self.current:
             self.current, self.phase = None, None
         self._save()
@@ -399,6 +544,14 @@ class LiveCollect:
             if not s["armed"]:
                 self._pause("the boat was disarmed")
                 return
+            gps_ok = s["lat"] is not None and (s.get("gps_fix") or 0) >= 3
+            if gps_ok:
+                self._gps_bad_since = None
+            elif self._gps_bad_since is None:
+                self._gps_bad_since = now
+            if self.phase == "gps_lost":
+                self._gps_wait(now, s, gps_ok)
+                return
             owner = self.vision.owner() if self.vision is not None else None
             if owner == "homing" and self.phase == "camera":
                 return                       # the camera homing is steering onto the current item
@@ -417,8 +570,10 @@ class LiveCollect:
                 if now - self._t_mode > MODE_GRACE_S:
                     self._pause(f"mode changed to {mode}")
                 return
-            if s["lat"] is None:
-                return
+            if not gps_ok:
+                if self.state == "running" and now - self._gps_bad_since >= self.cfg["gps_lost_hold_s"]:
+                    self._gps_lost(now)
+                return                       # never steer on a bad position
             boat = (s["lat"], s["lng"])
             t = self.targets.get(self.current) if self.current else None
             if t is None or t["status"] not in ACTIVE:
@@ -433,6 +588,7 @@ class LiveCollect:
                 self._t_goto = 0.0
                 self._empty_since = None
                 d = haversine_m(*boat, t["lat"], t["lng"])
+                self._set_state(t, "NAVIGATING", f"{d:.0f} m away")
                 self._event(f"Heading to item {self.item_number(t['id'])} ({d:.0f} m)")
             d = haversine_m(*boat, t["lat"], t["lng"])
             t["distance_m"] = round(d, 1)
@@ -445,7 +601,7 @@ class LiveCollect:
                 elif d > self.cfg["live_roller_on_m"] + 3:
                     self._set_roller(False)
                 if now - self._t_target > self.cfg["live_target_timeout_s"]:
-                    self._finish(t, False, "missed")
+                    self._finish(t, False, "missed", state="RETRY_REQUIRED", note="not reached in time")
                     self._event("…it took too long to reach", "warn")
                     return
                 if d <= self.cfg["live_arrive_m"]:
@@ -455,6 +611,7 @@ class LiveCollect:
                                             k * math.sin(math.radians(brg)))
                     self._set_roller(True)
                     self.phase, self._t_phase = "through", now
+                    self._set_state(t, "COLLECTING", "GPS only: driving through the spot")
                     self._goto(*self._through, now)
                 elif now - self._t_goto > GOTO_EVERY_S:
                     self._goto(t["lat"], t["lng"], now)
@@ -463,13 +620,55 @@ class LiveCollect:
                 if haversine_m(*boat, *self._through) < 0.6 or now - self._t_phase > 8.0:
                     self._goto(*boat, now)               # stop here while the ramp brings it up
                     self.phase, self._t_phase = "dwell", now
+                    self._set_state(t, "VERIFYING", "waiting for the catch counter")
                 return
             if self.phase == "dwell":
                 caught = self.vision is not None and self.vision.last_catch_t >= self._t_phase - 2.0
                 if caught:
-                    self._finish(t, True, "camera")
+                    self._finish(t, True, "camera", verified=True, note="counted on the ramp")
                 elif now - self._t_phase >= self.cfg["live_dwell_s"]:
-                    self._finish(t, True, "gps")
+                    self._finish(t, True, "gps", verified=False, note="drove through the spot (not seen)")
+
+    def _gps_lost(self, now):
+        """Lock held. No GPS fix for gps_lost_hold_s: hold until it is back."""
+        self._t_mode = now
+        try:
+            self.link.set_mode("HOLD")
+        except LinkError as exc:
+            self._event(f"GPS lost, and HOLD failed: {exc}", "warn")
+            return
+        t = self.targets.get(self.current) if self.current else None
+        if t is not None and t["status"] == "active":
+            self._set_state(t, "NAVIGATING", "GPS lost - holding")
+        self.phase, self._gps_ok_since = "gps_lost", None
+        self._set_roller(False)
+        self._event("GPS fix lost - holding until it is back", "warn")
+
+    def _gps_wait(self, now, s, gps_ok):
+        """Lock held. Holding for the GPS: carry on once the fix has been back GPS_BACK_S."""
+        if s["flight_mode"] != "HOLD" and now - self._t_mode > MODE_GRACE_S:
+            self._pause(f"mode changed to {s['flight_mode']}")
+            return
+        if not gps_ok:
+            self._gps_ok_since = None
+            return
+        self._gps_ok_since = self._gps_ok_since or now
+        if now - self._gps_ok_since < GPS_BACK_S:
+            return
+        try:
+            self._t_mode = now
+            self.link.set_mode("GUIDED")
+            self.link.set_speed(self._speed())
+        except LinkError as exc:
+            self._event(f"GPS back, but GUIDED failed: {exc}", "warn")
+            return
+        t = self.targets.get(self.current) if self.current else None
+        self.phase = "approach" if t is not None and t["status"] == "active" else None
+        if t is not None and self.phase:
+            self._t_target = now             # the time spent holding doesn't count
+            self._set_state(t, "NAVIGATING", "GPS back")
+        self._t_goto = 0.0
+        self._event("GPS fix back - carrying on")
 
     def _idle(self, now, boat, s):
         """Nothing left to collect: stop and hold here (GUIDED to our own spot), or go home."""
@@ -500,15 +699,36 @@ class LiveCollect:
             out = {
                 "state": self.state, "reason": self.reason, "phase": self.phase, "when_empty": self.when_empty,
                 "roller": self.roller, "roller_output": self.collector.output if self.collector else 0,
+                "collector_kind": ("scoop" if self.collector.scoop else "roller") if self.collector else None,
                 "counts": counts, "started_at": self.started_at,
                 "current": None if cur is None else {"id": cur["id"], "lat": cur["lat"], "lng": cur["lng"],
                                                      "number": self.item_number(cur["id"]),
-                                                     "distance_m": cur.get("distance_m")},
+                                                     "distance_m": cur.get("distance_m"),
+                                                     "state": cur.get("state"),
+                                                     "object_class": cur.get("object_class"),
+                                                     "retry_count": cur.get("retry_count", 0),
+                                                     "match_score": cur.get("match_score")},
+                "states": {k: n for k in WORKFLOW
+                           if (n := sum(1 for t in ts if t.get("state") == k))},
                 # ids the app marks as collected (with the aliases merged into them)
                 "collected": [i for t in ts if t["status"] == "collected" for i in [t["id"], *t.get("aliases", [])]],
                 "events": list(self.events)[-6:],
             }
             if full:
-                out["targets"] = [{k: t.get(k) for k in ("id", "lat", "lng", "status", "how", "source",
-                                                         "added_at", "done_at", "distance_m")} for t in ts]
+                out["targets"] = [self._view(t) for t in ts]
             return out
+
+    @staticmethod
+    def _view(t, history=False):
+        v = {k: t.get(k) for k in ("id", "lat", "lng", "status", "how", "source", "added_at", "done_at",
+                                   "distance_m", "state", "object_class", "confidence", "detected_at",
+                                   "retry_count", "match_score", "verified", "has_reference")}
+        v["latitude"], v["longitude"], v["timestamp"] = t["lat"], t["lng"], t.get("detected_at")
+        if history:
+            v["history"] = list(t.get("history") or [])
+        return v
+
+    def target_detail(self, tid):
+        with self._lock:
+            t = self.targets.get(str(tid))
+            return None if t is None else self._view(t, history=True)

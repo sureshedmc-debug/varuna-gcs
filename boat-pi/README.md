@@ -128,6 +128,24 @@ the Pixhawk) and restarts the Pixhawk (`POST /api/pixhawk/reboot`).
 | `FS_ACTION` | 2 | Failsafe = Hold (stop) |
 | `FENCE_ENABLE` | 1 | Draw a fence around the water so the boat can never reach the bank |
 
+### Drive: one motor in the middle, steered by a rudder servo
+
+The boat has **one** forward-only motor in the middle and a **rudder servo**
+(it was a twin-motor skid-steer boat until 2026-11-06). The Pixhawk outputs:
+
+| MAIN OUT | `SERVOn_FUNCTION` | MIN / TRIM / MAX | What |
+|---|---|---|---|
+| 1 | 26 GroundSteering | 1100 / 1500 / 1900 | Rudder servo: 1500 = straight. Wrong way? `SERVO1_REVERSED` 1 |
+| 2 | 0 (the Pi drives it) | 1000 / 1000 / 2000 | Collector scoop servo (R1) |
+| 3 | 70 Throttle | 950 / 950 / 2000 | The motor's ESC. Forward-only: **TRIM = MIN = stopped**, so pulling the stick back never reverses |
+
+Saved before the change: `pixhawk/boat_pixhawk_backup_2026-11-06.param` (twin
+motors); after: `pixhawk/boat_pixhawk_single_motor_2026-11-06.param`. A rudder
+only steers with water flowing past it: the boat can't turn on the spot any
+more. Motor matching (Boat tab) and ESC calibration now work on the one motor
+(function 70) and never touch the rudder servo; the older 73 / 74 twin-motor
+setup still works.
+
 ### Driving by hand with a game controller (no RC transmitter)
 
 Set `"rc_source": "gamepad"` (the Boat Pi Tool asks in Full setup, or use its
@@ -137,12 +155,21 @@ drives the boat through the VARUNA app (Boat tab → Game controller):
 | Control | Does |
 |---|---|
 | Left stick up / down | Throttle (forward / reverse), up to the throttle limit (`gamepad_max_throttle`, 60 %) |
-| Right stick left / right | Steering |
-| A / B / X / Y | MANUAL (drive) / HOLD (stop) / resume mission / return home |
-| Hold START / BACK 1 s | Arm / disarm |
-| R1 (RB) | Intake roller run / stop |
+| Right stick left / right | Steering (the rudder servo) |
+| A / B / X / Y (PS2: ✕ ○ □ △) | MANUAL (drive) / HOLD (stop) / resume mission / return home |
+| Hold START / BACK (PS2: SELECT) 1 s | Arm / disarm |
+| R1 (RB) | Collector scoop: to its extreme position / back to 0 (the old roller: run / stop) |
 | L1 + R1 together | **Brake**: motors stop and the boat disarms at once (force-disarm), then roller off and HOLD |
 | MODE (HOME / GUIDE) | Next flight mode: MANUAL → ACRO → (LOITER with a GPS fix) → HOLD |
+| D-pad left / right | Servo 1 / servo 2 on / off (see **Two extra servos**) |
+
+**PS2 controller (on a USB adapter) or any pad without the standard layout:**
+its buttons are numbered its own way. In the app, Boat tab → Game controller →
+**Set up buttons**, then do what it asks: left stick up, right stick right, R1,
+L1, START, SELECT, ✕ ○ □ △, D-pad ◀ ▶ ▼ (MODE can be skipped). It is remembered
+for that controller on that PC. While it runs, the boat only gets centred
+sticks and no button does anything. On a PS2 pad press **ANALOG** first (red
+light on), or the sticks send nothing. "Standard" forgets it again.
 
 Pixhawk parameters for driving with no transmitter (set on the VARUNA boat):
 
@@ -347,7 +374,27 @@ collect → Start**. It needs a GPS fix on the boat (GUIDED mode).
   off.
 - **The roller** (`collector.py`): see below.
 
-## Intake roller
+## Collector scoop (digital servo)
+
+The default collector (`collector_kind` `"scoop"`): a digital servo tipping the
+scoop, on a free Pixhawk MAIN OUT (`collector_servo`, e.g. 2 where the belt ESC
+was; its `SERVOn_FUNCTION` must be 0).
+
+- It starts at its **0 position** (`scoop_pwm_zero`, 1000 µs).
+- **R1** (or the Boat tab's *To extreme* / *Back to 0* button, `POST /api/collector`)
+  sends it to its **extreme** (`scoop_pwm_extreme`, 2000 µs); R1 again brings it
+  back to 0, and so on.
+- Nothing else moves it: no automation near items, and disarm / brake /
+  emergency stop leave it where it is. A relay pin set for the old belt is ignored.
+- Set the output and both positions with the Boat Pi Tool, **15. Collector scoop
+  servo** (500–2500 µs; don't drive the scoop against a stop — the servo stalls).
+  Power the servo from its own 5–6 V BEC.
+
+```
+python test_scoop.py          # 0 at start, R1 → extreme, R1 → 0, never moves by itself
+```
+
+## Intake roller (`collector_kind` "roller")
 
 **Relay module on the Pi** (the VARUNA boat: `collector_relay_gpio` 17). The Pi
 switches it with `pinctrl`. Wiring, on the Pi's header:
@@ -384,6 +431,35 @@ python test_live_collect.py   # queue, nearest first, roller, operator pause, re
 python test_relay.py          # the relay: on / off, off at start and shutdown, disarm, active-high
 ```
 
+## Two extra servos
+
+Two two-position servos (gates, flaps, an arm) on Pixhawk outputs 6 and 7,
+worked from the RC transmitter **or** the app (Boat tab → Servos, or the
+controller's D-pad ◀ / ▶). Each output passes an RC channel straight through:
+
+| Servo | Output | Channel | Parameter |
+|---|---|---|---|
+| 1 | 6 | 6 | `SERVO6_FUNCTION 56` (RCIN6) |
+| 2 | 7 | 7 | `SERVO7_FUNCTION 57` (RCIN7) |
+
+The Boat tab's **Set up the outputs** button sets these (disarmed only; it
+never takes an output that already has a function, or the roller's). The
+channels must have no switch function (`RC6_OPTION` / `RC7_OPTION` 0). Restart
+the Pixhawk if an output doesn't move after the change.
+
+* **Transmitter** (`rc_source "transmitter"`): put a 2-position switch on
+  channels 6 and 7; it moves the servos with the Pi doing nothing. Moving one
+  from the app overrides that channel only (the sticks stay with the
+  transmitter), and the app keeps it until you **Give back** (D-pad ▼), or the
+  app has been gone `servo_app_lost_s` (10 s). Then it goes to wherever the switch is.
+* **No transmitter** (`rc_source "gamepad"`): the Pi sends both servo channels
+  with the sticks; they start off and stay where you put them.
+
+Settings: `servoN_name`, `servoN_output`, `servoN_channel`, `servoN_pwm_off`
+(start position, 1100), `servoN_pwm_on` (1900). Endpoints: `POST /api/servo`
+`{servo: 1|2, on?: bool}` (no `on` = toggle), `POST /api/servo/release`
+`{servo?}`, `GET|POST /api/servos/setup`.
+
 ## API (what the app calls)
 
 | Method | Path | |
@@ -404,7 +480,7 @@ python test_relay.py          # the relay: on / off, off at start and shutdown, 
 | POST | `/api/live/targets` `{targets:[{id,lat,lng,source?,confidence?}]}` | Live collect: add / update the drone's finds (added, merged, refused) |
 | POST / GET | `/api/live/start` `{when_empty: wait\|return}`, `/pause`, `/stop` `{rtl}`, `/skip` `{id}`, `/clear`, `/api/live/status` | Live collect control and queue (also `telemetry.live`) |
 | GET / POST | `/api/pixhawk/params?names=A,B`, `/api/pixhawk/params` `{values}`, `/api/pixhawk/reboot` | Read / set Pixhawk parameters (disarmed), restart it |
-| POST / GET | `/api/pixhawk/motor_test` `{motor, pwm, seconds}`, `/motor_start` `{motor, pwm}`, `/api/pixhawk/motors` | Motor matching: spin one thruster (stops by itself), save its start point |
+| POST / GET | `/api/pixhawk/motor_test` `{motor, pwm, seconds}`, `/motor_start` `{motor, pwm}`, `/api/pixhawk/motors` | Motor matching: spin the motor (`motor`; twin-motor boats `left` / `right`; stops by itself), save its start point |
 | POST / GET | `/api/pixhawk/esc_calibration` `{step: auto\|cancel, outputs}` | Timed ESC calibration (battery unplugged first) |
 
 Every command answers `{"success": true|false, "message": "..."}`. A refusal

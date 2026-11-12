@@ -8,6 +8,7 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import { makeRiver, SURFACE_LAYER } from './riverScene'
 import { mergeStatic, hideSmallFromMirror } from './sceneOptim'
 import { makeEcosystem } from './riverEcosystem'
+import { matteAll } from './surfaceDetail'
 
 // Intro clock (seconds from mount)
 const TL = {
@@ -444,7 +445,21 @@ const FinishShader = {
  * and hovers until go() is called; then it rushes the camera and the frame
  * floods white. onReveal() fires at the white peak — swap in the app then.
  */
-export function createDroneIntro(container, { onReveal, onFrame, reducedMotion = false } = {}) {
+export function createDroneIntro(container, { onReveal, onFrame, reducedMotion = false, mood: moodOpt, hero = false } = {}) {
+  // 'night' (the intro) or 'day' (lighter, green hills; the Home page).
+  // In dev, ?introMood=day previews the day look without touching the caller.
+  // hero: the live Home banner. Daylight, already powered and scanning, the drone
+  // patrols in front of the camera and leans toward the pointer, the boat collects
+  // for real; no fly-in, no rush, no recording extras.
+  let mood = hero ? 'day' : moodOpt || 'night'
+  if (!moodOpt && !hero && import.meta.env.DEV) {
+    try {
+      mood = new URLSearchParams(window.location.search).get('introMood') || mood
+    } catch {
+      /* ignore */
+    }
+  }
+  const day = mood === 'day'
   let renderer
   try {
     // No canvas MSAA: everything is drawn into the composer's targets, so it would only cost bandwidth.
@@ -460,13 +475,23 @@ export function createDroneIntro(container, { onReveal, onFrame, reducedMotion =
   const W = () => container.clientWidth || window.innerWidth
   const H = () => container.clientHeight || window.innerHeight
   // Render scale adapts at runtime (see adaptRes) to hold the display's refresh rate.
-  const maxPr = Math.min(window.devicePixelRatio || 1, 1.5)
-  const minPr = Math.min(maxPr, 0.6)
-  let dpr = Math.min(maxPr, 1.0)
+  // Start at the screen's real pixel density (pin-sharp on 1080p, 1440p and 4K
+  // panels alike) and supersample above it when the GPU has headroom.
+  const nativePr = Math.max(1, window.devicePixelRatio || 1)
+  // the Home banner shares the GPU with the page around it: no supersampling
+  const maxPr = hero ? nativePr : Math.min(nativePr * 1.35, 3)
+  const minPr = (hero ? 0.5 : 0.6) * nativePr
+  let dpr = nativePr
   const getPr = () => dpr
   renderer.setPixelRatio(dpr)
   renderer.setSize(W(), H())
   renderer.setClearColor(0x000000, 1)
+  if (day && import.meta.env.DEV && !hero) {
+    // Home-loop recording: sun shadows (drawn on demand, see riverScene)
+    renderer.shadowMap.enabled = true
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap
+    renderer.shadowMap.autoUpdate = false
+  }
   renderer.toneMapping = THREE.ACESFilmicToneMapping
   renderer.toneMappingExposure = 1
   container.appendChild(renderer.domElement)
@@ -568,11 +593,55 @@ export function createDroneIntro(container, { onReveal, onFrame, reducedMotion =
   }
 
   // Night river beneath the drone (real mirror reflections), and the Varuna
-  // loop on it: drifting plastic, the drone tagging it, JAL DHARA collecting it.
+  // loop on it: drifting plastic, the drone tagging it, NIRMAL DHARA JALYAN collecting it.
   const FLOOR_Y = WATER_Y
-  const river = makeRiver({ scene, camera, WATER_Y, W, H, getPr })
+  // (no renderer for the live banner: the scanned recording plants stay out of it)
+  const river = makeRiver({ scene, camera, WATER_Y, W, H, getPr, mood, renderer: hero ? null : renderer })
   scene.fog.color.copy(river.horizon)
-  const eco = makeEcosystem({ scene, envMap: envTex, WATER_Y, dotTex: river.dot })
+  if (day) scene.fog.density = 0.0055
+  const eco = makeEcosystem({ scene, envMap: envTex, WATER_Y, dotTex: river.dot, mood })
+  // Home (daylight) scene: the drone keeps its original glossy black finish and
+  // lights; the boat has no shine at all (dead-matte surfaces) and no lit lights:
+  // every LED, lamp and nav light on it sits switched off (its colour, very dark),
+  // re-applied each frame after the animation that drives them.
+  // The night intro keeps its original finish on both.
+  const unlit = []
+  if (day) {
+    matteAll(eco.boatGroup)
+    const seen = new Set()
+    eco.boatGroup.traverse((o) => {
+      for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+        if (!m || !m.isMeshBasicMaterial || m.toneMapped !== false || seen.has(m)) continue
+        seen.add(m)
+        unlit.push({ m, off: m.color.clone().multiplyScalar(0.06) })
+      }
+    })
+  }
+  const lightsOff = () => {
+    for (const u of unlit) u.m.color.copy(u.off)
+  }
+
+  // Daylight: the drone and boat reflect the real river, trees and sky around
+  // them (captured from the scene), not a studio room. Re-captured once the
+  // scanned plants have loaded.
+  let sceneEnv = null
+  function captureSceneEnv() {
+    D.drone.visible = false
+    const rt = pmrem.fromScene(scene, 0.025, 0.1, 400)
+    D.drone.visible = true
+    const prev = sceneEnv
+    sceneEnv = rt
+    scene.traverse((o) => {
+      for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+        if (m && (m.envMap === envTex || (prev && m.envMap === prev.texture))) m.envMap = rt.texture
+      }
+    })
+    prev?.dispose()
+  }
+  if (day) {
+    captureSceneEnv()
+    river.scans?.then((r) => r && !disposed && captureSceneEnv())
+  }
 
   // Haze particles that stretch into speed streaks
   const N = 520
@@ -685,7 +754,8 @@ export function createDroneIntro(container, { onReveal, onFrame, reducedMotion =
   }
 
   // --- state ---
-  let t = 0 // intro clock
+  // intro clock (the banner starts already powered, beams on and the AI scanning)
+  let t = hero ? TL.scan + 1.2 : 0
   let g = -1 // seconds since go(); -1 while hovering
   let powerAt = TL.powerOn
   let beamsAt = TL.beams
@@ -693,6 +763,8 @@ export function createDroneIntro(container, { onReveal, onFrame, reducedMotion =
   let raf = 0
   let revealed = false
   let rush = null
+  let camHook = null
+  let poseHook = null
   const pointer = { x: 0, y: 0, sx: 0, sy: 0 }
   const tmpV = new THREE.Vector3()
   const beamA = [new THREE.Vector3(), new THREE.Vector3()]
@@ -723,6 +795,28 @@ export function createDroneIntro(container, { onReveal, onFrame, reducedMotion =
     p.yaw = lerp(0.85, 0, p.ent) + Math.sin(time * 0.21) * 0.3 * p.ent
     return p
   }
+  // Home banner: a slow figure-of-eight patrol over the river (the Home loop's
+  // course), pulled gently toward the pointer so the drone answers the mouse.
+  const HW = (2 * Math.PI) / 16
+  function heroPos(time, out) {
+    out.x = Math.sin(HW * time) + pointer.sx * 0.9
+    out.y = 1.38 + 0.12 * Math.sin(3 * HW * time) + 0.03 * Math.sin(7 * HW * time) + pointer.sy * 0.22
+    out.z = -10 + 0.6 * Math.sin(2 * HW * time + 1.2)
+    return out
+  }
+  const pointerVel = { x: 0, px: 0 }
+  function heroPose(time) {
+    const p = heroPos(time, {})
+    heroPos(time - 0.05, pA)
+    heroPos(time + 0.05, pB)
+    // the pointer pull counts toward the bank, so a quick swipe tips the drone
+    const vx = (pB.x - pA.x) / 0.1 + pointerVel.x * 0.9
+    const vz = (pB.z - pA.z) / 0.1
+    p.roll = clamp(-vx * 0.16, -0.32, 0.32)
+    p.pitch = clamp(vz * 0.035, -0.22, 0.22)
+    p.yaw = 0.28 * Math.sin(HW * time + 0.5) - pointer.sx * 0.18
+    return p
+  }
   // After the click: brief anticipation, then a geometric close-in (constant-rate zoom, eased in)
   function rushPose(gt) {
     const r = rush
@@ -744,7 +838,7 @@ export function createDroneIntro(container, { onReveal, onFrame, reducedMotion =
 
   function update(dt) {
     const rushing = g >= 0
-    const s = rushing ? rushPose(g) : idlePose(t)
+    const s = rushing ? rushPose(g) : poseHook ? poseHook(t) : hero ? heroPose(t) : idlePose(t)
     const v01 = rushing ? Math.pow(smooth(R.launch + 0.1, R.arrive - 0.05, g), 1.3) : 0
     const near = smooth(8.5, 1.5, -s.z)
     const flood = rushing ? smooth(R.whiteStart, R.whitePeak, g) : 0
@@ -778,7 +872,7 @@ export function createDroneIntro(container, { onReveal, onFrame, reducedMotion =
     D.mats.prop.opacity = lerp(1, 0.22, spin)
     D.mats.discMat.opacity = spin * 0.9
 
-    const envAmt = 0.08 + pow * 0.14 + beam * 0.16
+    const envAmt = day ? 0.85 : 0.08 + pow * 0.14 + beam * 0.16
     for (const m of D.mats.envMats) m.envMapIntensity = envAmt * m.userData.envK
     hemi.intensity = 0.06 + beam * 0.12
     rimP.intensity = 1.2 * pow + 1.6 * beam
@@ -789,8 +883,10 @@ export function createDroneIntro(container, { onReveal, onFrame, reducedMotion =
 
     // Camera: soft-follow + pointer parallax while hovering, hard track + FOV punch on the rush
     const ease = 1 - Math.exp(-dt * 2.5)
+    const psx = pointer.sx
     pointer.sx = lerp(pointer.sx, pointer.x, ease)
     pointer.sy = lerp(pointer.sy, pointer.y, ease)
+    if (dt > 0) pointerVel.x = lerp(pointerVel.x, (pointer.sx - psx) / dt, 1 - Math.exp(-dt * 8))
     const par = rushing ? 1 - smooth(0, R.launch + 0.3, g) : 1
     const track = rushing ? lerp(0.55, 0.9, smooth(R.launch, R.arrive, g)) : 0.55
     D.drone.updateMatrixWorld(true)
@@ -812,9 +908,18 @@ export function createDroneIntro(container, { onReveal, onFrame, reducedMotion =
       keyFill.angle = Math.min(1.2, Math.atan(2.4 / Math.max(0.5, keyFill.position.distanceTo(dp))))
       keyFill.intensity = lerp(0.2, 0.9, pow)
     }
-    beamUniforms.uI.value = beam * 0.045 * hb * (1 - near * 0.9)
+    beamUniforms.uI.value = beam * 0.045 * hb * (1 - near * 0.9) * (day ? 0.25 : 1)
     camera.fov = baseFov() + (rushing ? 17 * smooth(R.launch + 0.6, R.arrive, g) : 0)
     camera.updateProjectionMatrix()
+    if (camHook) camHook(camera, t) // dev: alternate framings for recording stills/loops
+    else if (hero) {
+      // the Home framing: low over the water, drone in front, boat beyond; the
+      // camera sways a little with the pointer (parallax)
+      camera.position.set(1.0 + pointer.sx * 0.35, 0.45 + pointer.sy * 0.12, -1)
+      camera.lookAt(0.6 + pointer.sx * 0.2, 0.12, -14)
+      camera.fov = W() / H() < 1 ? 60 : 40
+      camera.updateProjectionMatrix()
+    }
 
     // Headlight glow (the river mirrors it for real)
     for (let i = 0; i < glows.length; i++) {
@@ -834,6 +939,7 @@ export function createDroneIntro(container, { onReveal, onFrame, reducedMotion =
       river.update(dt, { cam: camera, dronePos: D.drone.position, wash: spin * pow, poolI: beam * (1 - flood), beams, halfH, boat: eco.boatPos() })
       const ai = smooth(TL.scan + 0.45, TL.scan + 1.05, t)
       eco.update(dt, { t, power: pow, ai, drone: D.drone.position, halfH })
+      if (day) lightsOff()
     }
 
     // Launch mist + air disturbance
@@ -937,7 +1043,7 @@ export function createDroneIntro(container, { onReveal, onFrame, reducedMotion =
     blurPass.enabled = blurPass.uniforms.uStrength.value > 0.0005 // skip the full-screen pass while hovering
     bloom.strength = 0.4 + beam * 0.15 + v01 * 0.25 + flood * 2.8
     bloom.radius = 0.5 + flood * 0.4
-    bloom.threshold = lerp(0.85, 0.15, flood)
+    bloom.threshold = lerp(day ? 1.05 : 0.85, 0.15, flood)
     bloom.weights(finish.uniforms.uBloomW.value)
     finish.uniforms.uExposure.value = 1 + flood * 3
     finish.uniforms.uTime.value = t
@@ -1038,10 +1144,39 @@ export function createDroneIntro(container, { onReveal, onFrame, reducedMotion =
     supported: true,
     state: () => ({ t, g, pr: dpr }),
     /** dev profiling handles */
-    debug: { scene, composer, bloom, renderer, camera, river, eco, setPr: (p) => ((dpr = p), resize()) },
+    debug: {
+      scene,
+      composer,
+      bloom,
+      renderer,
+      camera,
+      river,
+      eco,
+      setPr: (p) => ((dpr = p), resize()),
+      /** take over the camera after the intro places it: fn(camera, t) */
+      setCameraHook: (fn) => (camHook = fn),
+      /** fly the drone on a scripted path instead: fn(t) -> {x, y, z, pitch, yaw, roll} */
+      setPoseHook: (fn) => (poseHook = fn),
+      /** stop the live loop so step() alone drives time (frame-exact recording) */
+      freeze: () => {
+        cancelAnimationFrame(raf)
+        raf = 0
+      },
+    },
+    /** Pause / resume the live loop (the Home banner stops while it's scrolled out of view). */
+    setActive(on) {
+      if (disposed || revealed || reducedMotion) return
+      if (!on) {
+        cancelAnimationFrame(raf)
+        raf = 0
+      } else if (!raf) {
+        last = performance.now()
+        raf = requestAnimationFrame(tick)
+      }
+    },
     /** Launch the rush toward the camera. Safe to call more than once. */
     go() {
-      if (disposed || g >= 0 || revealed) return
+      if (disposed || g >= 0 || revealed || hero) return
       if (reducedMotion) {
         revealed = true
         onReveal && onReveal()
@@ -1072,6 +1207,7 @@ export function createDroneIntro(container, { onReveal, onFrame, reducedMotion =
       river.dispose()
       eco.dispose()
       envTex.dispose()
+      sceneEnv?.dispose()
       pmrem.dispose()
       roomEnv.traverse((o) => {
         if (o.geometry) o.geometry.dispose()

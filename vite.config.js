@@ -141,6 +141,8 @@ export default defineConfig(({ mode }) => {
         ],
       },
     },
+    // The AI runs in a module worker (src/lib/ortWorker.js) that imports onnxruntime.
+    worker: { format: 'es' },
     build: { 
       outDir: 'dist', 
       sourcemap: false,
@@ -166,7 +168,7 @@ export default defineConfig(({ mode }) => {
       // dynamically imported module" (this hit the Detections tab via leaflet.heat).
       include: [
         'react', 'react-dom', 'react-dom/client', 'framer-motion', 'leaflet', 'react-leaflet', 'leaflet.heat',
-        '@emailjs/browser',
+        '@emailjs/browser', '@vladmandic/face-api',
         '@turf/helpers', '@turf/circle', '@turf/boolean-point-in-polygon', '@turf/area',
         '@turf/length', '@turf/intersect', '@turf/buffer', '@turf/along',
         'three',

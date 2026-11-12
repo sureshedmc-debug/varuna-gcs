@@ -63,6 +63,7 @@ class DriveManager:
         self.drove = False          # sticks moved since the link was last lost
         self.lost_acted = False
         self.events = []
+        self.servos = None          # servos.ServoManager: its channels ride along with the sticks
         self._stop = threading.Event()
         self._thread = None
 
@@ -96,7 +97,7 @@ class DriveManager:
             self.steer = self.throttle = 0.0
             self.drove = False
         if self.enabled and self.link.fc_connected:
-            self.link.rc_override(NEUTRAL, NEUTRAL)
+            self._send(NEUTRAL, NEUTRAL)
 
     def connected(self, on):
         with self.lock:
@@ -120,8 +121,13 @@ class DriveManager:
             if not self.enabled or not self.link.fc_connected:
                 continue
             steer, thr = self.pwm()
-            self.link.rc_override(steer, thr)
+            self._send(steer, thr)
             self._watch_link()
+
+    def _send(self, steer, thr):
+        """Sticks on channels 1 and 3, the servos on theirs; every other channel back to the radio."""
+        extra = self.servos.channels() if self.servos is not None else {}
+        self.link.rc_override_channels({**extra, 1: steer, 3: thr}, others=0)
 
     def _watch_link(self):
         """Controller link lost while driving in MANUAL or ACRO: put the boat in HOLD."""

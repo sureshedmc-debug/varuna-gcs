@@ -9,12 +9,49 @@ const AMBER = '#FF9F0A'
 const RED = '#FF453A'
 
 const LEGEND = [
-  ['A', 'MANUAL — drive', GREEN], ['B', 'HOLD — stop', RED],
-  ['X', 'Resume mission', '#0A84FF'], ['Y', 'Return home', '#FFD60A'],
-  ['START', 'hold 1 s: arm', '#AEB3BA'], ['BACK', 'hold 1 s: disarm', '#AEB3BA'],
-  ['R1', 'Roller run / stop', '#32D74B'], ['MODE', 'Next mode', '#BF5AF2'],
+  ['✕ A', 'MANUAL — drive', GREEN], ['○ B', 'HOLD — stop', RED],
+  ['□ X', 'Resume mission', '#0A84FF'], ['△ Y', 'Return home', '#FFD60A'],
+  ['START', 'hold 1 s: arm', '#AEB3BA'], ['SELECT', 'hold 1 s: disarm', '#AEB3BA'],
+  ['R1', 'Collector', '#32D74B'], ['MODE', 'Next mode', '#BF5AF2'],
   ['L1 + R1', 'BRAKE: stop + disarm', RED],
+  ['◀ / ▶', 'Servo 1 / 2 on / off', '#64D2FF'],
 ]
+
+/** "Set up buttons": learn a PS2 / non-standard controller, one control at a time. */
+function ButtonSetup({ d }) {
+  if (!d.pad || !d.startLearn) return null
+  if (d.learn) {
+    return (
+      <div className="mb-2 rounded-lg px-2.5 py-2 text-[11px]" style={{ background: 'rgba(10,132,255,0.1)', border: '1px solid rgba(10,132,255,0.35)' }}>
+        <div className="mb-0.5 flex items-center justify-between">
+          <b className="text-ink">Button set-up · {d.learn.step} / {d.learn.total}</b>
+          <span className="text-[10px] text-muted">the boat gets nothing but centred sticks meanwhile</span>
+        </div>
+        <div className="mb-1.5 text-[12.5px] font-semibold" style={{ color: '#64D2FF' }}>{d.learn.text}</div>
+        {d.learn.stick && d.learn.step === 1 && (
+          <div className="mb-1.5 text-[10.5px] text-muted">PS2 pad: press <b className="text-ink">ANALOG</b> first so its red light is on, or the sticks send nothing.</div>
+        )}
+        <div className="flex gap-3">
+          {!d.learn.stick && <button type="button" onClick={d.skipLearn} className="font-semibold text-accent">Skip</button>}
+          <button type="button" onClick={d.cancelLearn} className="font-semibold text-muted">Cancel</button>
+        </div>
+      </div>
+    )
+  }
+  return (
+    <div className="mb-2 flex items-center justify-between gap-2 text-[10.5px]">
+      <span className="text-muted">
+        {d.custom ? 'Buttons set up for this controller.' : d.standard ? 'Standard layout.' : 'PS2 / other pad: set up its buttons first.'}
+      </span>
+      <span className="flex shrink-0 gap-3">
+        <button type="button" onClick={() => d.startLearn()} className="font-semibold text-accent">
+          {d.custom ? 'Set up again' : 'Set up buttons'}
+        </button>
+        {d.custom && <button type="button" onClick={d.resetLayout} className="font-semibold text-muted">Standard</button>}
+      </span>
+    </div>
+  )
+}
 
 function Bar({ label, value, vertical }) {
   // value −1…1, drawn from the centre.
@@ -90,14 +127,17 @@ export function BoatGamepadCard() {
       </div>
 
       {!gamepadBoat ? (
-        <div className="text-[11px] text-muted">
-          The boat is set up for an RC transmitter. To drive it with a game controller on this PC instead, run the
-          Boat Pi Tool → <b className="text-ink">13. Driving by hand</b>.
-        </div>
+        <>
+          <div className="mb-2 text-[11px] text-muted">
+            The boat is set up for an RC transmitter. To drive it with a game controller on this PC instead, run the
+            Boat Pi Tool → <b className="text-ink">13. Driving by hand</b>. R1 (scoop) and the D-pad (servos) still work.
+          </div>
+          {d.enabled && <ButtonSetup d={d} />}
+        </>
       ) : (
         <>
           <div className="mb-2 flex items-center justify-between text-[11px]">
-            <span className="truncate text-muted">{d.pad ? `${d.pad}${d.standard ? '' : ' (unusual layout — check the sticks)'}` : 'Plug the controller into this PC and press any button.'}</span>
+            <span className="truncate text-muted">{d.pad ? `${d.pad}${d.standard ? '' : ' (not a standard layout — set up its buttons)'}` : 'Plug the controller into this PC and press any button.'}</span>
             <label className="ml-2 flex shrink-0 items-center gap-1.5 text-muted">
               <input type="checkbox" className="accent-accent" checked={d.enabled} onChange={(e) => d.setEnabled(e.target.checked)} /> Use
             </label>
@@ -105,6 +145,7 @@ export function BoatGamepadCard() {
 
           {d.pad && d.enabled && (
             <>
+              <ButtonSetup d={d} />
               <div className="mb-2 flex items-center justify-around">
                 <Bar label="Throttle" value={d.t} vertical />
                 <Bar label="Steering" value={d.s} />
@@ -126,7 +167,19 @@ export function BoatGamepadCard() {
               onTouchEnd={(e) => saveLimit(Number(e.target.value) / 100)} onKeyUp={(e) => saveLimit(Number(e.target.value) / 100)} />
           </div>
 
-          {t.collector && (
+          {t.collector && t.collector.kind === 'scoop' && (
+            <div className="mb-2 flex items-center justify-between rounded-lg px-2.5 py-1.5 text-[11px]" style={{ background: 'rgba(255,255,255,0.04)' }}>
+              <span className="text-muted">
+                Scoop servo{t.collector.output ? ` · out ${t.collector.output}` : ' · no output set'}:{' '}
+                <b style={{ color: t.collector.on ? GREEN : undefined }} className={t.collector.on ? '' : 'text-ink'}>
+                  {t.collector.on ? `EXTREME (${t.collector.pwm_on} µs)` : `0 position (${t.collector.pwm_off} µs)`}
+                </b>
+              </span>
+              <button type="button" disabled={!boat.fcConnected} onClick={() => boatApi.collector().catch(() => {})}
+                className="font-semibold text-accent disabled:opacity-50">{t.collector.on ? 'Back to 0' : 'To extreme'}</button>
+            </div>
+          )}
+          {t.collector && t.collector.kind !== 'scoop' && (
             <div className="mb-2 flex items-center justify-between rounded-lg px-2.5 py-1.5 text-[11px]" style={{ background: 'rgba(255,255,255,0.04)' }}>
               <span className="text-muted">
                 Intake roller{t.collector.relay_gpio ? ` · relay GPIO${t.collector.relay_gpio}` : t.collector.output ? ` · out ${t.collector.output}` : ' · no output set'}:{' '}
@@ -140,7 +193,7 @@ export function BoatGamepadCard() {
           <div className="mb-2 grid grid-cols-2 gap-x-3 gap-y-1">
             {LEGEND.map(([k, label, color]) => (
               <div key={k} className="flex items-center gap-1.5 text-[10.5px] text-muted">
-                <span className="rounded px-1 font-mono text-[9.5px] font-bold" style={{ background: `${color}22`, color }}>{k}</span>{label}
+                <span className="rounded px-1 font-mono text-[9.5px] font-bold" style={{ background: `${color}22`, color }}>{k}</span>{k === 'R1' ? (t.collector?.kind === 'scoop' ? 'Scoop 0 ↔ extreme' : 'Roller run / stop') : label}
               </div>
             ))}
           </div>

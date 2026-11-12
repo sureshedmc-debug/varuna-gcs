@@ -19,6 +19,7 @@
 
 import { useEffect, useState } from 'react'
 import { savePhotos, getPhotos, clearPhotos, deletePhotosFor } from './photoStore'
+import { rememberDroneCrop } from './droneTargets'
 
 const KEY = 'varuna.trashLog'
 const EVT = 'varuna:trashLog'
@@ -169,7 +170,7 @@ function mergeSizes(entry, f) {
   entry.sizeCounts = c
 }
 
-export function recordTrashSighting({ lat, lng, count, confidence, source, posSource, posMethod, alt, accuracy, photo, className, estWidthM, estHeightM, sizes }) {
+export function recordTrashSighting({ lat, lng, count, confidence, source, posSource, posMethod, alt, accuracy, photo, crop, cropW, cropH, className, estWidthM, estHeightM, sizes }) {
   const sz = sizeFields(sizes)
   const n = Number(count)
   if (!Number.isFinite(n) || n <= 0) return
@@ -230,6 +231,8 @@ export function recordTrashSighting({ lat, lng, count, confidence, source, posSo
     if (Number.isFinite(Number(estHeightM)) && (match.estHeightM == null || Number(estHeightM) > match.estHeightM)) match.estHeightM = Number(estHeightM)
     if (className && match.class === 'trash') match.class = className
     mergeSizes(match, sz)
+    // The drone's crop of the item (drone-to-boat matching): the most confident one is kept.
+    if (crop) rememberDroneCrop(match, crop, { confidence: conf, w: cropW, h: cropH })
   } else {
     const id = `t-${++seq}`
     if (photo) savePhotos(id, { boxed: photo }).catch(() => {})
@@ -266,6 +269,7 @@ export function recordTrashSighting({ lat, lng, count, confidence, source, posSo
       log = log.slice(0, MAX_ENTRIES)
       deletePhotosFor(dropped).catch(() => {})
     }
+    if (crop) rememberDroneCrop(log[0], crop, { confidence: conf, w: cropW, h: cropH })
   }
   emit()
 }

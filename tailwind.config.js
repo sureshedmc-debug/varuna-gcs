@@ -25,9 +25,9 @@ export default {
       },
       backdropBlur: { xs: '2px' },
       boxShadow: {
-        /* gold glow shadow — used by TiltCard, CommandPanel etc */
-        glow: '0 0 0 1px rgba(212,160,23,0.35), 0 0 28px rgba(212,160,23,0.20), 0 12px 44px -10px rgba(212,160,23,0.15)',
-        elev: '0 20px 60px -20px rgba(0,0,0,0.9), inset 0 1px 0 rgba(245,200,66,0.22)',
+        /* glow shadows follow the look: teal (new) or gold (classic), see index.css */
+        glow: 'var(--shadow-glow)',
+        elev: 'var(--shadow-elev)',
       },
       fontFeatureSettings: { tnum: '"tnum" 1' },
     },

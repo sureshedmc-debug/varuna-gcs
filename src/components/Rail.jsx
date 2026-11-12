@@ -83,6 +83,14 @@ const NAV_ITEMS = [
     ),
   },
   {
+    id: 'data', label: 'Data', tabId: 'data',
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/>
+      </svg>
+    ),
+  },
+  {
     id: 'system', label: 'System', tabId: 'system',
     icon: (
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -130,13 +138,13 @@ function Logo() {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
       <svg width="34" height="34" viewBox="0 0 36 36" fill="none">
-        <rect width="36" height="36" rx="9" fill="#f3f0ff" />
-        <path d="M7 20c2.5-3.5 5-5.5 7-5.5s4.5 4.5 7 4.5 4.5-4.5 7-4.5" stroke="#7c3aed" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+        <rect width="36" height="36" rx="9" style={{ fill: 'var(--rail-logo-bg)' }} />
+        <path d="M7 20c2.5-3.5 5-5.5 7-5.5s4.5 4.5 7 4.5 4.5-4.5 7-4.5" style={{ stroke: 'var(--rail-logo-1)' }} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
         <path d="M7 24c2.5-3.5 5-5.5 7-5.5s4.5 4.5 7 4.5 4.5-4.5 7-4.5" stroke="#a78bfa" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none" opacity="0.6" />
       </svg>
       <div>
-        <div style={{ fontSize: 14, fontWeight: 800, color: '#1e1b4b', letterSpacing: '-0.01em', lineHeight: 1.2 }}>VARUNA AI</div>
-        <div style={{ fontSize: 9.5, color: '#8b5cf6', lineHeight: 1.3, marginTop: 1, fontWeight: 500 }}>AI for Cleaner Water</div>
+        <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--rail-title)', letterSpacing: '-0.01em', lineHeight: 1.2 }}>VARUNA AI</div>
+        <div style={{ fontSize: 9.5, color: 'var(--rail-sub)', lineHeight: 1.3, marginTop: 1, fontWeight: 500 }}>AI for Cleaner Water</div>
       </div>
     </div>
   )
@@ -173,11 +181,11 @@ function Panel({ active, onPick, pinned, onPin, reduce, mobile, onClose }) {
         display: 'flex',
         flexDirection: 'column',
         borderRadius: mobile ? '0 22px 22px 0' : 20,
-        background: 'rgba(255,255,255,0.86)',
+        background: 'var(--rail-bg)',
         backdropFilter: 'blur(18px) saturate(1.4)',
         WebkitBackdropFilter: 'blur(18px) saturate(1.4)',
-        border: '1px solid rgba(167,139,250,0.28)',
-        boxShadow: '0 24px 60px -12px rgba(76,29,149,0.28), 0 8px 20px rgba(109,40,217,0.10), inset 0 1px 0 rgba(255,255,255,0.9)',
+        border: '1px solid var(--rail-border)',
+        boxShadow: 'var(--rail-shadow)',
         overflow: 'hidden',
         transformOrigin: 'left center',
       }}
@@ -197,7 +205,7 @@ function Panel({ active, onPick, pinned, onPin, reduce, mobile, onClose }) {
         />
       )}
 
-      <motion.div variants={iv} style={{ padding: '18px 16px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid rgba(167,139,250,0.18)' }}>
+      <motion.div variants={iv} style={{ padding: '18px 16px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--rail-sep)' }}>
         <Logo />
         {mobile ? (
           <button onClick={onClose} aria-label="Close navigation" className="rail-iconbtn">
@@ -209,7 +217,7 @@ function Panel({ active, onPick, pinned, onPin, reduce, mobile, onClose }) {
             aria-pressed={pinned}
             title={pinned ? 'Unpin sidebar (auto-hide)' : 'Pin sidebar open'}
             className="rail-iconbtn"
-            style={{ color: pinned ? '#7c3aed' : undefined, transform: pinned ? 'rotate(0deg)' : 'rotate(35deg)' }}
+            style={{ color: pinned ? 'var(--rail-pin-on)' : undefined, transform: pinned ? 'rotate(0deg)' : 'rotate(35deg)' }}
           >
             <PinIcon on={pinned} />
           </button>
@@ -239,7 +247,7 @@ function Panel({ active, onPick, pinned, onPin, reduce, mobile, onClose }) {
                 background: 'transparent',
                 border: 'none',
                 cursor: 'pointer',
-                color: on ? '#ffffff' : hover === item.id ? '#6d28d9' : '#64748b',
+                color: on ? '#ffffff' : hover === item.id ? 'var(--rail-item-hover)' : 'var(--rail-item)',
                 fontSize: 13,
                 fontWeight: on ? 700 : 550,
                 textAlign: 'left',
@@ -254,8 +262,8 @@ function Panel({ active, onPick, pinned, onPin, reduce, mobile, onClose }) {
                   transition={spring}
                   style={{
                     position: 'absolute', inset: 0, borderRadius: 12,
-                    background: 'linear-gradient(135deg, #7c3aed, #8b5cf6 55%, #a78bfa)',
-                    boxShadow: '0 6px 18px -4px rgba(124,58,237,0.55), inset 0 1px 0 rgba(255,255,255,0.25)',
+                    background: 'var(--rail-active-bg)',
+                    boxShadow: 'var(--rail-active-shadow)',
                   }}
                 />
               )}
@@ -263,7 +271,7 @@ function Panel({ active, onPick, pinned, onPin, reduce, mobile, onClose }) {
                 <motion.span
                   layoutId="rail-hover"
                   transition={{ type: 'spring', stiffness: 600, damping: 40 }}
-                  style={{ position: 'absolute', inset: 0, borderRadius: 12, background: 'rgba(139,92,246,0.09)', border: '1px solid rgba(139,92,246,0.14)' }}
+                  style={{ position: 'absolute', inset: 0, borderRadius: 12, background: 'var(--rail-hover-bg)', border: '1px solid var(--rail-hover-border)' }}
                 />
               )}
               <motion.span
@@ -286,7 +294,7 @@ function Panel({ active, onPick, pinned, onPin, reduce, mobile, onClose }) {
         })}
       </div>
 
-      <motion.div variants={iv} style={{ padding: '10px 16px 14px', borderTop: '1px solid rgba(167,139,250,0.18)', fontSize: 9, color: '#a78bfa', display: 'flex', justifyContent: 'space-between' }}>
+      <motion.div variants={iv} style={{ padding: '10px 16px 14px', borderTop: '1px solid var(--rail-sep)', fontSize: 9, color: 'var(--rail-foot)', display: 'flex', justifyContent: 'space-between' }}>
         <span>v1.0.0</span>
         <span>{mobile ? 'Tap outside to close' : pinned ? 'Pinned' : 'Auto-hide'}</span>
       </motion.div>
@@ -407,7 +415,7 @@ export function Rail({ active, onChange, pinned, onPinnedChange, mobileOpen, onM
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => onMobileOpenChange(false)}
-              style={{ position: 'fixed', inset: 0, zIndex: 55, background: 'rgba(30,27,75,0.28)', backdropFilter: 'blur(3px)', WebkitBackdropFilter: 'blur(3px)' }}
+              style={{ position: 'fixed', inset: 0, zIndex: 55, background: 'var(--rail-scrim)', backdropFilter: 'blur(3px)', WebkitBackdropFilter: 'blur(3px)' }}
             />
           )}
           {mobileOpen && (

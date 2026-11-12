@@ -10,6 +10,7 @@ python -m PyInstaller --noconfirm --clean --onefile --console ^
   --add-data "..\drone-pi\config.py;drone-pi" ^
   --add-data "..\drone-pi\mav_link.py;drone-pi" ^
   --add-data "..\drone-pi\mission.py;drone-pi" ^
+  --add-data "..\drone-pi\fence.py;drone-pi" ^
   --add-data "..\drone-pi\camera.py;drone-pi" ^
   --add-data "..\drone-pi\system_info.py;drone-pi" ^
   --add-data "..\drone-pi\control.py;drone-pi" ^

@@ -172,6 +172,19 @@ function isGoogleSignInPage(u) {
   }
 }
 
+// The Windows Hello page (localData.cjs). WebAuthn refuses the window's
+// 127.0.0.1 address, so it runs at localhost on the same port, in a small window
+// of its own inside the app.
+function isFingerprintPage(u) {
+  try {
+    const x = new URL(u)
+    return x.protocol === 'http:' && x.hostname === 'localhost' && x.port === new URL(appOrigin).port &&
+      x.pathname === '/local/auth/fingerprint/page'
+  } catch {
+    return false
+  }
+}
+
 function openExternal(u) {
   if (/^(https?:|mailto:)/i.test(u)) shell.openExternal(u).catch(() => {})
 }
@@ -193,6 +206,23 @@ function setupSecurity() {
   app.on('web-contents-created', (_e, contents) => {
 
     contents.setWindowOpenHandler(({ url }) => {
+      if (isFingerprintPage(url)) {
+        return {
+          action: 'allow',
+          overrideBrowserWindowOptions: {
+            width: 380,
+            height: 400,
+            resizable: false,
+            minimizable: false,
+            maximizable: false,
+            autoHideMenuBar: true,
+            title: 'VARUNA AI — Fingerprint',
+            parent: BrowserWindow.fromWebContents(contents) || undefined,
+            modal: true,
+            webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+          },
+        }
+      }
       // Google refuses to sign in inside an embedded app window, so its sign-in
       // page (served by localData.cjs) always opens in the system browser.
       if (isGoogleSignInPage(url)) {
@@ -431,6 +461,11 @@ function createWindow(url) {
       nodeIntegration: false,
       sandbox: true,
       spellcheck: false,
+      // A ground station must not slow down when another window covers it
+      // (screen recording, a second app on top): Chromium otherwise throttles
+      // timers and animation frames, so video, AI and telemetry fall behind
+      // and catch up in a burst when the window comes back.
+      backgroundThrottling: false,
     },
   })
   if (saved && saved.maximized) win.maximize()

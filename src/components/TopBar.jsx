@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useSystem } from './SystemContext'
 import { StatusOrb } from './ui'
 import { pick, bool, DASH } from '../lib/format'
-import { getTheme, applyTheme, THEMES } from '../lib/theme'
+import { getTheme, applyTheme, THEMES, getLook, applyLook } from '../lib/theme'
 import { useUser, displayName } from '../lib/auth'
 import { useOnline } from '../lib/online'
 
@@ -78,6 +78,34 @@ function ThemeToggle() {
   )
 }
 
+// ── Look slider — New (navy / teal) ↔ Classic (the earlier gold + purple/white) ──
+function LookToggle() {
+  const [look, setLook] = useState(getLook)
+  const classic = look === 'classic'
+  function flip() {
+    const next = classic ? 'new' : 'classic'
+    applyLook(next)
+    setLook(next)
+  }
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={classic}
+      onClick={flip}
+      title={classic ? 'Classic look (earlier theme). Click for the new look.' : 'New look. Click for the classic (earlier) theme.'}
+      aria-label={classic ? 'Look: Classic. Click to switch to New.' : 'Look: New. Click to switch to Classic.'}
+      className="look-toggle"
+    >
+      <span className="look-toggle-label" data-on={!classic}>New</span>
+      <span className="look-toggle-track" data-classic={classic}>
+        <span className="look-toggle-knob" />
+      </span>
+      <span className="look-toggle-label" data-on={classic}>Classic</span>
+    </button>
+  )
+}
+
 /** Top mission status bar spanning the app. */
 export function TopBar({ onLock, onMenu, navPinned, onAssistant, wakeState, onToggleWake }) {
   const { telemetry, backendReachable } = useSystem()
@@ -94,7 +122,7 @@ export function TopBar({ onLock, onMenu, navPinned, onAssistant, wakeState, onTo
 
   return (
     <header
-      className={`fixed inset-x-0 top-0 z-30 flex items-center justify-between border-b border-line bg-white/95 backdrop-blur-sm px-4 py-2 transition-[padding] duration-500 ease-[cubic-bezier(.16,1,.3,1)] ${navPinned ? 'md:pl-[252px]' : 'md:pl-[36px]'}`}
+      className={`fixed inset-x-0 top-0 z-30 flex items-center justify-between app-topbar border-b border-line backdrop-blur-sm px-4 py-2 transition-[padding] duration-500 ease-[cubic-bezier(.16,1,.3,1)] ${navPinned ? 'md:pl-[252px]' : 'md:pl-[36px]'}`}
       style={{ paddingTop: 'max(8px, env(safe-area-inset-top))' }}
     >
       <div className="flex items-center gap-2">
@@ -137,8 +165,9 @@ export function TopBar({ onLock, onMenu, navPinned, onAssistant, wakeState, onTo
           <span className="text-[11px] font-semibold tracking-wider text-ink">{conn}</span>
         </div>
 
-        {/* Theme toggle */}
+        {/* Theme toggle, and the New / Classic look slider beside it */}
         <ThemeToggle />
+        <LookToggle />
 
         {/* Hi Varuna button */}
         {onAssistant && (

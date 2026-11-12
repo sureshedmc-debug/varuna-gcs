@@ -1,0 +1,11 @@
+# Build output, caches, the signing key and its password
+.gradle/
+.cache/
+app/build/
+app/.cxx/
+app/src/main/assets/
+local.properties
+keystore/
+keystore.properties
+# The Node runtime (nodejs-mobile, 186 MB): downloaded, see scripts/build-android.mjs
+app/libnode/

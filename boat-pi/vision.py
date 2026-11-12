@@ -13,6 +13,14 @@ boat is decided here, on the boat, so it behaves sensibly when the link drops:
   * water measurement HOLD, average the turbidity sensor, carry on
   * vision watchdog   the app's vision stopped arriving → slow down / hold / continue
 
+In live collect the homing is the boat half of the drone-to-boat workflow:
+it only accepts plastic that MATCHES the drone's reference crop
+(target_match.py; candidates are cut out of the Pi's own copy of the frame the
+app analysed, or sent by the app as `crop`), drives through it, then VERIFIES
+the pick-up: the catch counter saw it on the ramp, or — with verify_lookback —
+the boat turns back to the spot and looks. Still there: retry, up to
+collect_max_retries, then RETRY_REQUIRED. Never seen: NOT_FOUND.
+
 Priority: operator commands > wildlife > water measurement > homing > mission.
 Any operator command (pause, hold, RTL, stop, a mode change, disarm) stands the
 automation down until the operator presses Start/Resume again.
@@ -25,11 +33,13 @@ Pixhawk against each other.
 import base64
 import json
 import logging
+import math
 import threading
 import time
 from collections import Counter, deque
 from datetime import datetime
 
+import target_match
 from camera_model import CameraModel, dist_m, offset, to_boat, to_world
 from mav_link import LinkError
 
@@ -37,6 +47,14 @@ log = logging.getLogger("boat.vision")
 
 TICK_S = 0.2
 OBS_FRESH_S = 1.5           # an observation older than this is ignored
+STILL_THERE_M = 3.0         # verification: a matching item this close to the spot is the one we missed
+LOOK_HEADING_DEG = 25.0     # look-back: facing the spot within this
+LOOK_PAN_M = 2.5            # look-back: also look at points this far either side of the spot
+LOOK_TURN_S = 1.2           # ...turning towards each for this long
+MATCH_LOG_S = 3.0           # "seen, but not the drone's item": at most this often in the events
+APP_MATCH_WAIT_S = 3.0      # homing start: wait this long for the app's match scores before scoring here
+SWEEP_R_M = 3.0             # search: at the point and nothing matching yet, sweep around it this far
+SWEEP_LEG_S = 10.0          # ...moving to the next sweep point after this long at the latest
 MAX_PHOTO_BYTES = 400_000
 
 
@@ -156,6 +174,9 @@ class VisionManager:
                    "suppress_until": 0.0, "suppress_clear": None}
         self.hm = self._idle_homing()
         self.hm_skip = set()                 # items homing already tried (no second attempt)
+        self.camera = None                   # set by main.py: frame_near(t) for cutting out candidates
+        self.matcher = target_match.make_matcher(cfg)
+        self._scored = (None, [])            # (frame_time, candidates) of the last scored observation
         self.stats = {"attempts": 0, "collected": 0, "missed": 0, "aborted": 0}
         self.ms = None                       # measurement in progress
         self.last_reading = None
@@ -273,7 +294,12 @@ class VisionManager:
             sid = self.wl.get("sighting")
             if sid:
                 self.sightings.update(sid, photo)
-        return {"phase": self.owner(), "homing": self.hm["state"], "wildlife": self.wl["state"]}
+        out = {"phase": self.owner(), "homing": self.hm["state"], "wildlife": self.wl["state"]}
+        if self.hm.get("source") == "live" and self.hm["state"] not in ("idle", "resuming") and self.hm["wid"]:
+            # The app compares its boxes with the drone's crop of this find (and sends `match`).
+            out["homing_id"] = self.hm["wid"]
+            out["homing_class"] = (self.hm.get("ref") or {}).get("object_class")
+        return out
 
     def add_catch(self, label, score=None, frame_time=None, photo=None, source="camera"):
         pose = self.link.pose_at(frame_time) if frame_time else None
@@ -587,10 +613,16 @@ class VisionManager:
     def _idle_homing():
         return {"state": "idle", "wid": None, "seq": None, "wp": None, "target": None, "t_state": 0.0,
                 "t_seen": 0.0, "capture_t": 0.0, "drive": None, "dist": None, "last_goto": 0.0, "reason": None,
-                "item": None}
+                "item": None,
+                # drone-to-boat workflow (live collect)
+                "ref": None, "ref_sig": None, "match": None, "best_rejected": None, "t_match_log": 0.0,
+                "retries": 0, "spot": None, "verify": None, "v_t": 0.0, "view": None, "gps_bad": None,
+                "approaching": False, "sweep_goal": None, "sweep_i": 0, "sweep_h0": 0.0, "sweep_t": 0.0}
 
     def _targets(self, now):
-        """Plastic in the latest observation, as water positions (lat, lng)."""
+        """Plastic in the latest observation: dicts with the water position
+        (lat, lng), the detector's label and score, and — homing onto a drone
+        target — `match`, how well it matches the drone's item (None: not judged)."""
         with self._obs_lock:
             obs, at = self.obs, self.obs_at
         if not obs or now - at > OBS_FRESH_S:
@@ -603,6 +635,12 @@ class VisionManager:
         cam = CameraModel.from_cfg(self.cfg, w, h)
         ramp_y = self.cfg["ramp_top"] * h
         out = []
+        # The app matched its boxes against the drone's crop of the find being homed onto:
+        # use its scores (otherwise the Pi compares them itself, below).
+        live = self.hm.get("source") == "live" and self.hm["state"] != "idle"
+        app_match = live and obs.get("match_for") == self.hm["wid"]
+        if live and obs.get("matcher") and not app_match and now - self.hm.get("t_start", 0) < APP_MATCH_WAIT_S:
+            return []                        # the app matches, but hasn't scored for this find yet
         for b in obs.get("targets") or []:
             try:
                 x = (float(b["x1"]) + float(b["x2"])) / 2
@@ -615,8 +653,51 @@ class VisionManager:
             if g is None or g[0] > 25:
                 continue
             lat, lng = to_world(pose[0], pose[1], pose[2], g[0], g[1])
-            out.append((lat, lng, b.get("score") or 0))
+            c = {"lat": lat, "lng": lng, "score": b.get("score") or 0, "label": b.get("label"),
+                 "box": b, "match": None, "parts": None}
+            if app_match and isinstance(b.get("match"), (int, float)):
+                c["match"] = max(0.0, min(1.0, float(b["match"])))
+                c["parts"] = {str(obs.get("matcher") or "app"): round(c["match"], 3)}
+            out.append(c)
+        if self.hm.get("ref") is not None and out and not (app_match and all(c["parts"] for c in out)):
+            self._score(ft, out, w, h)
         return out
+
+    def _score(self, ft, cands, w, h):
+        """Compare each candidate with the drone's item (once per observed frame)."""
+        if self._scored[0] == ft and len(self._scored[1]) == len(cands):
+            for c, prev in zip(cands, self._scored[1]):
+                c["match"], c["parts"] = prev
+            return
+        ref = self.hm["ref"]
+        frame_img = None
+        need_frame = target_match.Image is not None and self.hm["ref_sig"] is not None \
+            and any(not c["box"].get("crop") for c in cands)
+        if need_frame and self.camera is not None and hasattr(self.camera, "frame_near"):
+            # Decode at a quarter size straight from the JPEG: cheap on a Pi Zero.
+            frame_img = target_match.open_image(self.camera.frame_near(ft), reduce_to=(w // 4, h // 4))
+        for c in cands:
+            if c["parts"]:
+                continue                     # already scored by the app
+            sig = None
+            if self.hm["ref_sig"] is not None:
+                crop = c["box"].get("crop")
+                img = target_match.open_image(target_match.decode_b64(crop)) if crop \
+                    else target_match.crop_box(frame_img, c["box"], w, h)
+                sig = self.matcher.signature(img)
+            if self.hm["ref_sig"] is None and target_match.kind(ref.get("object_class")) is None:
+                continue                     # nothing to judge by: position only (as before)
+            c["match"], c["parts"] = self.matcher.score(self.hm["ref_sig"], ref.get("object_class"), sig,
+                                                        c["label"], c["score"])
+        self._scored = (ft, [(c["match"], c["parts"]) for c in cands])
+
+    def _matching(self, cands):
+        thr = self.cfg["match_threshold"]
+        return [c for c in cands if c["match"] is None or c["match"] >= thr]
+
+    def _live_state(self, state, note=None, **fields):
+        if self.hm.get("source") == "live" and self.live is not None and self.hm["wid"]:
+            self.live.target_state(self.hm["wid"], state, note, **fields)
 
     def _homing(self, now, s, alive):
         h = self.hm
@@ -632,64 +713,217 @@ class VisionManager:
             if h["wid"]:
                 self.hm_skip.add(h["wid"])
             if h.get("source") == "live" and self.live is not None:
-                self.live.homing_aborted(h["wid"])
+                self.live.homing_aborted(h["wid"], f"the boat left GUIDED ({s['flight_mode']})")
             self.hm = self._idle_homing()
             return
         if not alive:
             self._abort_homing("the camera link was lost")
             return
-        if s["lat"] is None:
-            return
+        gps_ok = s["lat"] is not None and (s.get("gps_fix") or 0) >= 3
+        if not gps_ok:
+            h["gps_bad"] = h["gps_bad"] or now
+            if now - h["gps_bad"] >= self.cfg["gps_lost_hold_s"]:
+                self._abort_homing("the GPS fix was lost")
+            return                           # never steer on a bad position
+        h["gps_bad"] = None
         boat = (s["lat"], s["lng"])
+        live = h.get("source") == "live"
         targets = self._targets(now)
         if h["state"] == "search":
-            near = [t for t in targets if dist_m(t[0], t[1], *h["wp"]) <= self.cfg["homing_accept_m"]]
-            if near:
-                best = min(near, key=lambda t: dist_m(t[0], t[1], *h["wp"]))
-                h.update(state="track", target=(best[0], best[1]), t_seen=now)
+            near = [t for t in targets if dist_m(t["lat"], t["lng"], *h["wp"]) <= self.cfg["homing_accept_m"]]
+            good = self._matching(near)
+            if good:
+                # The best match; equally good ones (or none judged): the closest to the point.
+                best = min(good, key=lambda t: (-(t["match"] or 0), dist_m(t["lat"], t["lng"], *h["wp"])))
+                h.update(state="track", target=(best["lat"], best["lng"]), t_seen=now, match=best["match"],
+                         approaching=False)
                 self._goto(now, h["target"])
-                self._event("Homing: plastic in sight")
+                if best["match"] is not None:
+                    self._event(f"Homing: the drone's item is in sight (match {best['match']:.2f})")
+                    self._live_state("MATCHED", f"match {best['match']:.2f} {best['parts']}",
+                                     match_score=best["match"])
+                else:
+                    self._event("Homing: plastic in sight")
+                    self._live_state("MATCHED", "plastic in sight (no reference to compare)")
             elif now - h["t_state"] > self.cfg["homing_search_s"]:
-                self._finish_homing(now, False, "not seen by the camera")
-            elif now - h["last_goto"] > 2.0:
-                self._goto(now, h["wp"])
+                seen = h["best_rejected"]
+                self._finish_homing(now, False, "not seen by the camera" if seen is None else
+                                    f"only other items seen (best match {seen:.2f})", state="NOT_FOUND")
+            else:
+                self._search_move(now, s, boat)
+            if near and not good:
+                best_bad = max(t["match"] for t in near)
+                h["best_rejected"] = max(h["best_rejected"] or 0, best_bad)
+                if now - h["t_match_log"] > MATCH_LOG_S:
+                    h["t_match_log"] = now
+                    self._event(f"Homing: {len(near)} item(s) seen, not the drone's (best match {best_bad:.2f})")
             h["dist"] = dist_m(*boat, *h["wp"])
             return
         if h["state"] == "track":
-            if targets:
-                best = min(targets, key=lambda t: dist_m(t[0], t[1], *h["target"]))
-                if dist_m(best[0], best[1], *h["target"]) <= 2.5:
+            good = self._matching(targets)
+            if good:
+                best = min(good, key=lambda t: dist_m(t["lat"], t["lng"], *h["target"]))
+                if dist_m(best["lat"], best["lng"], *h["target"]) <= 2.5:
                     a = 0.5                  # smooth the jitter of single detections
-                    h["target"] = (h["target"][0] + a * (best[0] - h["target"][0]),
-                                   h["target"][1] + a * (best[1] - h["target"][1]))
+                    h["target"] = (h["target"][0] + a * (best["lat"] - h["target"][0]),
+                                   h["target"][1] + a * (best["lng"] - h["target"][1]))
                     h["t_seen"] = now
             if now - h["t_seen"] > self.cfg["homing_lost_s"]:
-                h.update(state="search", t_state=now - self.cfg["homing_search_s"] / 2)
+                h.update(state="search", t_state=now - self.cfg["homing_search_s"] / 2, sweep_goal=None,
+                         wp=h["target"] if live else h["wp"])
                 self._event("Homing: lost sight of the item, searching again")
+                self._live_state("SEARCHING", "lost sight of it")
                 return
+            if not h["approaching"]:
+                h["approaching"] = True
+                self._live_state("APPROACHING", "steering onto it with the camera")
             d = dist_m(*boat, *h["target"])
             h["dist"] = d
             if d <= self.cfg["homing_capture_m"]:
                 fwd, right = to_boat(s["lat"], s["lng"], s["heading"] or 0, *h["target"])
                 scale = (d + self.cfg["homing_drive_through_m"]) / max(d, 0.05)
                 drive = to_world(s["lat"], s["lng"], s["heading"] or 0, fwd * scale, right * scale)
-                h.update(state="capture", drive=drive, capture_t=now)
+                h.update(state="capture", drive=drive, capture_t=now, spot=h["target"])
                 self._goto(now, drive)
                 self._event("Homing: driving through the item")
+                self._live_state("COLLECTING", "driving through it, roller on")
             elif now - h["last_goto"] > 0.25:
                 self._goto(now, h["target"])
             return
         if h["state"] == "capture":
             h["dist"] = dist_m(*boat, *h["drive"])
             if h["dist"] < 0.6 or now - h["capture_t"] > 8.0:
-                h.update(state="confirm", t_state=now)
+                h.update(state="confirm", t_state=now, verify="watch", v_t=now)
                 self._goto(now, boat)        # stop here while the counter checks the ramp
+                self._live_state("VERIFYING", "watching the ramp")
             return
         if h["state"] == "confirm":
             if self.last_catch_t >= h["capture_t"] - 1.0:
-                self._finish_homing(now, True, "collected")
-            elif now - h["t_state"] > self.cfg["homing_confirm_s"]:
-                self._finish_homing(now, False, "nothing came up the ramp")
+                self._finish_homing(now, True, "collected", state="COLLECTED", verified=True,
+                                    note="counted on the ramp")
+            elif not live:
+                if now - h["t_state"] > self.cfg["homing_confirm_s"]:
+                    self._finish_homing(now, False, "nothing came up the ramp")
+            else:
+                self._verify(now, s, boat, targets)
+
+    def _search_move(self, now, s, boat):
+        """Search: go to the point; nothing matching there yet → sweep: out to a
+        point SWEEP_R_M away and back through the middle, a quarter turn further
+        each time, so the forward camera looks all around the point."""
+        h = self.hm
+        goal = h["sweep_goal"]
+        if goal is None and dist_m(*boat, *h["wp"]) > 1.5:
+            if now - h["last_goto"] > 2.0:
+                self._goto(now, h["wp"])
+            return
+        if goal is None:
+            h.update(sweep_i=0, sweep_h0=s["heading"] or 0)
+        if goal is None or dist_m(*boat, *goal) < 1.0 or now - h["sweep_t"] > SWEEP_LEG_S:
+            i = h["sweep_i"]
+            h["sweep_i"] += 1
+            if i % 2 == 0:
+                ang = math.radians(h["sweep_h0"] + 90 + 90 * (i // 2))
+                goal = offset(h["wp"][0], h["wp"][1], SWEEP_R_M * math.cos(ang), SWEEP_R_M * math.sin(ang))
+            else:
+                goal = h["wp"]
+            h.update(sweep_goal=goal, sweep_t=now)
+            self._goto(now, goal)
+        elif now - h["last_goto"] > 2.0:
+            self._goto(now, goal)
+
+    # ------------------------------------------------------------------ verification (live collect)
+    def _verify(self, now, s, boat, targets):
+        """After driving through: is the item gone? Watch the ramp; then, with
+        verify_lookback, drive a little on, turn to face the spot and look."""
+        h = self.hm
+        spot = h["spot"] or h["target"]
+        still = [t for t in self._matching(targets)
+                 if dist_m(t["lat"], t["lng"], *spot) <= STILL_THERE_M]
+        if still and h["verify"] in ("watch", "look", "turn"):
+            best = min(still, key=lambda t: dist_m(t["lat"], t["lng"], *spot))
+            self._retry(now, (best["lat"], best["lng"]), "it is still on the water")
+            return
+        if now - h["t_state"] > self.cfg["verify_time_s"]:
+            self._finish_homing(now, True, "collected", state="COLLECTED", verified=False,
+                                note="verification timed out; not seen again")
+            return
+        v = h["verify"]
+        if v == "watch":
+            if now - h["v_t"] < self.cfg["homing_confirm_s"]:
+                return
+            if not self.cfg["verify_lookback"]:
+                self._retry(now, spot, "nothing came up the ramp")
+                return
+            hdg = s["heading"] or 0
+            h["view"] = to_world(spot[0], spot[1], hdg, self.cfg["verify_view_m"], 0)
+            h.update(verify="reposition", v_t=now)
+            self._goto(now, h["view"])
+            self._event("Verify: nothing on the ramp - turning back to look at the spot")
+            self._live_state("VERIFYING", "nothing on the ramp: turning back to look")
+        elif v == "reposition":
+            if dist_m(*boat, *h["view"]) < 1.0 or now - h["v_t"] > 15.0:
+                h.update(verify="turn", v_t=now)
+                self._goto(now, spot)
+            elif now - h["last_goto"] > 2.0:
+                self._goto(now, h["view"])
+        elif v == "turn":
+            fwd, right = to_boat(s["lat"], s["lng"], s["heading"] or 0, *spot)
+            facing = fwd > 0 and abs(math.degrees(math.atan2(right, fwd))) <= LOOK_HEADING_DEG
+            if facing and not self._in_view(fwd, right) and h.get("v_backoffs", 0) < 2:
+                # Facing it, but so close the spot is hidden under the ramp: back off and turn again.
+                h["v_backoffs"] = h.get("v_backoffs", 0) + 1
+                away = to_world(spot[0], spot[1], (s["heading"] or 0) + 180, self.cfg["verify_view_m"], 0)
+                h.update(verify="reposition", v_t=now, view=away)
+                self._goto(now, away)
+            elif facing or now - h["v_t"] > 15.0:
+                h.update(verify="look", v_t=now, look_k=0, look_stop=None)
+                self._goto(now, boat)        # stop, facing the spot
+            elif now - h["last_goto"] > 1.0:
+                self._goto(now, spot)
+        elif v == "look":
+            # Watch the spot straight on, then panned left and right of it (the
+            # item may have been pushed aside, out of a straight-on view).
+            third = self.cfg["verify_look_s"] / 3.0
+            k = min(2, int((now - h["v_t"]) / third))
+            if k != h.get("look_k"):
+                h["look_k"] = k
+                side = 1 if k == 1 else -1
+                aim = to_world(spot[0], spot[1], (s["heading"] or 0) + 90 * side, LOOK_PAN_M, 0)
+                self._goto(now, aim)         # turn towards a point beside the spot...
+                h["look_stop"] = now + LOOK_TURN_S
+            elif h.get("look_stop") and now >= h["look_stop"]:
+                h["look_stop"] = None
+                self._goto(now, boat)        # ...and stop there to watch
+            if now - h["v_t"] >= self.cfg["verify_look_s"]:
+                fwd, right = to_boat(s["lat"], s["lng"], s["heading"] or 0, *spot)
+                self._finish_homing(now, True, "collected", state="COLLECTED", verified=True,
+                                    note=f"gone from the spot (looked back from {math.hypot(fwd, right):.1f} m, "
+                                         f"{math.degrees(math.atan2(right, fwd)):+.0f} deg)")
+
+    def _in_view(self, fwd, right):
+        """Is a water point (metres ahead / right of the boat) in the camera's picture, above the ramp?"""
+        w, h = self.cfg["camera_width"], self.cfg["camera_height"]
+        if fwd <= 0.2:
+            return False
+        p = CameraModel.from_cfg(self.cfg, w, h).ground_to_pixel(fwd, right)
+        return bool(p) and 0 <= p[0] <= w and 0 <= p[1] <= self.cfg["ramp_top"] * h * 0.9
+
+    def _retry(self, now, where, why):
+        """The pick-up failed: search again from where it was seen, or give up."""
+        h = self.hm
+        h["retries"] += 1
+        n, most = h["retries"], int(self.cfg["collect_max_retries"])
+        if n > most:
+            self._finish_homing(now, False, f"{why}; tried {n} times", state="RETRY_REQUIRED",
+                                lat=where[0], lng=where[1])
+            return
+        self._event(f"Verify: {why} - retry {n} of {most}", "warn")
+        # The target's position becomes where the camera last saw it.
+        self._live_state("SEARCHING", f"{why}: retry {n} of {most}", retry_count=n, lat=where[0], lng=where[1])
+        h.update(state="search", wp=where, t_state=now, verify=None, spot=None, match=None,
+                 best_rejected=None, last_goto=0.0, approaching=False, sweep_goal=None, v_backoffs=0)
+        self._goto(now, where)
 
     def _maybe_start_homing(self, now, s, alive):
         if self.live is not None and self.live.state == "running":
@@ -734,27 +968,45 @@ class VisionManager:
             return
         wid, lat, lng = wp
         item = self.live.item_number(wid)
+        want = target_match.MATCHERS.get(str(self.cfg.get("match_method") or "colour").lower(),
+                                         target_match.ColourMatcher)
+        if type(self.matcher) is not want:
+            self.matcher = want()            # match_method was changed
+        ref = self.live.target_info(wid) or {"id": wid}
+        ref_sig = None
+        if ref.get("reference_path"):
+            try:
+                with open(ref["reference_path"], "rb") as f:
+                    ref_sig = self.matcher.signature(target_match.open_image(f.read()))
+            except OSError:
+                ref_sig = None
         self.hm = {**self._idle_homing(), "state": "search", "wid": wid, "seq": None, "source": "live",
-                   "wp": (lat, lng), "t_state": now, "item": item}
+                   "wp": (lat, lng), "t_state": now, "t_start": now, "item": item, "ref": ref, "ref_sig": ref_sig,
+                   "retries": int(ref.get("retry_count") or 0)}
+        self._scored = (None, [])
         self._cmd("Homing: slow down", self.link.set_speed, self.cfg["homing_speed_mps"])
         self._goto(now, (lat, lng))
         self.stats["attempts"] += 1
-        self._event(f"Homing: taking over for item {item}")
+        how = ("comparing with the drone's image" if ref_sig is not None else
+               f"looking for a {ref['object_class']}" if ref.get("object_class") else "no reference image")
+        self._event(f"Homing: taking over for item {item} ({how})")
+        self._live_state("SEARCHING", f"within {self.cfg['homing_start_m']:g} m: camera search, {how}")
 
     def _goto(self, now, point):
         self.hm["last_goto"] = now
         self._cmd("Homing target", self.link.goto, point[0], point[1])
 
-    def _finish_homing(self, now, collected, reason):
+    def _finish_homing(self, now, collected, reason, state=None, verified=None, note=None, **fields):
         h = self.hm
         wid, seq = h["wid"], h["seq"]
         if h.get("source") == "live":
             self.stats["collected" if collected else "missed"] += 1
-            self._event(f"Homing: item {h.get('item')} {'collected' if collected else 'missed'} — {reason}",
-                        "info" if collected else "warn")
+            self._event(f"Homing: item {h.get('item')} {state or ('collected' if collected else 'missed')}"
+                        f" - {note or reason}", "info" if collected else "warn")
             self.hm["state"] = "resuming"
             self._cmd("Live collect speed", self.link.set_speed, self._plan_speed())
-            self.live.homing_finished(wid, collected, "camera")
+            self.live.homing_finished(wid, collected, "camera", state=state, verified=verified,
+                                      note=note or reason, retry_count=h.get("retries", 0), **fields)
             self.hm = self._idle_homing()
             return
         self.missions.mark_item(wid, collected, how="camera" if collected else "missed")
@@ -775,7 +1027,7 @@ class VisionManager:
             wid = self.hm["wid"]
             self.hm["state"] = "resuming"
             self._cmd("Live collect speed", self.link.set_speed, self._plan_speed())
-            self.live.homing_aborted(wid)
+            self.live.homing_aborted(wid, reason)
             self.hm = self._idle_homing()
             return
         self.hm["state"] = "resuming"
@@ -866,6 +1118,9 @@ class VisionManager:
             "item": h.get("item"), "item_id": h["wid"],
             "distance_m": None if h["dist"] is None else round(h["dist"], 1),
             "target": None if not h["target"] else {"lat": h["target"][0], "lng": h["target"][1]},
+            "match": h.get("match"), "match_threshold": self.cfg["match_threshold"],
+            "has_reference": h.get("ref_sig") is not None, "retries": h.get("retries", 0),
+            "verify": h.get("verify"), "matcher": self.matcher.name,
             **self.stats,
         }
 

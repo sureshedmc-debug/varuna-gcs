@@ -42,11 +42,12 @@ The same tool can also:
 
 | Camera | How it is captured | Load on a Pi 3 |
 |---|---|---|
-| **USB webcam with MJPEG 720p30** (recommended) | ffmpeg asks the camera for its own JPEG frames and passes them through untouched | very low |
+| **Pi camera module** (recommended) | `rpicam-vid` with the Pi's hardware H.264 encoder, 720p | low |
+| USB webcam, `camera_codec` = `h264` | its raw 640×480 picture into the Pi's hardware H.264 encoder (`h264_v4l2m2m`) | low |
+| USB webcam with MJPEG 720p30 | ffmpeg passes the camera's own JPEG frames through untouched | low CPU, but 3–4× the bandwidth |
 | USB webcam without MJPEG | ffmpeg encodes the raw frames on the Pi | high: may drop below 30 fps |
-| Pi camera module | `rpicam-vid` with the Pi's hardware H.264 encoder | low |
 
-The camera module's video goes to the app as **H.264** (`/api/camera/h264`), much sharper than MJPEG for the same bandwidth: 720p at 15 fps and 5 Mbit/s by default (`video_bitrate_kbps`, up to 15000). The app decodes it in the browser (WebCodecs); browsers that can't — the app opened over plain `http://` from another computer — get MJPEG from `/video_feed` instead, which the Pi then decodes from the H.264 (more CPU). USB webcams always send MJPEG. `camera_codec` = `mjpeg` in System → Live tuning switches the camera module back to MJPEG.
+The camera module's video goes to the app as **H.264** (`/api/camera/h264`), much sharper than MJPEG for the same bandwidth: 720p at 15 fps and 3 Mbit/s by default (`video_bitrate_kbps`, up to 15000). The app decodes it in the browser (WebCodecs); browsers that can't — the app opened over plain `http://` from another computer — get MJPEG from `/video_feed` instead, which the Pi then decodes from the H.264 (more CPU). USB webcams send H.264 too (640×480, from the same hardware encoder); if the encoder can't start (Pi 5, or an ffmpeg without `h264_v4l2m2m`) they fall back to their own MJPEG. `camera_codec` = `mjpeg` in System → Live tuning switches both cameras to MJPEG.
 
 With `camera_codec` = `h264` the camera module runs at `stream_fps` (15), not 30: H.264 frames depend on each other, so frames can't be dropped for the stream later.
 
@@ -56,11 +57,11 @@ With `camera_codec` = `h264` the camera module runs at `stream_fps` (15), not 30
 
 **Camera module not found after a reboot?** With `camera_auto_detect=1` the Pi's firmware probes for the camera at boot and sometimes misses it (Pi 3 with the camera v1 especially). The setup tool's Update finds which camera module is connected (starting it on the spot if it wasn't found) and writes `camera_auto_detect=0` + `dtoverlay=<sensor>` (e.g. `ov5647`) to `/boot/firmware/config.txt`, so it loads on every boot. The original file is kept as `config.txt.before-varuna`.
 
-With `camera_source` = `auto` (the default) the drone uses whichever camera is connected: the USB webcam if one is plugged in, else the Pi camera module. If the camera in use fails or is unplugged, it switches to the other one by itself. You can also pick the camera in the app: System → Live tuning → `camera_source` (it switches straight away; "Save to disk" keeps it after a restart).
+With `camera_source` = `auto` (the default) the drone uses whichever camera is connected: the Pi camera module if there is one (its hardware H.264 is the coolest, lowest-delay stream), else the USB webcam. If the camera in use fails or is unplugged, it switches to the other one by itself. You can also pick the camera in the app: System → Live tuning → `camera_source` (it switches straight away; "Save to disk" keeps it after a restart).
 
 If the camera can't do 720p30, the backend falls back by itself: first to encoding on the Pi, then to 640×480. System → Camera in the app shows the real resolution and fps.
 
-MJPEG video at 720p, 15 fps and quality 55 needs about **4 Mbit/s** to the laptop (H.264: 5 by default). On a weak link, lower **stream_fps**, **video_bitrate_kbps** (H.264) or **camera_quality** (MJPEG) in System → Live tuning. The setup tool turns the Pi's Wi-Fi power saving off (it makes the video stall); the Pi 3B+ also streams more smoothly on 5 GHz Wi-Fi than on 2.4 GHz.
+MJPEG video at 720p, 15 fps and quality 55 needs about **4 Mbit/s** to the laptop (H.264: 3 by default). On a weak link, lower **stream_fps**, **video_bitrate_kbps** (H.264) or **camera_quality** (MJPEG) in System → Live tuning. The setup tool turns the Pi's Wi-Fi power saving off (it makes the video stall); the Pi 3B+ also streams more smoothly on 5 GHz Wi-Fi than on 2.4 GHz.
 
 ## Pixhawk (ArduCopter) settings
 
@@ -68,9 +69,19 @@ MJPEG video at 720p, 15 fps and quality 55 needs about **4 Mbit/s** to the lapto
 |---|---|---|
 | `SERIAL2_PROTOCOL` | 2 | MAVLink2 on TELEM2 (skip if you use USB) |
 | `SERIAL2_BAUD` | 57 | 57600 baud, which matches `telem2_baud` |
+| `BRD_SER2_RTSCTS` | 0 | The Pi's 3-wire cable has no flow-control wires |
 | `FS_GCS_ENABLE` | 1 | If the Pi stops sending heartbeats → failsafe (RTL / land) |
+| `FS_OPTIONS` | 17 | Bit 0: keep flying the mission if the RC transmitter is lost (it still RTLs at the end) |
 | `RTL_ALT` | e.g. 1500 | Height (cm) the drone climbs to before coming home |
+| `DISARM_DELAY` | 10 | Motors disarm 10 s after landing / sitting armed on the ground |
 | `FENCE_ENABLE` | 1 | Keep the drone inside a safe area |
+| `FENCE_TYPE` | 3 | Height limit + a circle around home for manual flying. During a mission the Pi switches it to 5 (height + the mission fence) and back afterwards |
+| `FENCE_ALT_MAX` / `FENCE_RADIUS` | 120 / 300 | Height limit (m, the Pi keeps it at `max_altitude_m`) and the manual-flying circle (m) |
+| `FENCE_ACTION` | 1 | Crossing a fence → RTL (or LAND if RTL isn't possible) |
+
+### Mission fence
+
+With every mission upload the Pi also uploads a geofence polygon drawn `mission_fence_m` (30 m) around home and all the waypoints — the convex hull of a 30 m circle around each point, so every leg and the way home lie well inside it. The app's Missions map draws the same orange dashed shape while you plan. On **Start** the Pi switches the Pixhawk's fence to height limit + that polygon; when the mission is over (landed and disarmed, or cleared) it puts the fence back to what it was, so a manual flight somewhere else isn't caught by an old mission's area. Waypoints must stay 5 m under the height fence. `mission_fence_m = 0` turns the mission fence off. With the fence on, arming needs a GPS position.
 
 Wiring for TELEM2:
 - TELEM2 TX → Pi GPIO15 (pin 10)
@@ -168,11 +179,12 @@ The tool writes this file. You can also edit it, or set `DRONE_<KEY>` environmen
 | `camera_source` | `auto` | `auto` (USB webcam if plugged in, else Pi camera module), `usb`, `csi`, `test` or `off` (live) |
 | `camera_width/height/fps` | 1280/720/30 | Capture size and rate |
 | `camera_codec` | `h264` | Pi camera module video: `h264` (hardware encoder) or `mjpeg` (live) |
-| `video_bitrate_kbps` | 5000 | H.264 bitrate (live) |
+| `video_bitrate_kbps` | 3000 | H.264 bitrate (live) |
 | `stream_fps` | 15 | Frames per second sent to the app (live) |
 | `takeoff_alt_m` | 10 | Default take-off height (live) |
 | `max_altitude_m` | 120 | Highest take-off or waypoint allowed (live) |
 | `loiter_time_s` | 10 | Hover time at "loiter" waypoints (live) |
 | `max_distance_m` | 1500 | Reject waypoints farther than this from home (live) |
+| `mission_fence_m` | 30 | Geofence this far around home + the waypoints during a mission; 0 = off (live) |
 | `operator_lost_action` | `none` | If the app goes silent mid-mission: `none`, `rtl` or `land` (live) |
 | `operator_pin` | empty | Optional PIN for `/api/auth/verify_pin` |

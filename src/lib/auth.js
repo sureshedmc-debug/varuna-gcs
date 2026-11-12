@@ -4,11 +4,12 @@
 
 import { useSyncExternalStore } from 'react'
 import { localCall, LocalDataError, saveRecords, eventRow } from './localData'
+import { runFingerprint } from './fingerprint'
 
 const KEY = 'varuna.user'
 const subs = new Set()
 
-const FIELDS = ['userId', 'username', 'name', 'email', 'provider', 'profession', 'organisation', 'picture', 'createdAt', 'loginAt']
+const FIELDS = ['userId', 'username', 'name', 'email', 'provider', 'profession', 'organisation', 'picture', 'createdAt', 'loginAt', 'fingerprint']
 
 function pick(p) {
   if (!p || typeof p !== 'object' || !p.userId) return null
@@ -24,6 +25,9 @@ function load() {
 }
 
 let user = load()
+// For a few minutes after signing in, the operator may add a fingerprint. Kept
+// in memory only, never saved.
+let fingerprintSetup = null
 
 function setUser(profile) {
   user = pick(profile)
@@ -37,9 +41,11 @@ function setUser(profile) {
   return user
 }
 
-/** users.csv is written by the store itself; this adds the activity line. */
-function signedIn(profile, how) {
-  const u = setUser(profile)
+/** users.csv is written by the store itself; this adds the activity line.
+ *  `j`: the store's answer, { profile, fingerprintSetup }. */
+function signedIn(j, how) {
+  fingerprintSetup = j.fingerprintSetup || null
+  const u = setUser(j.profile)
   if (u) saveRecords([{ table: 'mission_events', op: 'insert', rows: [eventRow('login', { user: u, details: how })] }])
   return u
 }
@@ -65,18 +71,63 @@ export function displayName(u) {
   return u.name || u.username || (u.email || '').split('@')[0] || 'Operator'
 }
 
+/**
+ * Checks the password. Not signed in yet: resolves with the face step,
+ * { ticket, enroll, fingerprint }, to finish with finishFaceCheck() — or
+ * finishWithFingerprint() when `fingerprint` (one is saved for this account).
+ */
 export async function loginWithPassword(username, password) {
-  const j = await localCall('/local/auth/login', { username, password })
-  return signedIn(j.profile, 'password')
+  return (await localCall('/local/auth/login', { username, password })).face
 }
 
+/** Finishes a password or Google sign-in with the face templates from FaceCheck. */
+export async function finishFaceCheck(ticket, face, how) {
+  const j = await localCall('/local/auth/face', { ticket, face })
+  return signedIn(j, how)
+}
+
+/** Instead of the face check: Windows Hello with the fingerprint saved for this account. */
+export async function finishWithFingerprint(ticket, how, opts) {
+  return signedIn(await runFingerprint('verify', ticket, opts), `${how} + fingerprint`)
+}
+
+/** Sign in with the fingerprint alone (Windows Hello), no password. */
+export async function signInWithFingerprint(opts) {
+  return signedIn(await runFingerprint('login', '', opts), 'fingerprint')
+}
+
+/** True for a few minutes after signing in: a fingerprint can be added now. */
+export function canAddFingerprint() {
+  return !!fingerprintSetup && !!user
+}
+
+/** Save this operator's fingerprint (Windows Hello) for the next sign-in. */
+export async function addFingerprint(opts) {
+  if (!canAddFingerprint()) throw new LocalDataError('expired', 'Sign in again, then add the fingerprint.')
+  await runFingerprint('add', fingerprintSetup, opts)
+  fingerprintSetup = null
+  return setUser({ ...user, fingerprint: 'yes' })
+}
+
+/** How many fingerprints are saved on this computer (0 = hide the button). */
+export async function fingerprintsSaved() {
+  return (await localCall('/local/auth/config')).fingerprint?.saved || 0
+}
+
+/** `fields.face`: the face templates taken while making the account. */
 export async function registerAccount(fields) {
   const j = await localCall('/local/auth/register', fields)
-  return signedIn(j.profile, 'new account')
+  return signedIn(j, 'new account')
+}
+
+/** The Data tab's PIN, checked by the local store. */
+export async function unlockData(pin) {
+  await localCall('/local/data/unlock', { pin })
 }
 
 export function logout() {
   if (user) saveRecords([{ table: 'mission_events', op: 'insert', rows: [eventRow('logout', { user })] }])
+  fingerprintSetup = null
   setUser(null)
 }
 
@@ -97,6 +148,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
  * @param {{signal?: AbortSignal, onPage?: (url: string) => void}} [o]
  *   onPage gets the page URL so the UI can offer it as a link if a popup blocker
  *   stopped it opening.
+ * @returns {Promise<{face: {ticket: string, enroll: boolean}}>} Google said yes;
+ *   finish with the face check (finishFaceCheck).
  */
 export async function signInWithGoogle({ signal, onPage } = {}) {
   const begin = await localCall('/local/auth/google/begin', {})
@@ -117,7 +170,8 @@ export async function signInWithGoogle({ signal, onPage } = {}) {
       if (err.code === 'offline') continue // a blip; keep waiting
       throw err
     }
-    if (r.status === 'done') return signedIn(r.profile, 'google')
+    if (r.status === 'face') return { face: r.face } // Google said yes; the face check comes next
+    if (r.status === 'done') return signedIn(r, 'google')
     if (r.status === 'error') throw new LocalDataError('google', r.message || 'Google sign-in failed.')
     if (r.status === 'expired') throw new LocalDataError('expired', r.message || 'The sign-in window expired. Try again.')
   }

@@ -639,9 +639,28 @@ class BoatLink:
         failsafe acts — so this must be sent continuously."""
         if self.target_system is None:
             return False
+        return self.rc_override_channels({1: steer_pwm, 3: throttle_pwm}, others=0)
+
+    def rc_override_channels(self, values, others=0):
+        """RC override on any channels 1–16: {channel: µs}; µs 0 hands that
+        channel back to the radio at once. others=0: every other channel 1–8
+        goes back to the radio too (the stick sender); others=None: they are
+        left exactly as they are (UINT16_MAX = "ignore this field")."""
+        if self.target_system is None:
+            return False
         ts, tc = self.target_system, self.target_component
-        return self._send(lambda m: m.mav.rc_channels_override_send(
-            ts, tc, int(steer_pwm), 0, int(throttle_pwm), 0, 0, 0, 0, 0))
+        ignore = 65535
+        base = [ignore if others is None else int(others)] * 8
+        ext = [0] * 8                                    # channels 9–16: 0 = ignore
+        for ch, us in values.items():
+            ch, us = int(ch), int(us)
+            if 1 <= ch <= 8:
+                base[ch - 1] = us
+            elif 9 <= ch <= 16:
+                ext[ch - 9] = us if us else 65534        # 65534 = back to the radio
+        if any(ext):
+            return self._send(lambda m: m.mav.rc_channels_override_send(ts, tc, *base, *ext))
+        return self._send(lambda m: m.mav.rc_channels_override_send(ts, tc, *base))
 
     def get_param(self, name, timeout=3.0):
         """A Pixhawk parameter's value, or None if it didn't answer / has no such parameter."""

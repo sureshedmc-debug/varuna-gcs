@@ -8,11 +8,10 @@ import { AnimatePresence, motion } from 'framer-motion'
 import './launch.css'
 import LoginPage from './LoginPage'
 import DirectMissionPlanPage from './DirectMissionPlanPage'
-import BasicDataPage from './BasicDataPage'
 import { ArrowLeft } from './icons'
 
 const EASE = [0.16, 1, 0.3, 1]
-const TITLES = { login: 'Login', plan: 'Direct Mission Plan', 'plan-new': 'Direct Mission Plan', data: 'Data' }
+const TITLES = { login: 'Login', register: 'Create an account', plan: 'Direct Mission Plan', 'plan-new': 'Direct Mission Plan' }
 
 export default function LaunchPages({ page, onOpen, onClose, onNavigate }) {
   const pageRef = useRef(null)
@@ -38,27 +37,30 @@ export default function LaunchPages({ page, onOpen, onClose, onNavigate }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [page, onClose])
 
+  // Direct Mission Plan and Login take the whole screen.
+  const full = ['plan', 'plan-new', 'login', 'register'].includes(page)
+
   return createPortal(
     <AnimatePresence>
-      {page && (
+      {page && !full && (
         <motion.div key="scrim" className="vl-scrim" onClick={onClose} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }} />
       )}
       {page && (
         <motion.div
           key={page}
-          className="varuna-home vl-layer"
+          className={`varuna-home vl-layer${full ? ' full' : ''}`}
           onMouseDown={(e) => e.target === e.currentTarget && onClose()}
-          initial={{ opacity: 0, scale: 0.9, y: 24 }}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 1.04, y: -8 }}
-          transition={{ type: 'tween', ease: EASE, duration: 0.42 }}
+          initial={full ? { opacity: 0 } : { opacity: 0, scale: 0.9, y: 24 }}
+          animate={full ? { opacity: 1 } : { opacity: 1, scale: 1, y: 0 }}
+          exit={full ? { opacity: 0 } : { opacity: 0, scale: 1.04, y: -8 }}
+          transition={{ type: 'tween', ease: EASE, duration: full ? 0.3 : 0.42 }}
         >
-          <div ref={pageRef} tabIndex={-1} className={`vl-page ${page === 'data' ? 'wide' : ''}`} role="dialog" aria-modal="true" aria-label={TITLES[page]} style={{ outline: 'none' }}>
+          <div ref={pageRef} tabIndex={-1} className={`vl-page${full ? ' full' : ''}`} role="dialog" aria-modal="true" aria-label={TITLES[page]} style={{ outline: 'none' }}>
             <button type="button" className="vl-back" onClick={onClose}><ArrowLeft /> Home</button>
             {page === 'login' && <LoginPage onOpen={onOpen} onClose={onClose} />}
+            {page === 'register' && <LoginPage onOpen={onOpen} onClose={onClose} startRegister />}
             {page === 'plan' && <DirectMissionPlanPage onOpen={onOpen} onClose={onClose} onNavigate={onNavigate} />}
             {page === 'plan-new' && <DirectMissionPlanPage onOpen={onOpen} onClose={onClose} onNavigate={onNavigate} startWizard />}
-            {page === 'data' && <BasicDataPage />}
           </div>
         </motion.div>
       )}

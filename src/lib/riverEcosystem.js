@@ -5,7 +5,7 @@ import { SURFACE_LAYER } from './riverScene'
 
 // The Varuna loop on the river: plastic drifts downstream, the drone's camera
 // footprint sweeps the water and tags each piece, the tag is relayed to
-// JAL DHARA over the link, and the boat slides across the current to meet it
+// NIRMAL DHARA JALYAN over the link, and the boat slides across the current to meet it
 // with its conveyor — the belt carries it up and drops it in the bay.
 
 const CURRENT = 0.62 // river speed, units/s toward -z
@@ -13,8 +13,10 @@ const SPAWN_Z = -2.5
 const LANE_EVERY = 3.4
 const LANE_N = 9
 const BAY_KEEP = 16
-const ANCHOR = { x: 2.9, z: -18.5, yaw: -0.72 }
-const BOAT_RANGE = 2.3
+// the boat is modelled at ~1/1.7 of its presented size; everything here is in world units
+const BOAT_SCALE = 1.7
+const ANCHOR = { x: 3.4, z: -20, yaw: -0.72 }
+const BOAT_RANGE = 2.6
 
 const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x))
 const lerp = (a, b, t) => a + (b - a) * t
@@ -171,13 +173,14 @@ const FOAM_FRAG = /* glsl */ `
   uniform vec2 uFoot;
   varying vec2 vUv; varying vec3 vW;
   uniform vec2 uBoat;
+  uniform float uScale;
   float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
   float noise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
     return mix(mix(hash(i), hash(i+vec2(1,0)), f.x), mix(hash(i+vec2(0,1)), hash(i+vec2(1,1)), f.x), f.y); }
   float fbm(vec2 p){ return noise(p)*0.55 + noise(p*2.1+3.1)*0.3 + noise(p*4.3+7.7)*0.15; }
   float sdRR(vec2 p, vec2 b, float r){ vec2 q = abs(p) - b + r; return length(max(q,0.0)) + min(max(q.x,q.y),0.0) - r; }
   void main(){
-    vec2 p = vW.xz - uBoat;                     // world offset from boat centre
+    vec2 p = (vW.xz - uBoat) / uScale;          // offset from boat centre, in hull units
     float c = cos(uYaw), s = sin(uYaw);
     vec2 l = vec2(p.x * c - p.y * s, p.x * s + p.y * c); // boat-local (x, z)
     vec2 drift = vec2(0.0, uTime * 0.62);
@@ -231,6 +234,23 @@ const ARC_VERT = /* glsl */ `
 const DOT_FRAG = /* glsl */ `
   uniform sampler2D map; varying float vA; varying vec3 vC;
   void main(){ float m = texture2D(map, gl_PointCoord).a; gl_FragColor = vec4(vC * m * vA * 2.2, 1.0); }`
+// Daylight link: additive glow vanishes against a bright sky, so the beads are
+// drawn as solid, saturated colour (normal blending) and packed into a beam.
+const ARC_VERT_DAY = /* glsl */ `
+  attribute float aU;
+  uniform float uHalfH, uTime, uA;
+  varying float vA; varying vec3 vC;
+  void main(){
+    vec4 mv = modelViewMatrix * vec4(position, 1.0);
+    float pulse = pow(fract(aU * 2.0 - uTime * 0.9), 8.0);
+    vA = (0.85 + pulse * 0.15) * uA;
+    vC = mix(mix(vec3(0.0, 0.5, 0.82), vec3(0.42, 0.12, 0.88), aU), vec3(0.2, 0.95, 1.0), pulse * 0.7);
+    gl_PointSize = (0.17 + pulse * 0.12) * projectionMatrix[1][1] * uHalfH / max(0.1, -mv.z);
+    gl_Position = projectionMatrix * mv;
+  }`
+const DOT_FRAG_DAY = /* glsl */ `
+  uniform sampler2D map; varying float vA; varying vec3 vC;
+  void main(){ float m = texture2D(map, gl_PointCoord).a; float a = clamp(m * 1.6, 0.0, 1.0) * clamp(vA, 0.0, 1.0); if (a < 0.02) discard; gl_FragColor = vec4(vC, a); }`
 const PATH_VERT = /* glsl */ `
   attribute float aU;
   uniform float uHalfH, uTime, uA;
@@ -244,7 +264,8 @@ const PATH_VERT = /* glsl */ `
     gl_Position = projectionMatrix * mv;
   }`
 
-export function makeEcosystem({ scene, envMap, WATER_Y, dotTex, seed0 = 9001 }) {
+export function makeEcosystem({ scene, envMap, WATER_Y, dotTex, seed0 = 9001, mood = 'night' }) {
+  const day = mood === 'day'
   let seed = seed0
   const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647
 
@@ -252,7 +273,8 @@ export function makeEcosystem({ scene, envMap, WATER_Y, dotTex, seed0 = 9001 }) 
   const B = buildJalDhara(envMap)
   scene.add(B.group)
   const boat = { x: ANCHOR.x, vx: 0, z: ANCHOR.z, yaw: ANCHOR.yaw }
-  const footOffsetX = Math.sin(ANCHOR.yaw) * B.rampFoot.z
+  B.group.scale.setScalar(BOAT_SCALE)
+  const footOffsetX = Math.sin(ANCHOR.yaw) * B.rampFoot.z * BOAT_SCALE
   B.group.position.set(boat.x, WATER_Y, boat.z)
   B.group.rotation.y = boat.yaw
 
@@ -269,11 +291,13 @@ export function makeEcosystem({ scene, envMap, WATER_Y, dotTex, seed0 = 9001 }) 
     uStir: { value: 0.6 },
     uFoot: { value: new THREE.Vector2(B.rampFoot.x, B.rampFoot.z) },
     uBoat: { value: new THREE.Vector2() },
+    uScale: { value: BOAT_SCALE },
   }
   const foam = new THREE.Mesh(
     new THREE.PlaneGeometry(14, 26).rotateX(-Math.PI / 2).translate(0, 0, -6),
     new THREE.ShaderMaterial({ uniforms: foamU, vertexShader: FOAM_VERT, fragmentShader: FOAM_FRAG, transparent: true, depthWrite: false }),
   )
+  foam.scale.setScalar(BOAT_SCALE)
   foam.layers.set(SURFACE_LAYER)
   foam.renderOrder = 1
   scene.add(foam)
@@ -372,6 +396,7 @@ export function makeEcosystem({ scene, envMap, WATER_Y, dotTex, seed0 = 9001 }) 
     if (!animate) {
       if (it.mesh.parent !== B.body) B.body.add(it.mesh)
       it.mesh.position.copy(it.to)
+      it.mesh.scale.setScalar(1 / BOAT_SCALE) // keep litter at world size inside the scaled hull
       it.mesh.rotation.copy(it.rot)
       it.state = 'bay'
     }
@@ -404,7 +429,7 @@ export function makeEcosystem({ scene, envMap, WATER_Y, dotTex, seed0 = 9001 }) 
   scene.add(frust)
 
   // ---------- drone <-> boat link + boat path ----------
-  const ARC_N = 46
+  const ARC_N = day ? 150 : 46
   const arcPos = new Float32Array(ARC_N * 3)
   const arcU = new Float32Array(ARC_N).map((_, i) => i / (ARC_N - 1))
   const arcGeo = new THREE.BufferGeometry()
@@ -412,11 +437,11 @@ export function makeEcosystem({ scene, envMap, WATER_Y, dotTex, seed0 = 9001 }) 
   arcGeo.setAttribute('aU', new THREE.BufferAttribute(arcU, 1))
   const arcMat = new THREE.ShaderMaterial({
     uniforms: { map: { value: dotTex }, uHalfH: { value: 1 }, uTime: { value: 0 }, uA: { value: 0 } },
-    vertexShader: ARC_VERT,
-    fragmentShader: DOT_FRAG,
+    vertexShader: day ? ARC_VERT_DAY : ARC_VERT,
+    fragmentShader: day ? DOT_FRAG_DAY : DOT_FRAG,
     transparent: true,
     depthWrite: false,
-    blending: THREE.AdditiveBlending,
+    blending: day ? THREE.NormalBlending : THREE.AdditiveBlending,
   })
   const arc = new THREE.Points(arcGeo, arcMat)
   arc.frustumCulled = false
@@ -491,11 +516,19 @@ export function makeEcosystem({ scene, envMap, WATER_Y, dotTex, seed0 = 9001 }) 
       }
     }
     const want = target ? clamp(target.x - footOffsetX, ANCHOR.x - BOAT_RANGE, ANCHOR.x + BOAT_RANGE) : ANCHOR.x
-    const ax = (want - boat.x) * 1.3 - boat.vx * 2.1
-    boat.vx = clamp(boat.vx + ax * dt, -1.1, 1.1)
-    boat.x += boat.vx * dt
+    if (boatHook) {
+      // recording: a scripted, exactly repeating course
+      const h = boatHook(t, ANCHOR)
+      boat.vx = dt > 0 ? (h.x - boat.x) / dt : boat.vx
+      boat.x = h.x
+      boat.z = h.z
+    } else {
+      const ax = (want - boat.x) * 1.3 - boat.vx * 2.1
+      boat.vx = clamp(boat.vx + ax * dt, -1.1, 1.1)
+      boat.x += boat.vx * dt
+      boat.z = ANCHOR.z + Math.sin(t * 0.23) * 0.25
+    }
     boat.yaw = ANCHOR.yaw + clamp(boat.vx * 0.16, -0.18, 0.18)
-    boat.z = ANCHOR.z + Math.sin(t * 0.23) * 0.25
     B.group.position.set(boat.x, WATER_Y, boat.z)
     B.group.rotation.y = boat.yaw
     B.body.position.y = Math.sin(t * 1.4) * 0.022
@@ -512,9 +545,9 @@ export function makeEcosystem({ scene, envMap, WATER_Y, dotTex, seed0 = 9001 }) 
     foamU.uBoat.value.set(boat.x, boat.z)
     foam.position.set(boat.x, WATER_Y + 0.006, boat.z)
 
-    tmp.set(boat.x, WATER_Y + 0.4, boat.z)
+    tmp.set(boat.x, WATER_Y + 0.4 * BOAT_SCALE, boat.z)
     boatKey.target.position.copy(tmp)
-    boatKey.angle = Math.atan(4.2 / boatKey.position.distanceTo(tmp))
+    boatKey.angle = Math.atan((4.2 * BOAT_SCALE * 0.85) / boatKey.position.distanceTo(tmp))
     boatKey.intensity = 0.35 + 0.6 * on
 
     // --- drone scan footprint ---
@@ -614,7 +647,7 @@ export function makeEcosystem({ scene, envMap, WATER_Y, dotTex, seed0 = 9001 }) 
         }
       } else if (it.state === 'leaving') {
         const k = clamp((clock - it.t0) / 0.5)
-        m.scale.setScalar(1 - k)
+        m.scale.setScalar((1 - k) / BOAT_SCALE)
         if (k >= 1) {
           it.state = 'free'
           m.visible = false
@@ -656,7 +689,7 @@ export function makeEcosystem({ scene, envMap, WATER_Y, dotTex, seed0 = 9001 }) 
     arcGeo.attributes.position.needsUpdate = true
     arcMat.uniforms.uTime.value = clock
     arcMat.uniforms.uHalfH.value = halfH
-    arcMat.uniforms.uA.value = ai * 0.8
+    arcMat.uniforms.uA.value = ai * (day ? 1 : 0.8)
 
     // --- planned path: belt foot -> current target ---
     const pa = target ? target.tgtA * ai : 0
@@ -673,9 +706,14 @@ export function makeEcosystem({ scene, envMap, WATER_Y, dotTex, seed0 = 9001 }) 
   }
 
   const proj = new THREE.Vector3()
+  let boatHook = null
   return {
     update,
-    boatPos: () => ({ x: boat.x, z: boat.z, stir: 0.4 + Math.abs(boat.vx) * 0.5 }),
+    /** dev: fn(t, anchor) -> {x, z} drives the boat instead of its steering */
+    setBoatHook: (fn) => (boatHook = fn),
+    /** the boat model (for per-scene finishes) */
+    boatGroup: B.group,
+    boatPos: () => ({ x: boat.x, z: boat.z, stir: 0.4 + Math.abs(boat.vx) * 0.5, scale: BOAT_SCALE }),
     /** screen-space anchor for the boat's HUD label (CSS px) */
     hud(camera, w, h) {
       B.mastTop.getWorldPosition(proj)

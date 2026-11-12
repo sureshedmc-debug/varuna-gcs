@@ -1,9 +1,10 @@
 // "Continue with Google". Needs the operator's own Google OAuth client ID (a
 // public identifier, not a secret); until one is saved this offers to set it up.
 import { useEffect, useRef, useState } from 'react'
-import { getAuthConfig, saveGoogleClientId, signInWithGoogle } from '../../lib/auth'
+import { getAuthConfig, saveGoogleClientId, signInWithGoogle, finishFaceCheck, finishWithFingerprint } from '../../lib/auth'
 import { GoogleIcon } from './icons'
 import { useOnline } from '../../lib/online'
+import FaceCheck from './FaceCheck'
 
 export default function GoogleSignIn({ label = 'Continue with Google', onSignedIn }) {
   const [cfg, setCfg] = useState(null) // {configured} | {error}
@@ -12,6 +13,9 @@ export default function GoogleSignIn({ label = 'Continue with Google', onSignedI
   const [pageUrl, setPageUrl] = useState('')
   const [setup, setSetup] = useState(false)
   const [clientId, setClientId] = useState('')
+  const [face, setFace] = useState(null) // {ticket, enroll, fingerprint} once Google has said yes
+  const [faceBusy, setFaceBusy] = useState(false)
+  const [faceError, setFaceError] = useState('')
   const abortRef = useRef(null)
   const online = useOnline()
 
@@ -33,8 +37,9 @@ export default function GoogleSignIn({ label = 'Continue with Google', onSignedI
     const ac = new AbortController()
     abortRef.current = ac
     try {
-      const u = await signInWithGoogle({ signal: ac.signal, onPage: setPageUrl })
-      onSignedIn?.(u)
+      const r = await signInWithGoogle({ signal: ac.signal, onPage: setPageUrl })
+      setFaceError('')
+      setFace(r.face)
     } catch (err) {
       if (err.code !== 'cancelled') setError(err.message)
     } finally {
@@ -53,6 +58,53 @@ export default function GoogleSignIn({ label = 'Continue with Google', onSignedI
     } catch (err) {
       setError(err.message)
     }
+  }
+
+  async function faceDone(samples) {
+    setFaceBusy(true)
+    try {
+      const u = await finishFaceCheck(face.ticket, samples, 'google')
+      setFace(null)
+      onSignedIn?.(u)
+    } catch (err) {
+      if (err.code === 'face_mismatch') setFaceError(err.message)
+      else {
+        setFace(null)
+        setError(err.message)
+      }
+    } finally {
+      setFaceBusy(false)
+    }
+  }
+
+  // Instead of the face: the fingerprint saved for this account.
+  async function fingerprintInstead() {
+    setFaceBusy(true)
+    setFaceError('')
+    try {
+      const u = await finishWithFingerprint(face.ticket, 'google')
+      setFace(null)
+      onSignedIn?.(u)
+    } catch (err) {
+      if (err.code === 'cancelled' || err.code === 'not_verified' || err.code === 'bad_fingerprint') setFaceError(err.message)
+      else {
+        setFace(null)
+        setError(err.message)
+      }
+    } finally {
+      setFaceBusy(false)
+    }
+  }
+
+  if (face) {
+    return (
+      <div className="vl-msg info">
+        <b>{face.enroll ? 'One more step: save your face for future sign-ins.' : 'One more step: check it is you.'}</b>
+        <FaceCheck mode={face.enroll ? 'enroll' : 'verify'} busy={faceBusy} error={faceError}
+          onCapture={faceDone} onRetry={() => setFaceError('')} onCancel={() => setFace(null)}
+          onFingerprint={face.fingerprint ? fingerprintInstead : undefined} />
+      </div>
+    )
   }
 
   if (cfg?.unavailable) return <div className="vl-msg info">{cfg.error}</div>

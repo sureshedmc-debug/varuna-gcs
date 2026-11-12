@@ -11,17 +11,19 @@ const MIN_PWM = 900
 const MAX_PWM = 1500
 
 /**
- * Boat tab: match the two thrusters. Spin one motor for 2 s at an exact signal
+ * Boat tab: find where the motor starts. Spin it for 2 s at an exact signal
  * (the Pixhawk stops it itself), raise the signal until it just starts, save:
- * that motor's stopped point goes just below its start, so both motors start
- * together from the first bit of throttle — no dead band, no surge.
+ * its stopped point goes just below its start, so it answers the first bit of
+ * throttle — no dead band, no surge. The boat has one motor in the middle
+ * (steered by a rudder servo); an older twin-motor boat gets left / right.
  */
+const LABEL = { motor: 'Motor', left: 'Left motor', right: 'Right motor' }
 export function BoatMotorMatchCard() {
   const boat = useBoat()
   const t = boat.telemetry.data
   const [open, setOpen] = useState(false)
-  const [motor, setMotor] = useState('left')
-  const [pwm, setPwm] = useState({ left: 1050, right: 1050 })
+  const [motor, setMotor] = useState('motor')
+  const [pwm, setPwm] = useState({ motor: 1000, left: 1050, right: 1050 })
   const [motors, setMotors] = useState(null)
   const [busy, setBusy] = useState(null)
   const [msg, setMsg] = useState(null)
@@ -31,11 +33,17 @@ export function BoatMotorMatchCard() {
   useEffect(() => {
     if (!open || !canCommand) return
     let gone = false
-    boatApi.motors().then((r) => { if (!gone && r?.motors) setMotors(r.motors) }).catch(() => {})
+    boatApi.motors().then((r) => {
+      if (gone || !r?.motors) return
+      setMotors(r.motors)
+      const have = ['motor', 'left', 'right'].filter((m) => r.motors[m])
+      if (have.length) setMotor((cur) => (have.includes(cur) ? cur : have[0]))
+    }).catch(() => {})
     return () => { gone = true }
   }, [open, canCommand])
 
   if (!t) return null
+  const list = motors ? ['motor', 'left', 'right'].filter((m) => motors[m]) : ['motor']
   const value = pwm[motor]
   const setValue = (v) => setPwm((p) => ({ ...p, [motor]: Math.max(MIN_PWM, Math.min(MAX_PWM, v)) }))
 
@@ -70,13 +78,14 @@ export function BoatMotorMatchCard() {
             <b style={{ color: RED }}>Propellers off</b><span className="text-muted"> (or hold the boat out of the water). Battery connected, boat disarmed. Each spin stops by itself after 2 s.</span>
           </div>
 
-          <div className="mb-2 grid grid-cols-2 gap-1.5">
-            {['left', 'right'].map((m) => (
+          {motors && !list.length && <div className="mb-2 text-[11px] text-warn">No motor output on the Pixhawk (SERVOn_FUNCTION 70 for the motor).</div>}
+          <div className={`mb-2 grid gap-1.5 ${list.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+            {list.map((m) => (
               <button key={m} type="button" onClick={() => setMotor(m)}
                 className={`rounded-lg py-1.5 text-[11px] font-bold ${motor === m ? '' : 'text-ink'}`}
                 style={motor === m ? { background: `${GREEN}26`, color: GREEN, border: `1px solid ${GREEN}66` }
                   : { background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                {m === 'left' ? 'Left' : 'Right'} motor
+                {LABEL[m]}
                 {motors?.[m] && <span className="ml-1 font-mono text-[9.5px] font-semibold text-muted">out {motors[m].output}</span>}
               </button>
             ))}
@@ -110,10 +119,10 @@ export function BoatMotorMatchCard() {
           {msg && <div className="mb-1 text-[11px]" style={{ color: msg.ok ? GREEN : AMBER }}>{msg.text}</div>}
 
           {motors && (
-            <div className="mb-1 grid grid-cols-2 gap-1.5 text-[10.5px]">
-              {['left', 'right'].map((m) => (
+            <div className={`mb-1 grid gap-1.5 text-[10.5px] ${list.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+              {list.map((m) => (
                 <div key={m} className="rounded-lg px-2 py-1" style={{ background: 'rgba(255,255,255,0.04)' }}>
-                  <span className="text-muted">{m === 'left' ? 'Left' : 'Right'} stopped at </span>
+                  <span className="text-muted">{LABEL[m]} stopped at </span>
                   <span className="font-mono font-semibold tnum text-ink">{motors[m]?.stop ?? '—'}</span>
                 </div>
               ))}
@@ -121,7 +130,7 @@ export function BoatMotorMatchCard() {
           )}
 
           <div className="text-[10.5px] text-muted">
-            Raise the signal 10 µs at a time and press Spin each time, until the motor just turns. Then press save, and do the other motor.
+            Raise the signal 10 µs at a time and press Spin each time, until the motor just turns. Then press save{list.length > 1 ? ', and do the other motor' : ''}.
           </div>
         </div>
       )}

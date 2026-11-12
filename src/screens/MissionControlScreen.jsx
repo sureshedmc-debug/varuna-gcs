@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import './homeNew.css'
-import HomeLaunchpad, { ModeSwitch } from '../components/launch/HomeLaunchpad'
-import { useHomeMode, setHomeMode } from '../lib/homeMode'
+import HomeLaunchpad from '../components/launch/HomeLaunchpad'
 import LaunchPages from '../components/launch/LaunchPages'
+import ScreenTransition, { reducedMotion } from '../components/launch/ScreenTransition'
 import HomeBoatRow from '../components/HomeBoatRow'
 import { useSystem }        from '../components/SystemContext'
 import { useTrashStats }    from '../lib/detectionStats'
@@ -13,6 +13,8 @@ import { useImpactStats }   from '../lib/impactStats'
 import { pick, bool, num, DASH } from '../lib/format'
 import { usePolling }       from '../hooks/usePolling'
 import { api }              from '../api/client'
+// after the component imports, so it lands after launch.css
+import './homeDark.css'
 
 /* ─────────────────────────────────────────────────────────────────────────
    HELPERS
@@ -242,6 +244,8 @@ function Chevron() {
   )
 }
 
+const DETAILS_KEY = 'varuna.homeDetails' // 'shown' | 'hidden'
+
 /* ── Live connection status dot ── */
 /* ═══════════════════════════════════════════════════════════════════════
    MAIN COMPONENT
@@ -259,10 +263,34 @@ export default function MissionControlScreen({ onNavigate }) {
     setPage(p)
   }, [])
   const closePage = useCallback(() => setPage(null), [])
+  // From Home, the page name fills the screen first, then the page opens
+  // underneath while it is covered.
+  const [xfade, setXfade] = useState(null)
+  const launchPage = useCallback((p) => {
+    if (reducedMotion()) return openPage(p)
+    setXfade((cur) => cur || p)
+  }, [openPage])
 
   /* ── Simple (guided) or Expert (full dashboard) view ───────────────── */
-  const simple = useHomeMode() === 'simple'
-  const [details, setDetails] = useState(false)
+  /* ── Telemetry and stats widgets: shown unless the operator hides them ── */
+  const [details, setDetailsState] = useState(() => {
+    try {
+      return localStorage.getItem(DETAILS_KEY) !== 'hidden'
+    } catch {
+      return true
+    }
+  })
+  const setDetails = useCallback((next) => {
+    setDetailsState((d) => {
+      const v = typeof next === 'function' ? next(d) : next
+      try {
+        localStorage.setItem(DETAILS_KEY, v ? 'shown' : 'hidden')
+      } catch {
+        /* private mode: just for this session */
+      }
+      return v
+    })
+  }, [])
 
   /* ── Live data sources ─────────────────────────────────────────────── */
   const { telemetry } = useSystem()
@@ -406,7 +434,7 @@ export default function MissionControlScreen({ onNavigate }) {
     <>
     <motion.div
       ref={homeRef}
-      className="varuna-home"
+      className="varuna-home vh-dark"
       style={{ transformOrigin: depthOrigin, pointerEvents: page ? 'none' : undefined }}
       initial={false}
       animate={page ? { scale: 0.94, opacity: 0.35 } : { scale: 1, opacity: 1 }}
@@ -416,26 +444,23 @@ export default function MissionControlScreen({ onNavigate }) {
     >
 
       {/* ── Launchpad: Login / Direct Mission Plan / Basic data + VARUNA AI panel ── */}
-      <div className="vl-modebar"><ModeSwitch mode={simple ? 'simple' : 'expert'} onChange={setHomeMode} /></div>
-      <HomeLaunchpad onOpen={openPage} onNavigate={onNavigate} simple={simple} />
+      <HomeLaunchpad onOpen={launchPage} />
 
-      {/* ── Simple view: one line of results; the dashboard folds away ── */}
-      {simple && (
-        <div className="vl-summary-line">
-          <span>
-            {missionsCompleted > 0 || pollRawTotal > 0
-              ? `You have flown ${missionsCompleted} mission${missionsCompleted === 1 ? '' : 's'} and found ${pollRawTotal} piece${pollRawTotal === 1 ? '' : 's'} of waste.`
-              : 'Your results will show here after your first flight.'}
-          </span>
-          <button type="button" className="vl-link" onClick={() => setDetails((d) => !d)} aria-expanded={details}>
-            {details ? 'Hide details' : 'Show details'}
-          </button>
-        </div>
-      )}
+      {/* ── One line of results, and the switch that folds the widgets away ── */}
+      <div className="vl-summary-line">
+        <span>
+          {missionsCompleted > 0 || pollRawTotal > 0
+            ? `You have flown ${missionsCompleted} mission${missionsCompleted === 1 ? '' : 's'} and found ${pollRawTotal} piece${pollRawTotal === 1 ? '' : 's'} of waste.`
+            : 'Your results will show here after your first flight.'}
+        </span>
+        <button type="button" className="vl-step-btn" onClick={() => setDetails((d) => !d)} aria-expanded={details} aria-controls="home-details">
+          {details ? 'Hide telemetry & stats' : 'Show telemetry & stats'}
+        </button>
+      </div>
 
       {/* ── Body ── */}
-      {(!simple || details) && (
-      <div className="vh-body">
+      {details && (
+      <div className="vh-body" id="home-details">
 
         {/* ── KPI Row — all live ── */}
         <div className="vh-kpi-row vh-animate vh-animate-3">
@@ -668,6 +693,7 @@ export default function MissionControlScreen({ onNavigate }) {
       )}
     </motion.div>
     <LaunchPages page={page} onOpen={setPage} onClose={closePage} onNavigate={onNavigate} />
+    {xfade && <ScreenTransition key={xfade} page={xfade} onCover={() => openPage(xfade)} onDone={() => setXfade(null)} />}
     </>
   )
 }

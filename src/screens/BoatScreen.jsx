@@ -11,6 +11,7 @@ import { boatIcon, itemIcon, MISSION_STATE, BoatOffline, BLUE, GREEN } from '../
 import { homeIcon } from '../components/MapCanvas'
 import { BoatVisionWidgets } from '../components/BoatVisionWidgets'
 import { BoatGamepadCard } from '../components/BoatGamepadCard'
+import { BoatServoCard } from '../components/BoatServoCard'
 import { BoatModeCard } from '../components/BoatModeCard'
 import { BoatMotorMatchCard } from '../components/BoatMotorMatchCard'
 import { BoatLiveCollectCard } from '../components/BoatLiveCollectCard'
@@ -247,6 +248,8 @@ export default function BoatScreen({ onNavigate }) {
               <BoatModeCard />
 
               <BoatGamepadCard />
+
+              <BoatServoCard />
 
               <BoatMotorMatchCard />
 

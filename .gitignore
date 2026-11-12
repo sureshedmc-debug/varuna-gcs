@@ -18,3 +18,6 @@ release/
 
 # Local CSV records and sign-in data written by `npm run dev`
 /data/
+
+# CC0 scanned plants used only to render the Home video (not shipped)
+rec-assets/

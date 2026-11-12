@@ -3,7 +3,7 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import { mergeStatic, hideSmallFromMirror } from './sceneOptim'
 import { SURFACE_LAYER } from './riverScene'
 
-// JAL DHARA — the Varuna collection boat, modelled on the real build: a white
+// NIRMAL DHARA JALYAN — the Varuna collection boat, modelled on the real build: a white
 // EPS-foam tub with rounded corners, a foam partition that walls off the
 // electronics bay at the stern (Pixhawk, Raspberry Pi, ESCs, LiPo), an open
 // collection bay amidships, and a mesh conveyor ramp at the bow driven by two
@@ -12,12 +12,20 @@ import { SURFACE_LAYER } from './riverScene'
 //
 // Local frame: +z is the bow, y = 0 is the waterline, units match the drone.
 
-const HULL = { hw: 1.3, hl: 2.2, r: 0.72, wall: 0.24, bottom: -0.3, rim: 0.5, floor: 0.04 }
+// a tall freeboard (0.8 above the waterline) so the tricolour and the name read big
+const HULL = { hw: 1.3, hl: 2.2, r: 0.72, wall: 0.24, bottom: -0.3, rim: 0.8, floor: 0.04 }
 const PARTITION_Z = -0.86
-const RAMP_TOP = new THREE.Vector3(0, 0.6, 2.05)
+// tricolour band edges on the hull's freeboard (body-space y): green | white | saffron;
+// the white band is the widest, it carries the name
+const TRI = { lo: 0.2, hi: 0.56 }
+const RAMP_TOP = new THREE.Vector3(0, 0.9, 2.05)
 const RAMP_FOOT = new THREE.Vector3(0, -0.16, 3.85)
 const ROLLER_R = 0.07
 const BELT_W = 0.9
+// hull name decal: canvas pixels, and its size on the hull side (fills the white band)
+const DECAL_PX = { w: 2304, h: 288 }
+const DECAL_W = 2.9
+const DECAL_H = (DECAL_W * DECAL_PX.h) / DECAL_PX.w
 
 function canvasTex(w, h, draw, srgb = true) {
   const c = document.createElement('canvas')
@@ -78,13 +86,14 @@ function makeTextures() {
   foamBump.wrapS = foamBump.wrapT = THREE.RepeatWrapping
   foamBump.repeat.set(3, 3)
 
-  // Conveyor belt: white mesh fabric with grey mesh windows between white straps.
+  // Conveyor belt: dull off-white fabric straps with dark grey mesh windows
+  // (kept well below white so it doesn't glare under the night lights).
   const belt = canvasTex(128, 256, (g, w, h) => {
-    g.fillStyle = '#ece9e1'
+    g.fillStyle = '#a9a69e'
     g.fillRect(0, 0, w, h)
     for (let k = 0; k < 2; k++) {
       const y0 = k * 128 + 22
-      g.fillStyle = '#8e8f8c'
+      g.fillStyle = '#5c5d5a'
       g.fillRect(14, y0, w - 28, 84)
       g.strokeStyle = 'rgba(40,40,40,0.35)'
       g.lineWidth = 1
@@ -141,21 +150,52 @@ function makeTextures() {
     g.fillText('11.1V  35C', 20, 106)
   })
 
-  const decal = canvasTex(1024, 144, (g, w, h) => {
+  // fills the white band of the tricolour: navy Ashoka Chakra at the front, the
+  // boat's name big beside it, VARUNA AI smaller underneath
+  const decal = canvasTex(DECAL_PX.w, DECAL_PX.h, (g, w, h) => {
     g.clearRect(0, 0, w, h)
-    g.fillStyle = '#0b2a3a'
-    g.font = '900 64px Arial'
-    g.fillText('VARUNA', 24, 74)
-    g.fillStyle = '#0891b2'
-    g.fillText('AI', 300, 74)
-    g.fillStyle = '#123'
-    g.font = '700 34px Arial'
-    g.fillText('JAL DHARA  ·  RIVER CLEANUP', 410, 70)
-    const lg = g.createLinearGradient(0, 0, w, 0)
-    lg.addColorStop(0, '#22d3ee')
-    lg.addColorStop(1, '#8b5cf6')
-    g.fillStyle = lg
-    g.fillRect(24, 96, w - 48, 9)
+    const navy = '#0a1a7a'
+    const R = 100
+    const cx = 24 + R
+    const cy = h / 2
+    g.strokeStyle = navy
+    g.fillStyle = navy
+    g.lineWidth = 12
+    g.beginPath()
+    g.arc(cx, cy, R, 0, Math.PI * 2)
+    g.stroke()
+    g.beginPath()
+    g.arc(cx, cy, 16, 0, Math.PI * 2)
+    g.fill()
+    for (let i = 0; i < 24; i++) {
+      const a = (i / 24) * Math.PI * 2
+      const ca = Math.cos(a)
+      const sa = Math.sin(a)
+      // tapered spoke
+      g.beginPath()
+      g.moveTo(cx + ca * 16 - sa * 5.5, cy + sa * 16 + ca * 5.5)
+      g.lineTo(cx + ca * (R - 5), cy + sa * (R - 5))
+      g.lineTo(cx + ca * 16 + sa * 5.5, cy + sa * 16 - ca * 5.5)
+      g.fill()
+      // rim notch between spokes
+      const b = a + Math.PI / 24
+      g.beginPath()
+      g.arc(cx + Math.cos(b) * (R - 2), cy + Math.sin(b) * (R - 2), 5.5, 0, Math.PI * 2)
+      g.fill()
+    }
+    // the name as big as the band allows, shrunk only if it would run off the end
+    const x0 = cx + R + 44
+    const room = w - x0 - 30
+    const name = 'NIRMAL DHARA JALYAN'
+    let size = 158
+    g.font = `900 ${size}px Arial`
+    if (g.measureText(name).width > room) size = Math.floor((size * room) / g.measureText(name).width)
+    g.font = `900 ${size}px Arial`
+    g.textAlign = 'left'
+    g.textBaseline = 'alphabetic'
+    g.fillText(name, x0, h * 0.66)
+    g.font = `800 ${Math.round(size * 0.36)}px Arial`
+    g.fillText('VARUNA AI', x0 + 4, h * 0.93)
   })
 
   const gpsTop = canvasTex(128, 128, (g, w) => {
@@ -184,14 +224,44 @@ export function buildJalDhara(envMap) {
     m.envMapIntensity = k
     return m
   }
+  // Hull foam painted as the Indian tricolour: saffron over white over green on
+  // the outside (by body-space height), plain white foam inside the tub.
   const foam = env(
-    new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.93, metalness: 0, bumpMap: tex.foamBump, bumpScale: 0.6 }),
-    0.22,
+    new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8, metalness: 0, bumpMap: tex.foamBump, bumpScale: 0.35 }),
+    0.28,
   )
+  foam.onBeforeCompile = (s) => {
+    s.vertexShader = s.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vObjPos;\nvarying vec3 vObjN;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvObjPos = position;\nvObjN = objectNormal;')
+    s.fragmentShader = s.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vObjPos;\nvarying vec3 vObjN;')
+      .replace(
+        '#include <color_fragment>',
+        `#include <color_fragment>
+        {
+          float y = vObjPos.y;
+          float e = max(fwidth(y), 0.004);
+          vec3 green = vec3(0.0065, 0.2462, 0.0024);
+          vec3 white = vec3(0.90, 0.90, 0.88);
+          vec3 saffron = vec3(1.0, 0.3185, 0.0331);
+          vec3 band = mix(green, white, smoothstep(${TRI.lo.toFixed(3)} - e, ${TRI.lo.toFixed(3)} + e, y));
+          band = mix(band, saffron, smoothstep(${TRI.hi.toFixed(3)} - e, ${TRI.hi.toFixed(3)} + e, y));
+          band *= mix(0.55, 1.0, smoothstep(-0.12, 0.02, y)); // weed-dark below the waterline
+          float outside = (dot(vObjN.xz, vObjPos.xz) > 0.0 || vObjN.y > 0.5 || vObjN.y < -0.5) ? 1.0 : 0.0;
+          diffuseColor.rgb = mix(vec3(0.95, 0.945, 0.92), band, outside);
+        }`,
+      )
+  }
+  foam.customProgramCacheKey = () => 'jal-dhara-tricolour'
   const foamPlain = env(new THREE.MeshStandardMaterial({ color: 0xf1f0ea, roughness: 0.95, bumpMap: tex.foamBump, bumpScale: 0.5 }), 0.22)
   const board = env(new THREE.MeshStandardMaterial({ color: 0xe9e4d8, roughness: 0.7 }), 0.4)
   const pvc = env(new THREE.MeshStandardMaterial({ color: 0xf4f4f2, roughness: 0.35 }), 0.6)
-  const beltMat = env(new THREE.MeshStandardMaterial({ map: tex.belt, roughness: 0.85, side: THREE.DoubleSide }), 0.35)
+  const beltMat = env(new THREE.MeshStandardMaterial({ map: tex.belt, roughness: 1, side: THREE.DoubleSide }), 0.08)
+  // The ramp's rails, cleats and rollers: matte, so the conveyor reads as fabric and
+  // board rather than a lit-up white ladder.
+  const rampBoard = env(new THREE.MeshStandardMaterial({ color: 0x9e9a90, roughness: 0.95 }), 0.1)
+  const rampRoller = env(new THREE.MeshStandardMaterial({ color: 0xa7a7a2, roughness: 0.8 }), 0.15)
   const beltUnder = new THREE.MeshStandardMaterial({ color: 0x77766f, roughness: 0.9 })
   const yellow = env(new THREE.MeshStandardMaterial({ color: 0xf2c200, roughness: 0.45 }), 0.6)
   const silver = env(new THREE.MeshStandardMaterial({ color: 0xc9ccd2, metalness: 0.9, roughness: 0.3 }), 1)
@@ -236,17 +306,6 @@ export function buildJalDhara(envMap) {
     const g = new THREE.ExtrudeGeometry(outer, { depth: height - 2 * b, bevelEnabled: true, bevelThickness: b, bevelSize: b, bevelSegments: 5, curveSegments: 14 })
     g.rotateX(-Math.PI / 2)
     g.translate(0, HULL.bottom + b, 0)
-    // waterline stain + slightly yellowed foam low down
-    const pos = g.attributes.position
-    const col = new Float32Array(pos.count * 3)
-    for (let i = 0; i < pos.count; i++) {
-      const y = pos.getY(i)
-      const k = THREE.MathUtils.smoothstep(y, -0.05, 0.18)
-      col[i * 3] = THREE.MathUtils.lerp(0.74, 0.97, k)
-      col[i * 3 + 1] = THREE.MathUtils.lerp(0.77, 0.965, k)
-      col[i * 3 + 2] = THREE.MathUtils.lerp(0.68, 0.93, k)
-    }
-    g.setAttribute('color', new THREE.BufferAttribute(col, 3))
     body.add(new THREE.Mesh(g, foam))
 
     const floorShape = roundedRect(iw + 0.06, il + 0.06, ir + 0.06)
@@ -262,8 +321,8 @@ export function buildJalDhara(envMap) {
 
     // hull decals, both sides
     for (const sx of [-1, 1]) {
-      const d = new THREE.Mesh(new THREE.PlaneGeometry(2.5, 0.35), decalMat)
-      d.position.set(sx * (HULL.hw + 0.004), 0.17, -0.05)
+      const d = new THREE.Mesh(new THREE.PlaneGeometry(DECAL_W, DECAL_H), decalMat)
+      d.position.set(sx * (HULL.hw + 0.004), (TRI.lo + TRI.hi) / 2, 0)
       d.rotation.y = sx * (Math.PI / 2)
       body.add(d)
     }
@@ -285,24 +344,24 @@ export function buildJalDhara(envMap) {
   underGeo.translate(0, -ROLLER_R, RAMP_LEN / 2)
   ramp.add(new THREE.Mesh(underGeo, beltUnder))
   for (const z of [0, RAMP_LEN]) {
-    const roller = new THREE.Mesh(new THREE.CylinderGeometry(ROLLER_R, ROLLER_R, BELT_W + 0.08, 20), pvc)
+    const roller = new THREE.Mesh(new THREE.CylinderGeometry(ROLLER_R, ROLLER_R, BELT_W + 0.08, 20), rampRoller)
     roller.rotation.z = Math.PI / 2
     roller.position.z = z
     ramp.add(roller)
   }
   for (const sx of [-1, 1]) {
-    const rail = new THREE.Mesh(new RoundedBoxGeometry(0.045, 0.24, RAMP_LEN + 0.3, 2, 0.012), board)
+    const rail = new THREE.Mesh(new RoundedBoxGeometry(0.045, 0.24, RAMP_LEN + 0.3, 2, 0.012), rampBoard)
     rail.position.set(sx * (BELT_W / 2 + 0.07), 0.03, RAMP_LEN / 2)
     ramp.add(rail)
     // yellow TT gear motor + white motor can at the top roller
     const tt = new THREE.Mesh(new RoundedBoxGeometry(0.17, 0.2, 0.38, 2, 0.02), yellow)
     tt.position.set(sx * (BELT_W / 2 + 0.19), 0.02, 0.05)
     ramp.add(tt)
-    const can = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.2, 16), pvc)
+    const can = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.2, 16), rampRoller)
     can.rotation.x = Math.PI / 2
     can.position.set(sx * (BELT_W / 2 + 0.19), 0.02, -0.22)
     ramp.add(can)
-    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.06, 10), pvc)
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.06, 10), rampRoller)
     hub.rotation.z = Math.PI / 2
     hub.position.set(sx * (BELT_W / 2 + 0.29), 0.0, 0.0)
     ramp.add(hub)
@@ -310,7 +369,7 @@ export function buildJalDhara(envMap) {
   // raised cleats that ride up the belt
   const cleats = []
   for (let i = 0; i < 5; i++) {
-    const c = new THREE.Mesh(new THREE.BoxGeometry(BELT_W - 0.06, 0.04, 0.025), board)
+    const c = new THREE.Mesh(new THREE.BoxGeometry(BELT_W - 0.06, 0.04, 0.025), rampBoard)
     ramp.add(c)
     cleats.push(c)
   }
@@ -469,8 +528,10 @@ export function buildJalDhara(envMap) {
     const bracket = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.06, 0.24), black)
     bracket.position.set(sx * 0.72, HULL.rim + 0.02, -2.2)
     body.add(bracket)
-    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.62, 0.05), black)
-    leg.position.set(sx * 0.72, 0.2, -2.32)
+    // from the pod (y -0.1) up to the bracket on the rim
+    const legH = HULL.rim + 0.12
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.05, legH, 0.05), black)
+    leg.position.set(sx * 0.72, -0.1 + legH / 2, -2.32)
     body.add(leg)
     const pod = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.2, 14), black)
     pod.rotation.x = Math.PI / 2

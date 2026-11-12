@@ -10,6 +10,8 @@ import VideoHUD from '../components/VideoHUD'
 import MapCanvas from '../components/MapCanvas'
 import LiveDetectionMarkers from '../components/LiveDetectionMarkers'
 import LiveBoatMarkers from '../components/LiveBoatMarkers'
+import WasteLocationsPanel from '../components/WasteLocationsPanel'
+import LatestDetectionBanner from '../components/LatestDetectionBanner'
 import { BoatLiveCollectCard } from '../components/BoatLiveCollectCard'
 import { useBoat } from '../components/BoatContext'
 import { useRecommendedConf } from '../components/BackgroundDetect'
@@ -17,6 +19,13 @@ import { pick, num, bool, fmtCoord, DASH } from '../lib/format'
 import { cmd } from '../lib/commands'
 
 const WebcamDetect = lazy(() => import('../components/WebcamDetect'))
+
+// The waste-locations panel's shown/hidden choice survives a restart.
+const WASTE_KEY = 'varuna.live.wasteGps'
+function readShowWaste() {
+  try { return localStorage.getItem(WASTE_KEY) !== 'hidden' } catch { return true }
+}
+const PIN = <path d="M12 2a7 7 0 00-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 00-7-7zm0 9.5A2.5 2.5 0 1112 6.5a2.5 2.5 0 010 5z" fill="currentColor" />
 const AI_CAM = <path d="M4 7h3l1.5-2h7L17 7h3a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V8a1 1 0 011-1zm8 3a3.5 3.5 0 100 7 3.5 3.5 0 000-7z" fill="currentColor" />
 
 function readTelemetry(t) {
@@ -66,6 +75,12 @@ export default function LiveScreen() {
   const [busy, setBusy]               = useState(null)
   const [hideWidgets, setHideWidgets] = useState(false)
   const [mainView, setMainView]       = useState('video') // 'video' | 'map' | 'webcam'
+  const [showWaste, setShowWaste]     = useState(readShowWaste)
+  function toggleWaste() {
+    const next = !showWaste
+    try { localStorage.setItem(WASTE_KEY, next ? 'shown' : 'hidden') } catch { /* private window */ }
+    setShowWaste(next)
+  }
   // The slider starts at the confidence the model's training run found best.
   const [conf, setConf]               = useRecommendedConf()
   // The boat's live collect, on the same screen as the drone's finds.
@@ -209,6 +224,12 @@ export default function LiveScreen() {
           label={mainView === 'webcam' ? 'Exit AI cam' : 'AI cam'}
           icon={AI_CAM}
         />
+        <ViewToggle
+          active={showWaste}
+          onClick={toggleWaste}
+          label={showWaste ? 'Hide waste GPS' : 'Show waste GPS'}
+          icon={PIN}
+        />
         {mainView === 'webcam' && (
           <div
             className="flex items-center gap-2 rounded-xl px-3 py-2"
@@ -223,6 +244,12 @@ export default function LiveScreen() {
         )}
       </div>
 
+      {/* ── Latest detection + its GPS, big, over the video (the main thing to read on a phone) ── */}
+      {mainView !== 'map' && <LatestDetectionBanner />}
+
+      {/* ── Waste locations (bottom-right): GPS of every detection, own Show/Hide button ── */}
+      <WasteLocationsPanel show={showWaste} />
+
       {/* ── Telemetry panel (top-right, animated) ── */}
       <AnimatePresence>
         {!hideWidgets && mainView !== 'webcam' && (
@@ -231,7 +258,7 @@ export default function LiveScreen() {
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 20 }}
             transition={{ type: 'spring', stiffness: 260, damping: 26 }}
-            className={`absolute right-3 ${mainView === 'video' ? 'top-14' : 'top-3'} z-20 max-h-[calc(100%-6rem)] w-[240px] overflow-y-auto`}
+            className={`absolute right-3 ${mainView === 'video' ? 'top-[14rem] lg:top-14' : 'top-3'} z-20 max-h-[calc(100%-6rem)] w-[240px] overflow-y-auto`}
           >
             <div
               className="rounded-2xl p-4"
@@ -275,12 +302,19 @@ export default function LiveScreen() {
 
               {/* GPS coords footer */}
               <div
-                className="mt-3 rounded-lg px-2.5 py-1.5 font-mono text-[11px] tnum text-muted"
-                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}
+                className="mt-3 rounded-lg px-2.5 py-2"
+                style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }}
               >
-                {t.lat != null && t.lng != null
-                  ? `${fmtCoord(t.lat)}, ${fmtCoord(t.lng)}`
-                  : 'No GPS position'}
+                <div className="mb-0.5 text-[10px] font-bold uppercase tracking-wider text-muted">Drone position</div>
+                {t.lat != null && t.lng != null ? (
+                  <div className="font-mono text-[15px] font-bold leading-tight tnum text-ink">
+                    {fmtCoord(t.lat)}
+                    <br />
+                    {fmtCoord(t.lng)}
+                  </div>
+                ) : (
+                  <div className="text-[13px] font-semibold text-muted">No GPS position</div>
+                )}
               </div>
             </div>
 

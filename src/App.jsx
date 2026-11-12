@@ -10,7 +10,7 @@ import { Rail } from './components/Rail'
 import { TopBar } from './components/TopBar'
 import { registerNavigator } from './lib/planDraftStore'
 import { startDataRecorders } from './lib/liveMissionPlan'
-import { useHomeMode } from './lib/homeMode'
+import { lockData } from './lib/dataLock'
 import { ErrorBoundary } from './components/ErrorBoundary'
 
 import { wakeWordEnabled } from './lib/assistant/wakeWord'
@@ -31,6 +31,7 @@ const BoatScreen = lazy(() => import('./screens/BoatScreen'))
 const CollectScreen = lazy(() => import('./screens/CollectScreen'))
 const BoatVisionScreen = lazy(() => import('./screens/BoatVisionScreen'))
 const WaterLabScreen = lazy(() => import('./screens/WaterLabScreen'))
+const DataScreen = lazy(() => import('./screens/DataScreen'))
 
 const SCREENS = {
   home: MissionControlScreen,
@@ -43,18 +44,15 @@ const SCREENS = {
   water: WaterLabScreen,
   detections: DetectionsScreen,
   replay: ReplayScreen,
+  data: DataScreen,
   system: SystemScreen,
 }
 
 // Only this small component listens to the live system state for the banner,
 // so telemetry updates don't re-render the whole shell (rail, top bar, screen).
-// On Simple Home the readiness card already explains a missing drone in plain
-// words, so the red "Backend unreachable" banner stays off there.
-function SystemWarnings({ onSimpleHome }) {
+function SystemWarnings() {
   const { pi, backendReachable } = useSystem()
-  const quiet = useHomeMode() === 'simple' && onSimpleHome
-  const warnings = deriveWarnings({ pi: pi.data, backendReachable }).filter((w) => !(quiet && w.key === 'backend'))
-  return <WarningBanner warnings={warnings} />
+  return <WarningBanner warnings={deriveWarnings({ pi: pi.data, backendReachable })} />
 }
 
 // While the boat's live collect runs, the drone's AI keeps finding plastic for
@@ -127,7 +125,7 @@ function Shell({ onLock }) {
         mobileOpen={navOpen}
         onMobileOpenChange={setNavOpen}
       />
-      <SystemWarnings onSimpleHome={tab === 'home'} />
+      <SystemWarnings />
       <main
         className={`relative z-10 pt-[56px] transition-[padding] duration-500 ease-[cubic-bezier(.16,1,.3,1)] ${navPinned ? 'md:pl-[244px]' : 'md:pl-[28px]'} ${fullBleed ? 'px-2 pb-2 md:pr-2' : 'px-2.5 pb-4 md:pr-4'}`}
       >
@@ -190,6 +188,7 @@ export default function App() {
   }
 
   function lock() {
+    lockData() // the Data tab asks for its PIN again
     try {
       sessionStorage.removeItem('varuna.entered')
     } catch {

@@ -752,9 +752,10 @@ class DroneLink:
         self._send(lambda m: m.mav.mission_set_current_send(self.target_system, self.target_component, seq))
         return self._wait_state(lambda s: s["mission_seq"] == seq, 3.0)
 
-    def upload_mission(self, items, timeout=30.0):
+    def upload_mission(self, items, timeout=30.0, mission_type=mavlink.MAV_MISSION_TYPE_MISSION):
         """Run the MAVLink mission upload protocol. `items` are dicts with
-        command/frame/param1-4/lat/lng/alt. Raises LinkError on failure."""
+        command/frame/param1-4/lat/lng/alt. mission_type MAV_MISSION_TYPE_FENCE
+        uploads a geofence instead (polygon vertices). Raises LinkError on failure."""
         self._require_fc()
         if not items:
             raise LinkError("Nothing to upload.")
@@ -763,16 +764,16 @@ class DroneLink:
                 self._mission_q.get_nowait()
             self._mission_listen = True
             try:
-                return self._upload(items, timeout)
+                return self._upload(items, timeout, mission_type)
             finally:
                 self._mission_listen = False
 
-    def _upload(self, items, timeout):
+    def _upload(self, items, timeout, mission_type=mavlink.MAV_MISSION_TYPE_MISSION):
         n = len(items)
         ts, tc = self.target_system, self.target_component
 
         def send_count():
-            if not self._send(lambda m: m.mav.mission_count_send(ts, tc, n, mavlink.MAV_MISSION_TYPE_MISSION)):
+            if not self._send(lambda m: m.mav.mission_count_send(ts, tc, n, mission_type)):
                 raise LinkError("Lost the link to the Pixhawk during the mission upload.")
 
         # Encode every item up front, so a bad value fails here with a clear
@@ -791,7 +792,7 @@ class DroneLink:
         def send_item(seq):
             f, cmd, p1, p2, p3, p4, x, y, z = packed[seq]
             if not self._send(lambda m: m.mav.mission_item_int_send(
-                    ts, tc, seq, f, cmd, 0, 1, p1, p2, p3, p4, x, y, z, mavlink.MAV_MISSION_TYPE_MISSION)):
+                    ts, tc, seq, f, cmd, 0, 1, p1, p2, p3, p4, x, y, z, mission_type)):
                 raise LinkError("Lost the link to the Pixhawk during the mission upload.")
 
         send_count()
@@ -823,8 +824,9 @@ class DroneLink:
                 if msg.type == mavlink.MAV_MISSION_ACCEPTED:
                     if len(sent) < n:
                         raise LinkError("The Pixhawk accepted the mission before receiving every item.")
-                    with self._state_lock:
-                        self.state["mission_count"] = n
+                    if mission_type == mavlink.MAV_MISSION_TYPE_MISSION:
+                        with self._state_lock:
+                            self.state["mission_count"] = n
                     return n
                 raise LinkError(f"The Pixhawk rejected the mission: {mission_result_name(msg.type)}.")
         raise LinkError("Mission upload timed out — the Pixhawk stopped answering.")

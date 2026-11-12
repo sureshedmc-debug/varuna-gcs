@@ -1,6 +1,14 @@
 """
-The intake roller: a relay module on a Pi GPIO pin, or a brushed motor on its
-own ESC on a free Pixhawk output.
+The collector. Two kinds (collector_kind):
+
+  * "scoop" (the default): a digital servo tipping the scoop on a free Pixhawk
+    output. R1 on the game controller moves it to its extreme position
+    (scoop_pwm_extreme); R1 again brings it back to its original 0 position
+    (scoop_pwm_zero), and so on. It starts at 0 and never moves by itself:
+    no automation, and disarming / emergency stop leave it where it is.
+  * "roller": the old intake roller / belt, a relay module on a Pi GPIO pin or
+    a brushed motor on its own ESC on a free Pixhawk output. Everything below
+    is about the roller.
 
 One place switches it, for everyone:
 
@@ -59,9 +67,14 @@ class Collector:
         self._was_armed = False
         self._was_connected = False
         self._last_output = None
+        self._was_scoop = self.scoop
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread = None
+
+    @property
+    def scoop(self):
+        return self.cfg.get("collector_kind", "scoop") == "scoop"
 
     @property
     def output(self):
@@ -69,10 +82,16 @@ class Collector:
 
     @property
     def relay_pin(self):
+        if self.scoop:
+            return 0                         # a servo is never on a relay
         return int(self.cfg.get("collector_relay_gpio") or 0)
 
     def _target(self):
-        return ("gpio", self.relay_pin) if self.relay_pin else ("servo", self.output)
+        """Where the signal goes and what it is now: a change (output, kind, a new
+        position in µs) makes the next tick send it again."""
+        if self.relay_pin:
+            return ("gpio", self.relay_pin)
+        return ("servo", self.output, self.scoop, self._pwm(self.on))
 
     # ------------------------------------------------------------------ switching
     def _relay(self, on):
@@ -100,7 +119,7 @@ class Collector:
         n = self.output
         if not n:
             return True                      # no roller output set: tracked only
-        pwm = int(self.cfg["collector_pwm_on"] if on else self.cfg["collector_pwm_off"])
+        pwm = self._pwm(on)
         try:
             result = self.link.command_long(183, [n, pwm])       # MAV_CMD_DO_SET_SERVO
         except LinkError as exc:
@@ -112,26 +131,44 @@ class Collector:
         self.error = None
         return True
 
+    def _pwm(self, on):
+        if self.scoop:
+            return int(self.cfg.get("scoop_pwm_extreme", 2000) if on else self.cfg.get("scoop_pwm_zero", 1000))
+        return int(self.cfg["collector_pwm_on"] if on else self.cfg["collector_pwm_off"])
+
+    def _words(self, on):
+        if self.scoop:
+            return "Scoop at its extreme position" if on else "Scoop back at its 0 position"
+        return "Roller running" if on else "Roller stopped"
+
     def set(self, on, by="operator"):
-        """Run / stop the roller. Returns a message; raises LinkError if the Pixhawk refused."""
+        """Run / stop the roller, or move the scoop (on = extreme, off = 0 position).
+        Returns a message; raises LinkError if the Pixhawk refused."""
         on = bool(on)
+        if self.scoop and by in ("safety", "auto"):
+            return "The scoop only moves on R1 — left where it is."
         with self._lock:
             if not self._send(on):
-                self._event(f"Roller {'run' if on else 'stop'} failed: {self.error}", "warn")
-                raise LinkError(self.error or "The roller command failed.")
+                what = ("Scoop to " + ("extreme" if on else "0")) if self.scoop else f"Roller {'run' if on else 'stop'}"
+                self._event(f"{what} failed: {self.error}", "warn")
+                raise LinkError(self.error or "The collector command failed.")
             changed = on != self.on
             self.on, self.by, self.t = on, by, time.time()
+            self._last_output = self._target()
             if changed:
-                self._event(f"Roller {'running' if on else 'stopped'} ({by})")
+                self._event(f"{self._words(on)} ({by})")
         if not self.output and not self.relay_pin:
-            return f"Roller {'on' if on else 'off'} (no roller output set — collector_servo is 0)."
-        return f"Roller {'running' if on else 'stopped'}."
+            return f"{self._words(on)} (no output set — collector_servo is 0, so nothing moved)."
+        return f"{self._words(on)}" + (f" ({self._pwm(on)} µs)." if self.scoop else ".")
 
     def toggle(self, by="operator"):
         return self.set(not self.on, by)
 
     def auto(self, want):
-        """The automation's wish. Acts only when it changes (last command wins)."""
+        """The automation's wish. Acts only when it changes (last command wins).
+        The scoop has no automation: only R1 moves it."""
+        if self.scoop:
+            return
         want = bool(want)
         if want == self._auto_want:
             return
@@ -168,6 +205,10 @@ class Collector:
             self._stop.wait(TICK_S)
 
     def _tick(self):
+        if self.scoop != self._was_scoop:
+            # Switched between the roller and the scoop: start the new one off / at 0.
+            self._was_scoop = self.scoop
+            self.on, self.by, self._auto_want = False, None, False
         s = self.link.snapshot()
         connected = s["fc_connected"]
         target = self._target()
@@ -183,7 +224,7 @@ class Collector:
         if not connected:
             return
         armed = s["armed"]
-        if self._was_armed and not armed and self.on:
+        if self._was_armed and not armed and self.on and not self.scoop:
             try:
                 self.set(False, "safety")
                 self._event("Boat disarmed — roller stopped")
@@ -209,6 +250,7 @@ class Collector:
         return bool(wp) and haversine_m(s["lat"], s["lng"], wp[1], wp[2]) <= self.cfg["live_roller_on_m"]
 
     def summary(self):
-        return {"on": self.on, "by": self.by, "since": round(self.t, 1) if self.t else None,
+        return {"kind": "scoop" if self.scoop else "roller",
+                "on": self.on, "by": self.by, "since": round(self.t, 1) if self.t else None,
                 "output": self.output, "relay_gpio": self.relay_pin or None, "error": self.error,
-                "pwm_on": self.cfg["collector_pwm_on"], "pwm_off": self.cfg["collector_pwm_off"]}
+                "pwm_on": self._pwm(True), "pwm_off": self._pwm(False)}

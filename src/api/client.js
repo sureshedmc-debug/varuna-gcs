@@ -179,9 +179,13 @@ export const api = {
   setPrefer: (mode) => request('/api/mavlink/prefer', { method: 'POST', body: { mode } }),
 
   // --- Missions ---
+  // Upload waits for every item over the telemetry link (the Pi allows 30 s);
+  // Start switches to GUIDED, arms, then switches to AUTO, each waiting for the
+  // Pixhawk to confirm. A shorter timeout here would report "failed" while the
+  // drone is in fact taking off.
   missionUpload: (name, waypoints) =>
-    request('/api/mission/upload', { method: 'POST', body: { name, waypoints } }),
-  missionStart: () => request('/api/mission/start', { method: 'POST' }),
+    request('/api/mission/upload', { method: 'POST', body: { name, waypoints }, timeout: 40000 }),
+  missionStart: () => request('/api/mission/start', { method: 'POST', timeout: 25000 }),
   missionList: () => request('/api/mission/list'),
 
   // --- Live config / tuning ---

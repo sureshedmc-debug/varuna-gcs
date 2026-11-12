@@ -16,6 +16,12 @@ export const ChevronRight = ({ size = 20 }) => (
 export const ArrowLeft = ({ size = 16 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" {...base}><path d="M19 12H5M12 19l-7-7 7-7" /></svg>
 )
+export const FingerprintIcon = ({ size = 20 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" {...base} aria-hidden="true">
+    <path d="M12 11c0 3.5-1 6.5-2.5 9" /><path d="M8.5 7.5A5 5 0 0 1 17 11c0 2.5-.3 5-1 7" /><path d="M5.5 15c.3-1.3.5-2.6.5-4a6 6 0 0 1 9-5.2" />
+    <path d="M14.5 20.5c.5-1.5.8-3 1-4.5" /><path d="M3.5 10a8.5 8.5 0 0 1 13-6.6" /><path d="M19.5 9c.4 1.6.5 3.2.3 5" />
+  </svg>
+)
 export const GoogleIcon = ({ size = 18 }) => (
   <svg width={size} height={size} viewBox="0 0 48 48" aria-hidden="true">
     <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z" />

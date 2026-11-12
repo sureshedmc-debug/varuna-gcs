@@ -65,6 +65,18 @@ _VALS_AC_C = bytes.fromhex(
     "f9fa")
 
 
+RECENT_FRAMES = 24          # about 2 s of video kept (the bytes are shared, not copied)
+
+
+def frame_near(recent, lock, t, tol=0.3):
+    with lock:
+        frames = list(recent)
+    if not frames or t is None:
+        return None
+    ft, jpeg = min(frames, key=lambda f: abs(f[0] - t))
+    return jpeg if abs(ft - t) <= tol else None
+
+
 def _dht_segment():
     body = b""
     for cls_id, bits, vals in ((0x00, _BITS_DC_L, bytes(_VALS_DC)), (0x01, _BITS_DC_C, bytes(_VALS_DC)),
@@ -183,6 +195,7 @@ class CameraManager:
         self._cond = threading.Condition()
         self.frame = None
         self.frame_time = 0.0
+        self.recent = deque(maxlen=RECENT_FRAMES)   # (time, jpeg): vision.py crops the frame the app looked at
         self.frame_seq = 0
         self.frames_captured = 0
         self._stamps = deque(maxlen=60)
@@ -458,6 +471,7 @@ class CameraManager:
         with self._cond:
             self.frame = frame
             self.frame_time = now
+            self.recent.append((now, frame))
             self.frame_seq += 1
             self.frames_captured += 1
             self._stamps.append(now)
@@ -467,6 +481,10 @@ class CameraManager:
             self._cond.notify_all()
 
     # ------------------------------------------------------------------ consumers
+    def frame_near(self, t, tol=0.3):
+        """The JPEG captured closest to time `t` (within `tol` s), or None."""
+        return frame_near(self.recent, self._cond, t, tol)
+
     def wait_frame(self, after_seq, timeout=2.0):
         """Block until a frame newer than after_seq exists.
         Returns (seq, jpeg, capture_time) or (after_seq, None, 0)."""

@@ -43,6 +43,7 @@ from camera import CameraManager
 from collector import Collector
 from config import DATA_DIR, TUNABLE, load_config, save_settings, tune
 from drive import DriveManager
+from servos import ServoManager
 from live_collect import LiveCollect
 from mav_link import BoatLink, LinkError
 from mission import ACTIVE_STATES, MissionManager
@@ -102,6 +103,7 @@ turbidity = Turbidity(cfg, DATA_DIR, link, sim=SIM, save_settings=save_settings)
 vision = VisionManager(link, missions, cfg, DATA_DIR, turbidity)
 live = LiveCollect(link, missions, cfg, DATA_DIR)
 vision.live, live.vision = live, vision
+vision.camera = camera                  # the homing cuts candidates out of the frames the app analysed
 collector = Collector(link, cfg)
 collector.missions, collector.vision, collector.live = missions, vision, live
 live.collector = collector
@@ -109,6 +111,9 @@ if sim_world:
     live.on_targets_added = sim_world.add_objects_near   # the simulated river gets the plastic
 drive = DriveManager(link, cfg, vision)
 operator = {"last": time.time(), "ws": 0, "acted": False}
+servos = ServoManager(link, cfg, app_present=lambda: operator["ws"] > 0
+                      or time.time() - operator["last"] < cfg["servo_app_lost_s"])
+drive.servos = servos
 
 
 # ---------------------------------------------------------------------------- models
@@ -206,6 +211,7 @@ def telemetry():
         "collector": collector.summary(),
         "water": turbidity.summary(),
         "drive": drive.status(),
+        "servos": servos.status(),
         "camera": {"connected": bool(camera.connected), "fps": camera.measured_fps(),
                    "stream_mbps": camera.data_rate()[2] if hasattr(camera, "data_rate") else None},
         "simulated": SIM,
@@ -265,6 +271,7 @@ async def lifespan(app):
     live.start_thread()
     collector.start()
     drive.start()
+    servos.start()
     tasks = [asyncio.create_task(broadcast_loop()), asyncio.create_task(operator_watchdog())]
     log.info("VARUNA boat backend %s ready on port %s (Pixhawk: %s)", VERSION, cfg["http_port"], cfg["mav_connection"])
     if drive.enabled:
@@ -276,6 +283,7 @@ async def lifespan(app):
     yield
     for t in tasks:
         t.cancel()
+    servos.stop()
     drive.stop()
     collector.stop()
     live.stop_thread()
@@ -428,6 +436,58 @@ async def drive_endpoint(ws: WebSocket):
         drive.connected(False)
 
 
+# ---------------------------------------------------------------------------- servos
+class ServoRequest(BaseModel):
+    servo: int = Field(..., ge=1, le=2, description="1 or 2")
+    on: Optional[bool] = Field(None, description="true / false, or leave out to toggle")
+    release: bool = Field(False, description="hand it back to the transmitter")
+
+
+class ServoReleaseRequest(BaseModel):
+    servo: Optional[int] = Field(None, ge=1, le=2, description="1, 2, or leave out for both")
+
+
+@app.post("/api/servo")
+def servo_set(body: ServoRequest):
+    """Move one of the two servos (toggle by default), or hand it back to the transmitter."""
+    if not link.fc_connected:
+        return fail("The Pixhawk isn't connected.")
+    try:
+        if body.release:
+            return ok(servos.release(body.servo - 1, "app"), servos=servos.status())
+        return ok(servos.set(body.servo - 1, body.on), servos=servos.status())
+    except (ValueError, LinkError) as exc:
+        return fail(str(exc))
+
+
+@app.post("/api/servo/release")
+def servo_release(body: ServoReleaseRequest):
+    """Transmitter mode: give one servo (or both) back to the transmitter's switches."""
+    try:
+        return ok(servos.release(None if body.servo is None else body.servo - 1, "app"), servos=servos.status())
+    except ValueError as exc:
+        return fail(str(exc))
+
+
+@app.get("/api/servos/setup")
+def servos_setup_check():
+    """Does the Pixhawk pass each servo's channel through to its output?"""
+    try:
+        return servos.check_setup()
+    except LinkError as exc:
+        return fail(str(exc))
+
+
+@app.post("/api/servos/setup")
+def servos_setup_fix():
+    """Set the unused servo outputs to pass their channels through (disarmed only)."""
+    try:
+        done, msg, report = servos.setup()
+        return (ok if done else fail)(msg, report=report)
+    except LinkError as exc:
+        return fail(str(exc))
+
+
 FAILSAFE_PARAMS = ("FS_THR_ENABLE", "FS_ACTION", "FS_TIMEOUT", "RC_OVERRIDE_TIME", "FS_GCS_ENABLE")
 FS_ACTIONS = {0: "do nothing", 1: "return home", 2: "hold (stop)", 3: "smart return home, else return home",
               4: "smart return home, else hold"}
@@ -532,26 +592,27 @@ def pixhawk_reboot():
 
 # ---------------------------------------------------------------------------- motor matching
 # Forward-only ESCs don't start turning at their lowest signal: each has a dead
-# band, and two ESCs rarely start at the same point. That dead band is the jerk
-# when the throttle comes in (nothing… then a surge), and different start points
-# pull the boat sideways. The Pixhawk's motor test spins one motor at an exact
+# band. That dead band is the jerk when the throttle comes in (nothing… then a
+# surge), and with two motors different start points pull the boat sideways.
+# The boat has one motor in the middle (SERVOn_FUNCTION 70, steered by a rudder
+# servo, function 26); the older twin-motor setup (73 / 74) still works. The Pixhawk's motor test spins one motor at an exact
 # signal and stops it itself after a few seconds; the operator finds where each
 # motor just starts, and that output's stopped point (SERVOn_TRIM/MIN) is set
 # just below it, so both motors start together from the first bit of throttle.
-MOTOR_TEST_SEQ = {"left": 3, "right": 4}                   # ArduRover: throttle left / right
-MOTOR_FUNCTION = {"left": 73, "right": 74}
+MOTOR_TEST_SEQ = {"motor": 1, "left": 3, "right": 4}       # ArduRover: throttle, throttle left / right
+MOTOR_FUNCTION = {"motor": 70, "left": 73, "right": 74}
 MOTOR_TEST_MAX_PWM = 1500                                  # finding the start point needs no more
 START_MARGIN_US = 15                                       # stopped point this far below the start
 
 
 class MotorTestRequest(BaseModel):
-    motor: str = Field(..., description="left | right")
+    motor: str = Field(..., description="motor | left | right")
     pwm: int = Field(..., ge=900, le=MOTOR_TEST_MAX_PWM)
     seconds: float = Field(2.0, ge=0.5, le=3.0)
 
 
 class MotorStartRequest(BaseModel):
-    motor: str = Field(..., description="left | right")
+    motor: str = Field(..., description="motor | left | right")
     pwm: int = Field(..., ge=900, le=MOTOR_TEST_MAX_PWM, description="Signal where the motor just starts turning")
 
 
@@ -561,7 +622,12 @@ def _motor_output(motor):
     for n in range(1, 9):
         if link.get_param(f"SERVO{n}_FUNCTION") == want:
             return n
-    raise LinkError(f"No output is set as the {motor} thruster (SERVOn_FUNCTION {want}).")
+    name = "throttle motor" if motor == "motor" else f"{motor} thruster"
+    raise LinkError(f"No output is set as the {name} (SERVOn_FUNCTION {want}).")
+
+
+def _motor_label(motor):
+    return "Motor" if motor == "motor" else f"{motor.capitalize()} motor"
 
 
 @app.post("/api/pixhawk/motor_test")
@@ -569,10 +635,11 @@ def pixhawk_motor_test(body: MotorTestRequest):
     """Spin one thruster at an exact signal; the Pixhawk stops it after `seconds`. Disarmed only."""
     motor = body.motor.lower()
     if motor not in MOTOR_TEST_SEQ:
-        return fail("motor must be left or right.")
+        return fail("motor must be motor, left or right.")
     try:
         if link.snapshot()["armed"]:
             return fail("Disarm the boat before a motor test.")
+        _motor_output(motor)                                   # that motor must exist on this boat
         if _esc["active"]:
             return fail("An ESC calibration is running.")
         # MAV_CMD_DO_MOTOR_TEST: motor, throttle type 1 = PWM, value, timeout s
@@ -580,7 +647,7 @@ def pixhawk_motor_test(body: MotorTestRequest):
         if result != 0:
             return fail(f"The Pixhawk refused the motor test (result {result}).")
         log.info("Motor test: %s at %d µs for %.1f s", motor, body.pwm, body.seconds)
-        return ok(f"{motor.capitalize()} motor at {body.pwm} µs for {body.seconds:g} s.")
+        return ok(f"{_motor_label(motor)} at {body.pwm} µs for {body.seconds:g} s.")
     except LinkError as exc:
         return fail(str(exc))
 
@@ -590,7 +657,7 @@ def pixhawk_motor_start(body: MotorStartRequest):
     """Save where this thruster starts turning: its stopped point goes just below it."""
     motor = body.motor.lower()
     if motor not in MOTOR_FUNCTION:
-        return fail("motor must be left or right.")
+        return fail("motor must be motor, left or right.")
     try:
         if link.snapshot()["armed"]:
             return fail("Disarm the boat first.")
@@ -600,7 +667,7 @@ def pixhawk_motor_start(body: MotorStartRequest):
         link.set_param(f"SERVO{n}_TRIM", stop)
         link.set_param(f"SERVO{n}_MAX", 2000)
         log.info("Motor matching: %s motor (output %d) starts at %d µs → stopped at %d µs", motor, n, body.pwm, stop)
-        return ok(f"{motor.capitalize()} motor (output {n}): stopped at {stop} µs, starts at {body.pwm} µs, full at 2000 µs.",
+        return ok(f"{_motor_label(motor)} (output {n}): stopped at {stop} µs, starts at {body.pwm} µs, full at 2000 µs.",
                   output=n, stop=stop)
     except LinkError as exc:
         return fail(str(exc))
@@ -658,7 +725,7 @@ _esc_lock = __import__("threading").Lock()
 
 class EscCalRequest(BaseModel):
     step: str = Field(..., description="auto | cancel")
-    outputs: list[int] = [1, 3]
+    outputs: list[int] = []              # empty: every motor output (SERVOn_FUNCTION 70 / 73 / 74)
     trim: int = Field(ESC_PWM_LOW, description="Stopped: 1000 for forward-only ESCs, 1500 for forward/reverse")
 
 
@@ -817,12 +884,18 @@ def esc_calibration(body: EscCalRequest):
                             "powered ESC runs the motor flat out.")
             outputs = sorted({int(n) for n in body.outputs if 1 <= int(n) <= 8})
             if not outputs:
-                return fail("Give the motor outputs, e.g. [1].")
+                outputs = [n for n in range(1, 9) if link.get_param(f"SERVO{n}_FUNCTION") in MOTOR_FUNCTION.values()]
+            if not outputs:
+                return fail("No motor output found (SERVOn_FUNCTION 70, or 73 / 74).")
             functions = {}
             for n in outputs:
                 fn = link.get_param(f"SERVO{n}_FUNCTION")
                 if fn is None:
                     return fail(f"Could not read SERVO{n}_FUNCTION.")
+                if fn not in MOTOR_FUNCTION.values():
+                    # Never the steering servo (26) or another servo: full signal would
+                    # slam it over, and the saved range would ruin its centre.
+                    return fail(f"Output {n} isn't a motor (SERVO{n}_FUNCTION {fn:g}). Only motor ESCs are calibrated.")
                 functions[n] = fn
             ESC_CAL_FILE.write_text(json.dumps({"outputs": outputs, "functions": functions}))
             _esc.update(active=True, outputs=outputs, functions=functions, cancel=False)
@@ -962,11 +1035,19 @@ def mavlink_status():
 # ---------------------------------------------------------------------------- missions
 # ---------------------------------------------------------------------------- live collect
 class LiveTarget(BaseModel):
+    """One drone detection record (the drone-to-boat workflow's target)."""
     id: str
-    lat: float
-    lng: float
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    latitude: Optional[float] = None    # same as lat / lng (either name)
+    longitude: Optional[float] = None
     source: Optional[str] = None
     confidence: Optional[float] = None
+    object_class: Optional[str] = None  # what the drone's AI called it, e.g. "plastic bottle"
+    label: Optional[str] = None         # same as object_class
+    timestamp: Optional[float] = None   # when the drone saw it (s or ms since 1970)
+    reference_image: Optional[str] = None  # the drone's crop of the item: base64 JPEG/PNG (or a data: URL)
+    status: Optional[str] = None        # the app's own status (DETECTED / SENT); the boat keeps its own
 
 
 class LiveTargetsRequest(BaseModel):
@@ -984,6 +1065,19 @@ class LiveStopRequest(BaseModel):
 
 class LiveSkipRequest(BaseModel):
     id: str
+
+
+class SimPlaceRequest(BaseModel):
+    lat: float
+    lng: float
+    label: str = "plastic container"
+    dodge: int = 0
+
+
+class SimWorldRequest(BaseModel):
+    auto_place: Optional[bool] = None
+    dodge_next: Optional[int] = None
+    gps_ok: Optional[bool] = None
 
 
 class CollectorRequest(BaseModel):
@@ -1011,6 +1105,30 @@ def live_targets(body: LiveTargetsRequest):
     return ok(f"{n} new item{'s' if n != 1 else ''}"
               + (f", {len(res['merged'])} merged" if res["merged"] else "")
               + (f", {len(res['rejected'])} refused" if res["rejected"] else ""), **res)
+
+
+@app.get("/api/live/target")
+def live_target(id: str = Query(...)):
+    """One target: the drone's record, its workflow state, retries and every transition."""
+    t = live.target_detail(id)
+    if t is None:
+        return JSONResponse({"success": False, "message": "No such item."}, status_code=404)
+    return t
+
+
+@app.get("/api/live/reference")
+def live_reference(id: str = Query(...)):
+    """The drone's reference image of a target."""
+    p = live.reference_path(id)
+    if not p:
+        return JSONResponse({"success": False, "message": "No reference image."}, status_code=404)
+    return FileResponse(p, media_type="image/png" if p.read_bytes()[:4] == b"\x89PNG" else "image/jpeg")
+
+
+@app.post("/api/live/retry")
+def live_retry(body: LiveSkipRequest):
+    """Put a NOT_FOUND / RETRY_REQUIRED item back in the queue."""
+    return run(lambda: live.retry(body.id))
 
 
 @app.post("/api/live/start")
@@ -1273,6 +1391,22 @@ def sim_servo():
     return {"outputs": {str(k): v for k, v in sim_boat.servo_out.items()}}
 
 
+class SimSwitchRequest(BaseModel):
+    channel: int = Field(..., ge=5, le=16)
+    us: int = Field(..., ge=800, le=2200)
+
+
+@app.post("/api/sim/switch")
+def sim_switch(body: SimSwitchRequest):
+    """SIM only: flip a switch on the simulated transmitter (no effect with --sim-gamepad)."""
+    if not sim_boat:
+        return JSONResponse({"success": False, "message": "Only available in the simulator."}, status_code=404)
+    if not sim_boat.tx:
+        return fail("The simulated boat has no transmitter.")
+    sim_boat.tx[body.channel] = body.us
+    return ok(f"Transmitter channel {body.channel} → {body.us} µs", rc_in=sim_boat.rc_in(body.channel))
+
+
 @app.get("/api/sim/detections")
 def sim_detections(frame_time: float = Query(...)):
     """SIM only: where the simulated items and ducks are in a given frame (the
@@ -1283,6 +1417,47 @@ def sim_detections(frame_time: float = Query(...)):
     if pose is None:
         return {"targets": [], "hazards": [], "ramp": []}
     return sim_world.detections(pose, cfg["camera_width"], cfg["camera_height"])
+
+
+@app.get("/api/sim/reference")
+def sim_reference(label: str = Query(default="plastic bottle")):
+    """SIM only: the drone's view of an item of this class (a top-down crop, JPEG)."""
+    if not sim_world:
+        return JSONResponse({"success": False, "message": "Only available in the simulator."}, status_code=404)
+    from fastapi.responses import Response
+    return Response(sim_world.reference_image(label), media_type="image/jpeg")
+
+
+@app.get("/api/sim/objects")
+def sim_objects():
+    if not sim_world:
+        return JSONResponse({"success": False, "message": "Only available in the simulator."}, status_code=404)
+    return {"objects": sim_world.objects_view(), "dodge_next": sim_world.dodge_next,
+            "auto_place": sim_world.auto_place, "gps_ok": sim_boat.gps_ok}
+
+
+@app.post("/api/sim/place")
+def sim_place(body: SimPlaceRequest):
+    """SIM only: drop an item on the water (e.g. a decoy of another kind)."""
+    if not sim_world:
+        return fail("Only available in the simulator.")
+    return ok("Placed.", object=sim_world.place(body.lat, body.lng, body.label, body.dodge))
+
+
+@app.post("/api/sim/world")
+def sim_world_set(body: SimWorldRequest):
+    """SIM only: auto_place (new live points get an item), dodge_next (failed
+    pick-ups), gps_ok (False: the GPS loses its fix)."""
+    if not sim_world:
+        return fail("Only available in the simulator.")
+    if body.auto_place is not None:
+        sim_world.auto_place = body.auto_place
+    if body.dodge_next is not None:
+        sim_world.dodge_next = max(0, body.dodge_next)
+    if body.gps_ok is not None:
+        sim_boat.gps_ok = body.gps_ok
+    return ok("Simulator updated.", auto_place=sim_world.auto_place, dodge_next=sim_world.dodge_next,
+              gps_ok=sim_boat.gps_ok)
 
 
 @app.post("/api/sim/duck")
