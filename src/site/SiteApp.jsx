@@ -1,12 +1,12 @@
 // The public website (Vercel build, `--mode site`):
-//   first visit  → the app's own cinematic intro
-//   /            → landing: Open the app / Explore Varuna
-//   /explore     → the whole project, ending with feedback
+//   /            → home: Open the app / Explore Varuna, then the whole
+//                  project, ending with feedback (/explore shows the same)
 //   /login       → sign in (then back to ?next=)
-//   /app         → the ground-control app, signed-in users only, with the
+//   /app         → the app's own cinematic intro, then the ground-control app
+//                  for signed-in users (sign-in first otherwise), with the
 //                  "install the official app" card sliding up
 import { useEffect, useState } from 'react'
-import { AnimatePresence, motion } from 'framer-motion'
+import { motion } from 'framer-motion'
 import IntroScreen from '../screens/IntroScreen'
 import { SystemProvider } from '../components/SystemContext'
 import { BoatProvider } from '../components/BoatContext'
@@ -16,26 +16,15 @@ import '../components/launch/launch.css'
 import { useUser } from '../lib/auth'
 import { usePath, navigate } from './router'
 import { setupPwa, isStandalone } from './pwa'
-import Landing from './Landing'
 import Explore from './Explore'
 import InstallSheet from './InstallSheet'
 import './site.css'
 
 setupPwa()
 
-const INTRO_KEY = 'varuna.siteIntro'
-function introSeen() {
-  if (isStandalone()) return true // opened as the installed app: straight in
-  try {
-    return sessionStorage.getItem(INTRO_KEY) === '1'
-  } catch {
-    return false
-  }
-}
-
 const TITLES = {
   '/': 'VARUNA AI · AI drone and autonomous boat for cleaner rivers',
-  '/explore': 'Explore Varuna · VARUNA AI',
+  '/explore': 'VARUNA AI · AI drone and autonomous boat for cleaner rivers',
   '/login': 'Log in · VARUNA AI',
   '/app': 'VARUNA AI · Ground Control',
 }
@@ -74,6 +63,9 @@ function LoginRoute() {
 
 function AppRoute({ renderApp }) {
   const user = useUser()
+  // Opening the app plays its intro each time; the installed app goes straight in.
+  const [intro, setIntro] = useState(() => !isStandalone())
+  if (intro) return <IntroScreen onActivate={() => setIntro(false)} />
   if (!user) return <SignIn note="Sign in to open the VARUNA app" onBack={() => navigate('/')} />
   return (
     <>
@@ -85,26 +77,10 @@ function AppRoute({ renderApp }) {
 
 export default function SiteApp({ renderApp }) {
   const path = usePath()
-  const [intro, setIntro] = useState(() => !introSeen())
 
   useEffect(() => {
     document.title = TITLES[path] || TITLES['/']
   }, [path])
-
-  if (intro) {
-    return (
-      <IntroScreen
-        onActivate={() => {
-          try {
-            sessionStorage.setItem(INTRO_KEY, '1')
-          } catch {
-            /* private mode */
-          }
-          setIntro(false)
-        }}
-      />
-    )
-  }
 
   if (path === '/app') return <AppRoute renderApp={renderApp} />
   if (path === '/login') return <LoginRoute />
@@ -112,11 +88,9 @@ export default function SiteApp({ renderApp }) {
   return (
     <div className="vs">
       <div className="vs-grain" aria-hidden="true" />
-      <AnimatePresence mode="wait">
-        <motion.div key={path} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.45 }}>
-          {path === '/explore' ? <Explore /> : <Landing />}
-        </motion.div>
-      </AnimatePresence>
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.6 }}>
+        <Explore />
+      </motion.div>
     </div>
   )
 }

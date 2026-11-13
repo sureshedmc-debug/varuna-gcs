@@ -200,7 +200,7 @@ export function Footer() {
             <ul>
               <li><a {...linkProps('/app')}>Open the app</a></li>
               <li><a {...linkProps('/login?next=/')}>Log in or sign up</a></li>
-              <li><a {...linkProps('/explore#feedback')}>Send feedback</a></li>
+              <li><a {...linkProps('/#feedback')}>Send feedback</a></li>
             </ul>
           </div>
         </div>

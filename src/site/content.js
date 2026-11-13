@@ -4,12 +4,12 @@
 export const M = (f) => `/site/${f}`
 
 export const NAV = [
-  ['Overview', '/explore#story'],
-  ['How it works', '/explore#how'],
-  ['Technology', '/explore#tech'],
-  ['Gallery', '/explore#gallery'],
-  ['Team', '/explore#team'],
-  ['Feedback', '/explore#feedback'],
+  ['Overview', '/#story'],
+  ['How it works', '/#how'],
+  ['Technology', '/#tech'],
+  ['Gallery', '/#gallery'],
+  ['Team', '/#team'],
+  ['Feedback', '/#feedback'],
 ]
 
 export const STEPS = [

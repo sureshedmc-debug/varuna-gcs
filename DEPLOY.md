@@ -16,9 +16,8 @@ What runs in the Render container:
 
 Vercel builds with `vite build --mode site` (`.env.site` sets `VITE_SITE=1`). That puts a website in front of the app:
 
-- `/`: the app's own intro, then a landing page with **Open the app** and **Explore Varuna**, and Log in in the top bar.
-- `/explore`: the problem, how it works, the machines, a comparison, the gallery and film, who made it, and a feedback form.
-- `/login` and `/app`: `/app` opens the app only for a signed-in user. Then the "Install VARUNA AI" card slides up from the bottom, which installs the site as an app (`public/sw.js`, `public/site/manifest.webmanifest`). Set `VITE_DOWNLOAD_ANDROID` / `VITE_DOWNLOAD_WINDOWS` on Vercel to links of the APK / installer to add download buttons to that card.
+- `/` (also `/explore`): the home page, with **Open the app** and **Explore Varuna** at the top and Log in in the top bar. Below them: the problem, how it works, the machines, a comparison, the gallery and film, who made it, and a feedback form.
+- `/login` and `/app`: `/app` plays the app's own intro, then opens the app only for a signed-in user (sign-in comes first otherwise). Then the "Install VARUNA AI" card slides up from the bottom, which installs the site as an app (`public/sw.js`, `public/site/manifest.webmanifest`). Set `VITE_DOWNLOAD_ANDROID` / `VITE_DOWNLOAD_WINDOWS` on Vercel to links of the APK / installer to add download buttons to that card.
 
 The media in `public/site` is cut from *varuna project videos*. The desktop and Android builds drop `public/site` and `sw.js` from `dist`, and never load the website code. To try it locally, run `npx vite --mode site`.
 

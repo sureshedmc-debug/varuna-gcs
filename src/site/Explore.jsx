@@ -1,6 +1,6 @@
-// Explore Varuna: the whole project as one long story — problem, how it
-// works, the machines, why it is different, photos and film, who made it, and
-// feedback at the end.
+// The website's home page (/): the two ways in — open the app, or explore —
+// then the whole project as one long story: problem, how it works, the
+// machines, why it is different, photos and film, who made it, and feedback.
 import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { navigate } from './router'
@@ -9,6 +9,29 @@ import { M, STEPS, MACHINES, STACK, COMPARE, GALLERY, TEAM } from './content'
 import Feedback from './Feedback'
 
 const SECTIONS = ['story', 'how', 'tech', 'gallery', 'team', 'feedback']
+
+const rise = (i) => ({
+  initial: { opacity: 0, y: 30 },
+  animate: { opacity: 1, y: 0 },
+  transition: { duration: 1, ease: EASE, delay: 0.55 + i * 0.09 },
+})
+
+// The card follows the pointer with a soft glow.
+function spotlight(e) {
+  const r = e.currentTarget.getBoundingClientRect()
+  e.currentTarget.style.setProperty('--mx', `${e.clientX - r.left}px`)
+  e.currentTarget.style.setProperty('--my', `${e.clientY - r.top}px`)
+}
+
+function Choice({ main, icon, small, title, text, onClick, i }) {
+  return (
+    <motion.button type="button" className={`vs-choice${main ? ' main' : ''}`} onClick={onClick} onPointerMove={spotlight} {...rise(i)}>
+      <span className="vs-choice-icon"><Icon name={icon} size={24} /></span>
+      <span className="vs-choice-txt"><small>{small}</small><b>{title}</b><span>{text}</span></span>
+      <span className="vs-choice-go"><Icon name="arrow" size={18} /></span>
+    </motion.button>
+  )
+}
 
 function Head({ kicker, title, lead, center }) {
   return (
@@ -81,19 +104,37 @@ export default function Explore() {
               </span>
             ))}
           </h1>
-          <motion.p className="vs-hero-sub" initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 1, ease: EASE, delay: 0.6 }}>
+          <motion.p className="vs-hero-sub" {...rise(0)}>
             This is the story of VARUNA AI: why we built a drone and a boat to clean rivers, how they work together, and the people behind them.
           </motion.p>
-          <motion.div style={{ display: 'flex', gap: 28, alignItems: 'center', flexWrap: 'wrap', marginTop: 34 }}
-            initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 1, ease: EASE, delay: 0.75 }}>
+
+          <div className="vs-choices">
+            <Choice i={1} main icon="app" small="For operators" title="Open the app"
+              text="Plan missions, watch the drone's AI feed and drive the boat. Sign in first." onClick={() => navigate('/app')} />
+            <Choice i={2} icon="compass" small="For everyone" title="Explore Varuna"
+              text="The problem, how it works, the machines, the team, photos and the film."
+              onClick={() => document.getElementById('story')?.scrollIntoView({ behavior: 'smooth' })} />
+          </div>
+
+          <motion.div className="vs-hero-foot" {...rise(3)}>
             <button type="button" className="vs-play" onClick={() => setView({ items: FILM, index: 0 })}>
               <i><Icon name="play" size={22} /></i>
               <span><b>Watch the film</b><small>56 seconds · sound on</small></span>
             </button>
-            <button type="button" className="vs-btn ghost" onClick={() => navigate('/app')}>Open the app <Icon name="arrow" size={16} className="arrow" /></button>
+            <div className="vs-stats">
+              <div className="vs-stat"><b>2</b><span>machines, one mission</span></div>
+              <div className="vs-stat"><b>3</b><span>steps: detect · locate · collect</span></div>
+              <div className="vs-stat"><b className="vs-grad">AI</b><span>on the live drone feed</span></div>
+            </div>
           </motion.div>
         </div>
       </section>
+
+      <div className="vs-marquee" aria-label="Built with">
+        <div className="vs-marquee-track">
+          {[0, 1].map((k) => STACK.map((s) => <span key={`${k}-${s}`} aria-hidden={k === 1}>{s}</span>))}
+        </div>
+      </div>
 
       {/* ── the problem ── */}
       <section id="story" className="vs-sec">
