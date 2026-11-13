@@ -31,7 +31,11 @@ DEFAULTS = {
     # ---- HTTP
     "http_port": 8000,
     # ---- Camera: 1280x720 at 30 fps
-    "camera_source": "auto",          # auto | usb | csi | test | off
+    "camera_source": "auto",          # auto | usb | csi | url | test | off
+    # A phone (or IP camera) on the drone sending MJPEG, e.g. the IP Webcam app:
+    # "http://<phone NetBird IP>:8080/video". Used by camera_source "url", and by
+    # "auto" whenever it is set.
+    "camera_url": "",
     "camera_device": "auto",          # auto = first USB camera, or e.g. /dev/video0
     "camera_width": 1280,
     "camera_height": 720,
@@ -64,9 +68,10 @@ DEFAULTS = {
 
 # Live-tunable settings, shown in the app as sliders / fields.
 TUNABLE = {
-    "camera_source": {"type": "str", "options": ["auto", "usb", "csi", "off"],
-                      "description": "Which camera: auto (the Pi camera module if connected, else the USB webcam), "
-                                     "usb, csi (Pi camera module) or off. Switches straight away."},
+    "camera_source": {"type": "str", "options": ["auto", "usb", "csi", "url", "off"],
+                      "description": "Which camera: auto (the phone camera if a camera URL is set, else the Pi "
+                                     "camera module if connected, else the USB webcam), usb, csi (Pi camera module), "
+                                     "url (the phone camera at camera_url) or off. Switches straight away."},
     "camera_quality": {"type": "int", "min": 30, "max": 95,
                        "description": "Video picture quality (JPEG). Lower = smaller frames: smoother, less delay on "
                                       "weak Wi-Fi. Applies to the Pi camera module (and webcams the Pi has to encode)."},
@@ -114,7 +119,7 @@ _INT = {"usb_baud", "telem2_baud", "http_port", "camera_width", "camera_height",
 _FLOAT = {"takeoff_alt_m", "max_altitude_m", "max_distance_m", "mission_fence_m", "kb_speed_mps", "kb_climb_mps", "kb_min_alt_m"}
 _CHOICES = {
     "link_prefer": ("auto", "usb", "telem2"),
-    "camera_source": ("auto", "usb", "csi", "test", "off"),
+    "camera_source": ("auto", "usb", "csi", "url", "test", "off"),
     "camera_codec": ("h264", "mjpeg"),
     "operator_lost_action": ("none", "rtl", "land"),
     "kb_lost_action": ("rtl", "land", "hover"),

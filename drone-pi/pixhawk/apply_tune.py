@@ -31,16 +31,16 @@ BASELINE = {
     "GPS1_RATE_MS": 200, "GPS_MIN_ELEV": -100, "GPS_SBAS_MODE": 2,
 }
 
-# Changes on top of the baseline that the downloaded logs (141-153) back up.
+# Changes on top of the baseline that the downloaded logs (137-156) back up.
 TUNED_CHANGES = {
-    # The raw gyro data (log 149 batch samples) puts the motor vibration at 95-100 Hz
-    # with harmonics at ~195 and ~290 Hz; 70 Hz missed it. Hover throttle measured 0.23.
-    "INS_HNTCH_FREQ": 95, "INS_HNTCH_BW": 45, "INS_HNTCH_REF": 0.23, "INS_HNTCH_HMNCS": 7,
+    # Airborne gyro batch data (logs 149, 152) puts the motor vibration at ~100 Hz
+    # (88-110) with harmonics at ~195 and ~290 Hz; 70 Hz missed it. Hover throttle 0.22.
+    "INS_HNTCH_FREQ": 95, "INS_HNTCH_BW": 45, "INS_HNTCH_REF": 0.22, "INS_HNTCH_HMNCS": 7,
     # The fixed 80 Hz notch sat below the real noise and only added delay.
     "INS_HNTC2_ENABLE": 0,
-    # Start every flight from the measured hover throttle; still learn in flight, but
-    # don't save it, so a bad learn can't make the next take-off climb or sink.
-    "MOT_THST_HOVER": 0.23, "MOT_HOVER_LEARN": 1,
+    # Start every flight from the measured hover throttle (0.219 airborne, logs 152/155);
+    # still learn in flight, but don't save it: log 155 saved 0.16, learned in ground effect.
+    "MOT_THST_HOVER": 0.22, "MOT_HOVER_LEARN": 1,
     # Log 152: in a gust and on landing, throttle fell to ~0 and the drone lost its
     # angle (tipped on landing). Let attitude control win over throttle.
     "ATC_THR_MIX_MAX": 0.9,

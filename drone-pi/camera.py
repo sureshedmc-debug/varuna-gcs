@@ -16,6 +16,10 @@ out of a Raspberry Pi 3:
     for its own MJPEG at 1280x720/30 and copies the frames through untouched;
     if it can't do MJPEG at that size, raw YUYV that ffmpeg encodes (heavier),
     then 640x480.
+  * url  → a phone (or IP camera) on the drone sending MJPEG over the network,
+    e.g. the Android "IP Webcam" app at http://<phone NetBird IP>:8080/video
+    (camera_url). Its JPEGs pass straight through; nothing runs but an HTTP
+    read, so it works on a laptop backend too (see phone-link/README.md).
   * test → a generated test picture (laptop testing / no camera), in H.264 or
     MJPEG like the camera module.
 
@@ -23,8 +27,9 @@ With H.264, /video_feed and /api/camera/snapshot still get JPEGs: while
 someone watches /video_feed (browsers without WebCodecs) ffmpeg decodes the
 stream to JPEGs, and a snapshot decodes the latest keyframe.
 
-camera_source "auto" (the default) uses whichever camera is there: the camera
-module if one is connected, else the USB webcam. If the one in use fails
+camera_source "auto" (the default) uses whichever camera is there: the phone
+if camera_url is set, else the camera module if one is connected, else the USB
+webcam. If the one in use fails
 or is unplugged it switches to the other by itself, and changing
 camera_source or camera_quality live (System → Live tuning in the app)
 restarts the capture with the new setting.
@@ -42,6 +47,7 @@ import shutil
 import subprocess
 import threading
 import time
+import urllib.request
 from collections import deque
 
 log = logging.getLogger("drone.camera")
@@ -56,6 +62,7 @@ FAILED_SKIP_S = 60    # auto: after a camera fails every setting, prefer the oth
 H264_KEEP = 120       # H.264 frames kept for viewers (a few seconds)
 JPEG_DEMAND_S = 10    # H.264: keep decoding it to JPEG for /video_feed this long after the last request
 START4 = b"\x00\x00\x00\x01"
+URL_CMD = "<url>"     # marks a "capture command" that is an HTTP MJPEG stream, not a process
 
 # Standard JPEG Huffman tables (ITU-T T.81, Annex K.3). Many USB webcams leave
 # them out of their MJPEG frames ("AVI1" style); browsers usually cope, but
@@ -293,6 +300,32 @@ class H264Jpegs:
                 pass
 
 
+def jpeg_size(frame):
+    """(width, height) from a JPEG's start-of-frame marker, or None."""
+    i = 2
+    while i + 9 < len(frame):
+        if frame[i] != 0xFF:
+            return None
+        marker = frame[i + 1]
+        if marker in (0xC0, 0xC1, 0xC2):
+            return int.from_bytes(frame[i + 7:i + 9], "big"), int.from_bytes(frame[i + 5:i + 7], "big")
+        if marker == 0xDA:
+            return None
+        i += 2 + int.from_bytes(frame[i + 2:i + 4], "big")
+    return None
+
+
+class _HttpStream:
+    """An HTTP response read like a pipe: read(n) returns what has arrived (up to
+    n bytes) instead of waiting for all n, so each frame goes out as it lands."""
+
+    def __init__(self, resp):
+        self.resp = resp
+
+    def read(self, n):
+        return self.resp.read1(n)
+
+
 def _is_usb_node(dev):
     """True if /dev/videoN belongs to a USB device. With the camera module
     enabled, /dev/video0 is the Pi's own CSI receiver, not a webcam."""
@@ -347,6 +380,7 @@ class CameraManager:
         self._stop = threading.Event()
         self._thread = None
         self._proc = None
+        self._url_resp = None      # the open phone-camera stream (camera_source url)
         self._cond = threading.Condition()
         self.frame = None
         self.frame_seq = 0
@@ -390,6 +424,12 @@ class CameraManager:
             self._thread.join(timeout=3)
 
     def _kill(self):
+        r = self._url_resp
+        if r is not None:
+            try:
+                r.close()
+            except Exception:
+                pass
         p, self._proc = self._proc, None
         if p and p.poll() is None:
             try:
@@ -425,6 +465,11 @@ class CameraManager:
             source = self._auto_source()
             if not source:
                 return "none", None, []
+        if source == "url":
+            url = (self.cfg["camera_url"] or "").strip()
+            if not url:
+                return "url", None, []
+            return "url", url, [("phone camera (MJPEG over the network)", "as sent", [URL_CMD, url], "mjpeg")]
         if source == "test":
             mjpeg = ("test pattern", f"{w}x{h}",
                      base + ["-re", "-f", "lavfi", "-i", f"testsrc2=size={w}x{h}:rate={fps}",
@@ -496,7 +541,10 @@ class CameraManager:
 
     def _auto_source(self):
         """auto: the USB webcam if one is plugged in, else the camera module. A
-        camera that just failed every setting goes behind the other one."""
+        camera that just failed every setting goes behind the other one. A
+        camera URL, when set, comes first: it was set on purpose."""
+        if (self.cfg["camera_url"] or "").strip():
+            return "url"
         usb = bool(find_usb_camera())
         csi = bool(find_csi_tool()) and csi_camera_present()
         # The camera module first: its hardware H.264 is the lightest, sharpest
@@ -535,6 +583,7 @@ class CameraManager:
                     "none": "No camera found. Plug in a USB webcam or connect the Pi camera module — whichever is there is used automatically.",
                     "csi": "rpicam-vid / libcamera-vid is not installed, or no camera module is connected.",
                     "usb": "No USB camera found.",
+                    "url": "camera_source is url but no camera_url is set (e.g. http://<phone IP>:8080/video).",
                 }.get(source, "No camera found.")
                 self._stop.wait(5)
                 continue
@@ -578,7 +627,8 @@ class CameraManager:
         self._demand.clear()
 
     def _setting_key(self):
-        key = (self.cfg["camera_source"], self.cfg["camera_quality"], self.cfg["camera_codec"])
+        key = (self.cfg["camera_source"], self.cfg["camera_quality"], self.cfg["camera_codec"],
+               self.cfg["camera_url"])
         if self.codec == "h264":
             key += (self.cfg["video_bitrate_kbps"], self.cfg["stream_fps"])
         return key
@@ -588,6 +638,8 @@ class CameraManager:
 
     def _capture(self, name, res, cmd, fmt):
         """Run one capture process until it ends. True if it produced frames."""
+        if cmd and cmd[0] == URL_CMD:
+            return self._capture_url(name, cmd[1])
         log.info("Camera: starting %s at %s", name, res)
         self.pipeline, self.resolution = name, res
         self.status_text = "STARTING"
@@ -631,6 +683,56 @@ class CameraManager:
             self.status_text = "RECONNECTING"
         else:
             log.warning("Camera: %s at %s failed: %s", name, res, self.last_error or "no frames")
+        return got > 0
+
+    def _capture_url(self, name, url):
+        """Read a phone's MJPEG stream until it ends. True if it produced frames.
+        A read that waits STALL_S for data (phone gone, 4G dropped) ends it, and
+        _run tries again."""
+        log.info("Camera: opening %s at %s", name, url)
+        self.pipeline, self.resolution = name, None
+        self.status_text = "STARTING"
+        self.started_at = time.time()
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "varuna-drone"})
+            resp = urllib.request.urlopen(req, timeout=STALL_S)
+        except Exception as exc:
+            self.last_error = (f"Cannot open the phone camera at {url}: {exc}. Is the camera app running, "
+                               "and the phone on NetBird?")
+            log.warning(self.last_error)
+            return False
+        ctype = resp.headers.get("Content-Type", "")
+        if "multipart" not in ctype.lower() and "jpeg" not in ctype.lower():
+            resp.close()
+            self.last_error = (f"{url} sends {ctype or 'something'}, not an MJPEG video stream. In IP Webcam "
+                               "the stream is at /video.")
+            log.warning(self.last_error)
+            return False
+        self._url_resp = resp
+        got = 0
+        try:
+            for frame in iter_jpegs(_HttpStream(resp), self._stop):
+                if not got:
+                    size = jpeg_size(frame)
+                    self.resolution = f"{size[0]}x{size[1]}" if size else None
+                self._publish(ensure_dht(frame))
+                got += 1
+                if self._setting_changed() or self._idle():
+                    break
+        except Exception as exc:          # timeout, connection reset, 4G gone
+            self.last_error = f"The phone camera stream stopped: {exc}"
+        finally:
+            self._url_resp = None
+            try:
+                resp.close()
+            except Exception:
+                pass
+        if got:
+            log.warning("Phone camera stream ended after %d frames: %s", got, self.last_error or "closed")
+            self.status_text = "RECONNECTING"
+        else:
+            self.last_error = self.last_error or f"The phone camera at {url} sent no pictures."
+            log.warning(self.last_error)
         return got > 0
 
     def _watchdog(self, proc):

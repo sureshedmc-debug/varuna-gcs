@@ -11,6 +11,10 @@ System tabs) talks to it over NetBird. It talks to the drone's Pixhawk
    flight commands, telemetry         arm / take-off / RTH / land / STOP              loiter, land, RTL
 ```
 
+**No Pi on the drone?** A phone can carry the video (IP Webcam) and an ESP32 the
+telemetry, with this backend running on the laptop instead: see
+[phone-link/README.md](phone-link/README.md).
+
 ## Easiest way: the VARUNA Drone Pi Tool
 
 Double-click **VARUNA Drone Pi Tool.exe**. Build it with `drone-installer\build.bat`; it lands in `drone-installer\dist\`.
@@ -58,6 +62,8 @@ With `camera_codec` = `h264` the camera module runs at `stream_fps` (15), not 30
 **Camera module not found after a reboot?** With `camera_auto_detect=1` the Pi's firmware probes for the camera at boot and sometimes misses it (Pi 3 with the camera v1 especially). The setup tool's Update finds which camera module is connected (starting it on the spot if it wasn't found) and writes `camera_auto_detect=0` + `dtoverlay=<sensor>` (e.g. `ov5647`) to `/boot/firmware/config.txt`, so it loads on every boot. The original file is kept as `config.txt.before-varuna`.
 
 With `camera_source` = `auto` (the default) the drone uses whichever camera is connected: the Pi camera module if there is one (its hardware H.264 is the coolest, lowest-delay stream), else the USB webcam. If the camera in use fails or is unplugged, it switches to the other one by itself. You can also pick the camera in the app: System → Live tuning → `camera_source` (it switches straight away; "Save to disk" keeps it after a restart).
+
+**Phone camera:** `camera_source` = `url` (or `auto` with `camera_url` set) reads a phone's MJPEG stream, e.g. the Android IP Webcam app at `http://<phone NetBird IP>:8080/video`. The phone's JPEGs pass straight through to the app, the AI detection and snapshots; set the resolution and quality in the phone app. See [phone-link/README.md](phone-link/README.md).
 
 If the camera can't do 720p30, the backend falls back by itself: first to encoding on the Pi, then to 640×480. System → Camera in the app shows the real resolution and fps.
 

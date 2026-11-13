@@ -15,6 +15,9 @@ Every mutating call answers HTTP 200 with {"success": bool, "message": str}.
 
 Run on the Pi:      python main.py
 Test on a laptop:   python main.py --connection tcp:127.0.0.1:5760 --camera test
+On the laptop, with the phone on the drone (phone-link/README.md):
+                    python main.py --connection udpout:<phone NetBird IP>:14551 \
+                                   --camera-url http://<phone NetBird IP>:8080/video
 """
 
 import argparse
@@ -48,7 +51,7 @@ STARTED = time.time()
 cfg = ConfigStore()
 # Command-line overrides (set by main() below) win over the config file.
 for _key, _env in (("mav_connection", "DRONE_CLI_CONNECTION"), ("camera_source", "DRONE_CLI_CAMERA"),
-                   ("http_port", "DRONE_CLI_PORT")):
+                   ("camera_url", "DRONE_CLI_CAMERA_URL"), ("http_port", "DRONE_CLI_PORT")):
     if os.environ.get(_env):
         cfg.set_runtime(_key, os.environ[_env])
 
@@ -676,12 +679,16 @@ def main():
     ap.add_argument("--port", type=int, default=None, help="HTTP port (default from config: 8000)")
     ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("--connection", default=None, help="force the Pixhawk link, e.g. tcp:127.0.0.1:5760 or /dev/ttyACM0")
-    ap.add_argument("--camera", default=None, help="camera source: auto | usb | csi | test | off")
+    ap.add_argument("--camera", default=None, help="camera source: auto | usb | csi | url | test | off")
+    ap.add_argument("--camera-url", default=None,
+                    help="phone camera MJPEG stream, e.g. http://100.x.x.x:8080/video (IP Webcam)")
     args = ap.parse_args()
     if args.connection:
         os.environ["DRONE_CLI_CONNECTION"] = args.connection
     if args.camera:
         os.environ["DRONE_CLI_CAMERA"] = args.camera
+    if args.camera_url:
+        os.environ["DRONE_CLI_CAMERA_URL"] = args.camera_url
     port = args.port or cfg["http_port"]
     os.environ["DRONE_CLI_PORT"] = str(port)
     import uvicorn

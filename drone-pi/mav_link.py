@@ -282,6 +282,12 @@ class DroneLink:
             log.info("Connecting to Pixhawk via %s (%s, baud %s)", name, device, baud)
             self._m = mavutil.mavlink_connection(
                 device, baud=baud, source_system=GCS_SYSID, source_component=GCS_COMPID, autoreconnect=True)
+            if device.startswith("udpout:"):
+                # Say hello first: a phone relay (phone-link/relay.py) only learns where
+                # to send once it hears from us, and Windows can't read a UDP socket
+                # that hasn't sent anything yet.
+                self._m.mav.heartbeat_send(mavlink.MAV_TYPE_GCS, mavlink.MAV_AUTOPILOT_INVALID, 0, 0,
+                                           mavlink.MAV_STATE_ACTIVE)
             self.link_name, self.connection, self.baud = name, device, baud
             self._cand_key = key
             self._opened_at = time.time()
@@ -358,6 +364,15 @@ class DroneLink:
             try:
                 msg = self._m.recv_match(blocking=True, timeout=0.2)
             except Exception as exc:
+                if isinstance(exc, ConnectionResetError) and str(self.connection or "").startswith("udpout:"):
+                    # udpout on Windows: our heartbeat reached a port nobody listens on
+                    # yet (the phone relay isn't running). Nothing is wrong with the link:
+                    # keep the socket and wait, as on Linux.
+                    if not self.fc_connected:
+                        self.link_error = (f"Waiting for the phone relay at {self.connection[7:]} — is relay.py "
+                                           "running on the phone, and the phone on NetBird?")
+                    self._stop.wait(0.5)
+                    continue
                 self._tried[self._cand_key] = f"error ({exc})"
                 self.link_error = self._summary()
                 log.warning("Link error on %s: %s", self._cand_key, exc)
