@@ -1,4 +1,8 @@
-# VARUNA AI — Ground Control UI
+# VARUNA GCS — VARUNA AI Ground Control
+
+**VARUNA GCS** is the ground-control app of **VARUNA AI**, created by **Aditya Gautam** (Bhai Parmanand Vidya Mandir): an AI drone that finds floating plastic and Nirmal Dhara Jalyan, a solar autonomous boat that collects it.
+
+Website: https://varuna-gcs.vercel.app · Try the AI on your webcam: https://varuna-gcs.vercel.app/try
 
 Premium, field-first frontend for the VARUNA river-cleanup drone. React + Vite +
 Tailwind + Framer Motion. Talks to the existing FastAPI backend on the Raspberry

@@ -253,7 +253,7 @@ function siteOnlyAssets(mode) {
 // <noscript> copy gives crawlers the key facts even before the app's script runs.
 function siteSeo(mode) {
   const URL_ = 'https://varuna-gcs.vercel.app/'
-  const TITLE = 'VARUNA AI GCS by Aditya Gautam · AI drone and river-cleaning boat'
+  const TITLE = 'VARUNA GCS by Aditya Gautam · VARUNA AI drone and river-cleaning boat'
   const DESC = 'VARUNA AI, created by Aditya Gautam: an AI drone that finds floating plastic and Nirmal Dhara Jalyan, a solar autonomous boat that collects it, run from the VARUNA GCS ground-control app.'
   const ld = {
     '@context': 'https://schema.org',
@@ -270,7 +270,7 @@ function siteSeo(mode) {
         '@type': 'WebSite',
         '@id': `${URL_}#site`,
         name: 'VARUNA AI',
-        alternateName: ['VARUNA GCS', 'Varuna AI GCS', 'VARUNA AI Ground Control'],
+        alternateName: ['VARUNA GCS', 'Varuna GCS', 'Varuna AI GCS', 'VARUNA AI Ground Control'],
         url: URL_,
         author: { '@id': `${URL_}#aditya-gautam` },
         creator: { '@id': `${URL_}#aditya-gautam` },
@@ -309,7 +309,7 @@ function siteSeo(mode) {
     `<script type="application/ld+json">${JSON.stringify(ld).replace(/</g, '\u003c')}</script>`,
   ].join('\n    ')
   const body = `<noscript>
-      <h1>VARUNA AI by Aditya Gautam</h1>
+      <h1>VARUNA GCS · VARUNA AI by Aditya Gautam</h1>
       <p>${esc(DESC)}</p>
       <p>VARUNA AI and the VARUNA GCS ground-control app were created by Aditya Gautam, Bhai Parmanand Vidya Mandir (theme: Environment &amp; Sustainability).</p>
     </noscript>`
