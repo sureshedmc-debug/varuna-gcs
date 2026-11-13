@@ -165,6 +165,19 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource: sourceProp
   const defaultSource = webcamFirst ? 'webcam' : sourceProp
   const autoStart = webcamFirst ? false : autoProp
   const videoRef     = useRef(null)
+  // The camera itself, kept apart from the <video>: React clears videoRef
+  // before an unmount's cleanup runs, so stopping through it left the camera
+  // on after leaving the page.
+  const camStreamRef = useRef(null)
+  const mountedRef   = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => { mountedRef.current = false; releaseCamera() }
+  }, [])
+  function releaseCamera() {
+    camStreamRef.current?.getTracks().forEach((t) => t.stop())
+    camStreamRef.current = null
+  }
   const streamImgRef = useRef(null)
   const streamCanvasRef = useRef(null)   // drone H.264, decoded into it
   const h264Ref = useRef(null)
@@ -687,6 +700,9 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource: sourceProp
 
   async function startWebcam(f){
     const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:f,width:{ideal:1280},height:{ideal:720}},audio:false})
+    // Left the page while the browser was still asking for the camera.
+    if(!mountedRef.current||!videoRef.current){stream.getTracks().forEach(t=>t.stop());throw new Error('closed')}
+    releaseCamera(); camStreamRef.current=stream
     const v=videoRef.current; v.srcObject=stream; await v.play(); srcElRef.current=v
   }
   /** The drone camera: H.264 (camera module, browsers with WebCodecs), else MJPEG. */
@@ -732,6 +748,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource: sourceProp
       if(src==='webcam'){
         try{await startWebcam(f)}
         catch(e){
+          if(!mountedRef.current) return
           // No laptop camera (or no permission): use the drone's if it is streaming.
           if(defaultSource!=='auto'||(await pickSource())!=='drone')throw e
           src='drone';setSource('drone');await startStream()
@@ -749,6 +766,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource: sourceProp
   function stop(){
     runningRef.current=false; cancelAnimationFrame(rafRef.current)
     stopMissionRecording()
+    releaseCamera()
     const v=videoRef.current; if(v?.srcObject){v.srcObject.getTracks().forEach(t=>t.stop());v.srcObject=null}
     releaseStream(streamImgRef.current)
     h264Ref.current?.close(); h264Ref.current=null
