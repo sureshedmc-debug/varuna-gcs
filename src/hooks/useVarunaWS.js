@@ -9,8 +9,12 @@ import { wsUrl, api } from '../api/client'
  *
  * Returns { data, status, lastUpdate } where status is one of
  * 'connecting' | 'live' | 'polling' | 'offline'.
+ *
+ * Defaults to the drone's Pi. The boat (BoatContext.jsx) passes its own
+ * `url` / `fetchTelemetry`, and `enabled: false` while the boat is unreachable
+ * so it doesn't retry a socket every 2 s for a vehicle that isn't there.
  */
-export function useVarunaWS({ pollInterval = 2000 } = {}) {
+export function useVarunaWS({ pollInterval = 2000, url = wsUrl, fetchTelemetry = api.telemetry, enabled = true } = {}) {
   const [data, setData] = useState(null)
   const [status, setStatus] = useState('connecting')
   const [lastUpdate, setLastUpdate] = useState(0)
@@ -49,7 +53,7 @@ export function useVarunaWS({ pollInterval = 2000 } = {}) {
     if (pollRef.current) return
     const tick = async () => {
       try {
-        const t = await api.telemetry()
+        const t = await fetchTelemetry()
         if (mounted.current) {
           apply(t)
           setStatus((s) => (s === 'live' ? s : 'polling'))
@@ -60,7 +64,7 @@ export function useVarunaWS({ pollInterval = 2000 } = {}) {
     }
     tick()
     pollRef.current = setInterval(tick, pollInterval)
-  }, [apply, pollInterval])
+  }, [apply, pollInterval, fetchTelemetry])
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
@@ -72,7 +76,7 @@ export function useVarunaWS({ pollInterval = 2000 } = {}) {
   const connect = useCallback(() => {
     let ws
     try {
-      ws = new WebSocket(wsUrl())
+      ws = new WebSocket(url())
     } catch {
       startPolling()
       retryRef.current = setTimeout(connect, 2000)
@@ -107,10 +111,17 @@ export function useVarunaWS({ pollInterval = 2000 } = {}) {
       startPolling() // keep data flowing while the socket is down
       retryRef.current = setTimeout(connect, 2000) // auto-retry every 2s
     }
-  }, [apply, startPolling, stopPolling])
+  }, [apply, startPolling, stopPolling, url])
 
   useEffect(() => {
     mounted.current = true
+    if (!enabled) {
+      setStatus('offline')
+      return () => {
+        mounted.current = false
+      }
+    }
+    setStatus((s) => (s === 'offline' ? 'connecting' : s))
     connect()
     return () => {
       mounted.current = false
@@ -118,14 +129,17 @@ export function useVarunaWS({ pollInterval = 2000 } = {}) {
       if (flushTimerRef.current) clearTimeout(flushTimerRef.current)
       stopPolling()
       if (wsRef.current) {
+        const ws = wsRef.current
+        wsRef.current = null
+        ws.onclose = null // an intentional close must not schedule a reconnect
         try {
-          wsRef.current.close()
+          ws.close()
         } catch {
           /* noop */
         }
       }
     }
-  }, [connect, stopPolling])
+  }, [connect, stopPolling, enabled])
 
   return useMemo(() => ({ data, status, lastUpdate }), [data, status, lastUpdate])
 }

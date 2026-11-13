@@ -2,31 +2,54 @@ import { useEffect, useState, lazy, Suspense } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { ToastProvider } from './components/Toast'
 import { SystemProvider, useSystem } from './components/SystemContext'
+import { BoatProvider, useBoat } from './components/BoatContext'
+import { BoatVisionProvider } from './components/BoatVisionContext'
+import { BoatDriveProvider } from './components/BoatDriveContext'
 import { WarningBanner, deriveWarnings } from './components/WarningBanner'
 import { Rail } from './components/Rail'
 import { TopBar } from './components/TopBar'
 import { registerNavigator } from './lib/planDraftStore'
+import { startDataRecorders } from './lib/liveMissionPlan'
+import { lockData } from './lib/dataLock'
 import { ErrorBoundary } from './components/ErrorBoundary'
 
 import { wakeWordEnabled } from './lib/assistant/wakeWord'
 
 const VoiceAssistant = lazy(() => import('./components/VoiceAssistant'))
+const BackgroundDetect = lazy(() => import('./components/BackgroundDetect'))
 import IntroScreen from './screens/IntroScreen'
 import MissionControlScreen from './screens/MissionControlScreen'
 import SystemScreen from './screens/SystemScreen'
 
 // Lazy load heavy screens with AI models
 const LiveScreen = lazy(() => import('./screens/LiveScreen'))
+const ControlScreen = lazy(() => import('./screens/ControlScreen'))
 const MissionScreen = lazy(() => import('./screens/MissionScreen'))
 const DetectionsScreen = lazy(() => import('./screens/DetectionsScreen'))
 const ReplayScreen = lazy(() => import('./screens/ReplayScreen'))
+const BoatScreen = lazy(() => import('./screens/BoatScreen'))
+const CollectScreen = lazy(() => import('./screens/CollectScreen'))
+const BoatVisionScreen = lazy(() => import('./screens/BoatVisionScreen'))
+const WaterLabScreen = lazy(() => import('./screens/WaterLabScreen'))
+const DataScreen = lazy(() => import('./screens/DataScreen'))
+
+// The public website (Vercel, `vite build --mode site`) wraps the app in a
+// landing page, Explore Varuna and a sign-in gate. Other builds never load it.
+const SITE = import.meta.env.VITE_SITE === '1'
+const SiteApp = SITE ? lazy(() => import('./site/SiteApp')) : null
 
 const SCREENS = {
   home: MissionControlScreen,
   live: LiveScreen,
+  control: ControlScreen,
   mission: MissionScreen,
+  boat: BoatScreen,
+  collect: CollectScreen,
+  vision: BoatVisionScreen,
+  water: WaterLabScreen,
   detections: DetectionsScreen,
   replay: ReplayScreen,
+  data: DataScreen,
   system: SystemScreen,
 }
 
@@ -35,6 +58,19 @@ const SCREENS = {
 function SystemWarnings() {
   const { pi, backendReachable } = useSystem()
   return <WarningBanner warnings={deriveWarnings({ pi: pi.data, backendReachable })} />
+}
+
+// While the boat's live collect runs, the drone's AI keeps finding plastic for
+// it on every tab (the Live tab runs its own detection, so not there).
+function LiveCollectDetect({ tab, onOpen }) {
+  const boat = useBoat()
+  const state = boat.reachable === true ? boat.live?.state : null
+  if (tab === 'live' || (state !== 'running' && state !== 'returning')) return null
+  return (
+    <Suspense fallback={null}>
+      <BackgroundDetect onOpen={onOpen} />
+    </Suspense>
+  )
 }
 
 function Shell({ onLock }) {
@@ -70,8 +106,10 @@ function Shell({ onLock }) {
   }
   // Lets the AI assistant switch tabs (e.g. open Missions after planning).
   useEffect(() => registerNavigator(setTab), [])
+  // Missions, coordinates and detections → the local CSV store.
+  useEffect(() => startDataRecorders(), [])
   const Screen = SCREENS[tab]
-  const fullBleed = tab === 'live' || tab === 'mission'
+  const fullBleed = tab === 'live' || tab === 'control' || tab === 'mission' || tab === 'boat' || tab === 'collect' || tab === 'vision' || tab === 'water'
 
   return (
     <div className="relative min-h-screen">
@@ -119,6 +157,7 @@ function Shell({ onLock }) {
           </motion.div>
         </AnimatePresence>
       </main>
+      <LiveCollectDetect tab={tab} onOpen={() => setTab('live')} />
       <Suspense fallback={null}>
         <VoiceAssistant tab={tab} wakeSignal={wakeSignal} wakeWordOn={wakeWordOn} onWakeState={setWakeState} />
       </Suspense>
@@ -134,7 +173,35 @@ function entered() {
   }
 }
 
+/** The app itself: live system state around the shell. */
+function AppShell({ onLock }) {
+  return (
+    <ToastProvider>
+      <SystemProvider>
+        <BoatProvider>
+          <BoatVisionProvider>
+            <BoatDriveProvider>
+              <Shell onLock={onLock} />
+            </BoatDriveProvider>
+          </BoatVisionProvider>
+        </BoatProvider>
+      </SystemProvider>
+    </ToastProvider>
+  )
+}
+
 export default function App() {
+  if (SITE) {
+    return (
+      <Suspense fallback={<div style={{ position: 'fixed', inset: 0, background: '#000' }} />}>
+        <SiteApp renderApp={(onLock) => <AppShell onLock={() => { lockData(); onLock() }} />} />
+      </Suspense>
+    )
+  }
+  return <DesktopApp />
+}
+
+function DesktopApp() {
   const [active, setActive] = useState(entered())
 
   // Intro / activation screen first. Click anywhere → activate → home page.
@@ -154,6 +221,7 @@ export default function App() {
   }
 
   function lock() {
+    lockData() // the Data tab asks for its PIN again
     try {
       sessionStorage.removeItem('varuna.entered')
     } catch {
@@ -162,11 +230,5 @@ export default function App() {
     setActive(false)
   }
 
-  return (
-    <ToastProvider>
-      <SystemProvider>
-        <Shell onLock={lock} />
-      </SystemProvider>
-    </ToastProvider>
-  )
+  return <AppShell onLock={lock} />
 }

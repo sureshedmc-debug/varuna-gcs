@@ -1,0 +1,15 @@
+{
+  "name": "varuna-gcs-web-backend",
+  "private": true,
+  "description": "Hosted backend for the VARUNA GCS web demo (Render): data store + boat simulator.",
+  "main": "web.cjs",
+  "scripts": {
+    "start": "node web.cjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "http-proxy": "1.18.1"
+  }
+}

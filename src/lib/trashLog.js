@@ -19,6 +19,7 @@
 
 import { useEffect, useState } from 'react'
 import { savePhotos, getPhotos, clearPhotos, deletePhotosFor } from './photoStore'
+import { rememberDroneCrop } from './droneTargets'
 
 const KEY = 'varuna.trashLog'
 const EVT = 'varuna:trashLog'
@@ -136,11 +137,41 @@ export function getTrashLog() {
  * @param {number} s.confidence       best score in this frame, 0..1
  * @param {string} s.source           'webcam' | 'stream'
  * @param {string} s.posSource        'drone' | 'laptop' | 'sim' | null
+ * @param {string} [s.posMethod]      'picture' = the item's own spot on the water, worked out
+ *                                    from where it is in the drone picture (geoProject.js);
+ *                                    'camera' = where the camera was
  * @param {number} [s.alt]            aircraft altitude (m), if known
  * @param {number} [s.accuracy]       position accuracy (± m), if known
  * @param {string} [s.photo]          JPEG data URL of this frame, if captured
  */
-export function recordTrashSighting({ lat, lng, count, confidence, source, posSource, alt, accuracy, photo, className, estWidthM, estHeightM }) {
+// Size summary of one frame (sizeEstimate.summarizeSizes) → the fields kept
+// per sighting. When frames merge into one spot, each keeps its largest value.
+function sizeFields(sizes) {
+  if (!sizes) return null
+  return {
+    largestM: sizes.largestM,
+    largeCount: sizes.largeCount,
+    totalAreaM2: sizes.totalAreaM2,
+    spanM: sizes.spanM,
+    cluster: !!sizes.cluster,
+    sizeCounts: { ...sizes.counts },
+  }
+}
+
+function mergeSizes(entry, f) {
+  if (!f) return
+  if (entry.largestM == null || f.largestM > entry.largestM) entry.largestM = f.largestM
+  entry.largeCount = Math.max(entry.largeCount || 0, f.largeCount)
+  entry.totalAreaM2 = Math.max(entry.totalAreaM2 || 0, f.totalAreaM2)
+  entry.spanM = Math.max(entry.spanM || 0, f.spanM)
+  entry.cluster = !!entry.cluster || f.cluster
+  const c = entry.sizeCounts || {}
+  for (const [k, v] of Object.entries(f.sizeCounts)) c[k] = Math.max(c[k] || 0, v)
+  entry.sizeCounts = c
+}
+
+export function recordTrashSighting({ lat, lng, count, confidence, source, posSource, posMethod, alt, accuracy, photo, crop, cropW, cropH, className, estWidthM, estHeightM, sizes }) {
+  const sz = sizeFields(sizes)
   const n = Number(count)
   if (!Number.isFinite(n) || n <= 0) return
   const now = Date.now()
@@ -164,8 +195,23 @@ export function recordTrashSighting({ lat, lng, count, confidence, source, posSo
     match.confidence = conf == null ? match.confidence : Math.max(match.confidence ?? 0, conf)
     match.lastSeen = now
     match.frames += 1
-    // Keep the most precise fix seen for this spot.
-    if (located && acc != null && (match.accuracy == null || acc < match.accuracy)) {
+    // Positions worked out from the picture: average them (each one carries a
+    // little GPS / compass / tilt noise), and they replace a mere camera position.
+    // The average follows the last ~20 sightings, so a drifting item is followed.
+    if (located && posMethod === 'picture') {
+      if (match.posMethod !== 'picture') {
+        match.lat = lat
+        match.lng = lng
+        match.posMethod = 'picture'
+        match.posSamples = 1
+      } else {
+        const k = Math.min((match.posSamples || 1) + 1, 20)
+        match.lat += (lat - match.lat) / k
+        match.lng += (lng - match.lng) / k
+        match.posSamples = k
+      }
+    } else if (located && acc != null && (match.accuracy == null || acc < match.accuracy)) {
+      // Keep the most precise fix seen for this spot.
       match.lat = lat
       match.lng = lng
       match.accuracy = acc
@@ -184,6 +230,9 @@ export function recordTrashSighting({ lat, lng, count, confidence, source, posSo
     if (Number.isFinite(Number(estWidthM)) && (match.estWidthM == null || Number(estWidthM) > match.estWidthM)) match.estWidthM = Number(estWidthM)
     if (Number.isFinite(Number(estHeightM)) && (match.estHeightM == null || Number(estHeightM) > match.estHeightM)) match.estHeightM = Number(estHeightM)
     if (className && match.class === 'trash') match.class = className
+    mergeSizes(match, sz)
+    // The drone's crop of the item (drone-to-boat matching): the most confident one is kept.
+    if (crop) rememberDroneCrop(match, crop, { confidence: conf, w: cropW, h: cropH })
   } else {
     const id = `t-${++seq}`
     if (photo) savePhotos(id, { boxed: photo }).catch(() => {})
@@ -200,10 +249,13 @@ export function recordTrashSighting({ lat, lng, count, confidence, source, posSo
         confidence: conf,
         source,
         posSource: located ? posSource : null,
+        posMethod: located ? posMethod || 'camera' : null,
+        posSamples: located && posMethod === 'picture' ? 1 : 0,
         photo: photo || null,
         hasPhoto: !!photo,
         estWidthM: Number.isFinite(Number(estWidthM)) ? Number(estWidthM) : null,
         estHeightM: Number.isFinite(Number(estHeightM)) ? Number(estHeightM) : null,
+        ...(sz || {}),
         firstSeen: now,
         lastSeen: now,
         frames: 1,
@@ -217,6 +269,7 @@ export function recordTrashSighting({ lat, lng, count, confidence, source, posSo
       log = log.slice(0, MAX_ENTRIES)
       deletePhotosFor(dropped).catch(() => {})
     }
+    if (crop) rememberDroneCrop(log[0], crop, { confidence: conf, w: cropW, h: cropH })
   }
   emit()
 }

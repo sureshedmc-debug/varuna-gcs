@@ -1,5 +1,7 @@
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
+import { createRequire } from 'node:module'
+import path from 'node:path'
 
 // The production bundle NEVER contains a backend host: the app calls the API via
 // relative paths (see src/api/client.js), resolved against window.location.origin
@@ -16,6 +18,10 @@ import react from '@vitejs/plugin-react'
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const target = env.VITE_DEV_API_TARGET || 'http://localhost:8000'
+  // The boat's own Pi (second vehicle). The app calls it under /boat/*; the
+  // prefix is stripped here. Default = the boat backend's simulator running on
+  // this laptop:  cd boat-pi && python main.py --sim --port 8001
+  const boatTarget = env.VITE_DEV_BOAT_TARGET || 'http://localhost:8001'
 
   // Everything the frontend calls at runtime lives under these prefixes.
   const proxyPaths = ['/api', '/video_feed', '/stream', '/tune']
@@ -29,25 +35,32 @@ export default defineConfig(({ mode }) => {
   function onProxyError(err, req, res) {
     const code = err?.code || 'PROXY_ERROR'
     const now = Date.now()
-    if (now - (lastLogged.get(code) || 0) > 15000) {
-      lastLogged.set(code, now)
+    const boat = String(req?.url || '').startsWith('/boat') || req?.__varunaBoat
+    const key = (boat ? 'boat:' : 'pi:') + code
+    if (now - (lastLogged.get(key) || 0) > 15000) {
+      lastLogged.set(key, now)
       const hint =
         code === 'ENOTFOUND'
           ? `cannot resolve it — is Netbird connected? (\`netbird status\`)`
           : code === 'ECONNREFUSED'
             ? 'nothing is listening there — is the Pi backend running?'
             : err?.message || code
-      console.warn(`
+      console.warn(boat ? `
+  [boat] ${boatTarget} unreachable: ${hint}
+  The boat tabs show "offline"; set VITE_DEV_BOAT_TARGET in .env.local, or start the simulator (boat-pi: python main.py --sim --port 8001).
+` : `
   [pi] ${target} unreachable: ${hint}
   The UI still works; set VITE_DEV_API_TARGET in .env.local to change the target.
 `)
     }
     // Fail the request fast. A WebSocket upgrade hands us a raw socket, which
-    // has no writeHead — ending it is all that's needed there.
+    // has no writeHead — ending it is all that's needed there. Plain text, as
+    // electron/server.cjs sends: a JSON body with a `success` key would make
+    // src/api/client.js read a dead Pi as reachable.
     try {
       if (res && typeof res.writeHead === 'function') {
-        if (!res.headersSent) res.writeHead(502, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify({ success: false, message: `Backend unreachable (${code})` }))
+        if (!res.headersSent) res.writeHead(502, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' })
+        res.end(`${boat ? 'Boat' : 'Pi'} unreachable (${code})`)
       } else if (res && typeof res.end === 'function') {
         res.end()
       }
@@ -56,35 +69,50 @@ export default defineConfig(({ mode }) => {
     }
   }
 
+  // Vite registers its OWN 'error' listener immediately after `configure`
+  // returns - one full stack trace per failed request. It cannot be removed
+  // from in here because it does not exist yet, so drop it on the next tick,
+  // by which time it is registered. Doing it this way rather than through a
+  // customLogger matters: a customLogger built with createLogger() hardcodes
+  // level 'info', which silently overrode --logLevel and clearScreen for
+  // builds too.
+  // A Pi that is off fails in seconds, then at once, instead of holding the
+  // page's few connections for ~21 s each (electron/proxyGuard.cjs).
+  const guard = createRequire(import.meta.url)('./electron/proxyGuard.cjs').createProxyGuard()
+
+  const quietErrors = (px, to = target) => {
+    const onGuardError = guard.attach(px, () => to)
+    px.on('error', onProxyError)
+    setTimeout(() => {
+      for (const l of px.listeners('error')) {
+        if (l !== onProxyError && l !== onGuardError) px.removeListener('error', l)
+      }
+    }, 0)
+  }
+
   const proxy = Object.fromEntries(
     proxyPaths.map((p) => [
       p,
-      {
-        target,
-        changeOrigin: true,
-        ws: true,
-        secure: false,
-        configure: (px) => {
-          px.on('error', onProxyError)
-          // Vite registers its OWN 'error' listener immediately after this
-          // hook returns - one full stack trace per failed request. It cannot
-          // be removed from in here because it does not exist yet, so drop it
-          // on the next tick, by which time it is registered. Doing it this
-          // way rather than through a customLogger matters: a customLogger
-          // built with createLogger() hardcodes level 'info', which silently
-          // overrode --logLevel and clearScreen for builds too.
-          setTimeout(() => {
-            for (const l of px.listeners('error')) {
-              if (l !== onProxyError) px.removeListener('error', l)
-            }
-          }, 0)
-        },
-      },
+      { target, changeOrigin: true, ws: true, secure: false, configure: (px) => quietErrors(px) },
     ])
   )
+  // Keyed as a regex so it matches /boat and /boat/... only (not /boatsomething).
+  proxy['^/boat(/|$)'] = {
+    target: boatTarget,
+    changeOrigin: true,
+    ws: true,
+    secure: false,
+    rewrite: (p) => p.replace(/^\/boat/, '') || '/',
+    configure: (px) => {
+      quietErrors(px, boatTarget)
+      // The rewrite has already dropped /boat by the time an error fires.
+      px.on('proxyReq', (_pr, req) => { req.__varunaBoat = true })
+      px.on('proxyReqWs', (_pr, req) => { req.__varunaBoat = true })
+    },
+  }
 
   return {
-    plugins: [react(), watcherResilience()],
+    plugins: [react(), watcherResilience(), localDataStore(env), siteOnlyAssets(mode)],
     // `preview` gets the same proxy as `server`: without it, npm run preview
     // serves the built bundle with no route to the Pi, so a production-shaped
     // smoke test would look broken for the wrong reason.
@@ -109,9 +137,12 @@ export default defineConfig(({ mode }) => {
           '**/android/**',
           '**/training-data/**',
           '**/varuna photos and video/**',
+          '**/data/**', // the local CSV store, rewritten on every save
         ],
       },
     },
+    // The AI runs in a module worker (src/lib/ortWorker.js) that imports onnxruntime.
+    worker: { format: 'es' },
     build: { 
       outDir: 'dist', 
       sourcemap: false,
@@ -137,7 +168,7 @@ export default defineConfig(({ mode }) => {
       // dynamically imported module" (this hit the Detections tab via leaflet.heat).
       include: [
         'react', 'react-dom', 'react-dom/client', 'framer-motion', 'leaflet', 'react-leaflet', 'leaflet.heat',
-        '@emailjs/browser',
+        '@emailjs/browser', '@vladmandic/face-api',
         '@turf/helpers', '@turf/circle', '@turf/boolean-point-in-polygon', '@turf/area',
         '@turf/length', '@turf/intersect', '@turf/buffer', '@turf/along',
         'three',
@@ -155,6 +186,30 @@ export default defineConfig(({ mode }) => {
   }
 })
 
+// The same /local/* store the desktop app's server mounts (electron/localData.cjs):
+// CSV records, the state/river catalog and sign-in. In dev the files go to
+// <project>/data (gitignored), or VARUNA_DATA_DIR.
+function localDataStore(env) {
+  let store
+  const middleware = (req, res, next) => {
+    if (!String(req.url || '').startsWith('/local/')) return next()
+    store ||= createRequire(import.meta.url)('./electron/localData.cjs').createLocalData({
+      dataDir: path.resolve(env.VARUNA_DATA_DIR || 'data'),
+      seedFile: path.resolve('public/config/rivers.json'),
+    })
+    store.handle(req, res)
+  }
+  return {
+    name: 'varuna:local-data',
+    configureServer(server) {
+      server.middlewares.use(middleware)
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use(middleware)
+    },
+  }
+}
+
 // Belt and braces for the watcher. The ignore list above covers the directories
 // we know about, but antivirus, OneDrive or a stray build can lock any file at
 // any moment. chokidar surfaces that as an 'error' event, and an unhandled
@@ -170,6 +225,25 @@ function watcherResilience() {
           `  [watch] skipped ${err?.code || 'error'} on ${err?.path || err?.message || err}`,
         )
       })
+    },
+  }
+}
+
+// The website's media (public/site, ~15 MB) and its service worker belong to the
+// Vercel build only (`--mode site`); the desktop and Android builds drop them.
+function siteOnlyAssets(mode) {
+  let outDir = 'dist'
+  return {
+    name: 'varuna-site-only-assets',
+    apply: 'build',
+    configResolved(c) {
+      outDir = path.resolve(c.root, c.build.outDir)
+    },
+    async closeBundle() {
+      if (mode === 'site') return
+      const { rm } = await import('node:fs/promises')
+      await rm(path.join(outDir, 'site'), { recursive: true, force: true })
+      await rm(path.join(outDir, 'sw.js'), { force: true })
     },
   }
 }

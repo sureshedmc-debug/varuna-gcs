@@ -3,56 +3,88 @@
 @tailwind utilities;
 
 /* =============================================================================
-   VARUNA AI — GOLD & BLACK THEME
+   VARUNA AI — NAVY, TEAL & VIOLET (default dark theme)
    ─────────────────────────────────────────────────────────────────────────────
-   Base:     Pure black  #000000
-   Panels:   Deep charcoal-black  #0A0A0A / #111111
-   Accent:   Rich gold   #D4A017  →  bright gold  #F5C842
-   Borders:  Gold-glow lines
-   Text:     Warm cream-white
-   Ambient:  Deep gold halos sweeping across the void
+   The same palette as Home and the full-screen Direct Mission Plan / Login.
+   Base:     Deep navy   #070B18
+   Panels:   Ink navy    #0D1326, glass on top
+   Accent:   Teal        #2DD4BF  →  light teal #5EEAD4, violet #A78BFA halos
+   Text:     White, with softer whites for muted / faint
    ============================================================================= */
 
 :root {
   color-scheme: dark;
 
   /* ── Backgrounds ── */
-  --base:   #000000;          /* pure black                                      */
-  --panel:  #0C0C0C;          /* near-black panel surface                        */
+  --base:   #070b18;
+  --panel:  #0d1326;
 
   /* ── Text ── */
-  --ink:    255 245 210;      /* warm cream-white — easy on the eyes             */
-  --muted:  #8C7A50;          /* warm gold-brown muted text                      */
-  --faint:  #3D3320;          /* deep dark-brown tertiary                        */
+  --ink:    255 255 255;
+  --muted:  rgba(226, 232, 255, 0.66);
+  --faint:  rgba(226, 232, 255, 0.4);
 
   /* ── Borders & chips ── */
-  --line:   rgba(212, 160, 23, 0.25);   /* gold border glow                      */
-  --chip:   rgba(212, 160, 23, 0.08);   /* gold-tinted chip bg                   */
-  --chip2:  rgba(212, 160, 23, 0.15);   /* gold hover chip                       */
+  --line:   rgba(148, 163, 255, 0.16);
+  --chip:   rgba(255, 255, 255, 0.05);
+  --chip2:  rgba(94, 234, 212, 0.12);
 
   /* ── Glass panels ── */
-  --glass-bg:     rgba(12, 10, 4, 0.90);        /* near-black warm glass          */
-  --glass-soft:   rgba(12, 10, 4, 0.70);
-  --glass-border: rgba(212, 160, 23, 0.28);     /* rich gold border               */
+  --glass-bg:     rgba(13, 19, 38, 0.82);
+  --glass-soft:   rgba(13, 19, 38, 0.62);
+  --glass-border: rgba(94, 234, 212, 0.22);
 
   /* ── Inputs ── */
+  --inp-bg:     rgba(255, 255, 255, 0.04);
+  --inp-border: rgba(148, 163, 255, 0.22);
+  --inp-ph:     rgba(226, 232, 255, 0.35);
+
+  /* ── PRIMARY ACCENT: TEAL ── */
+  --accent:      45 212 191;     /* #2DD4BF  rgb channels                       */
+  --accent-hex:  #2dd4bf;
+  --accent2:     #5eead4;
+
+  /* ── Scrollbar ── */
+  --scroll: rgba(94, 234, 212, 0.3);
+
+  /* ── Ambient glow — teal and violet halos ── */
+  --amb1: rgba(45, 212, 191, 0.1);
+  --amb2: rgba(124, 58, 237, 0.14);
+  --amb3: rgba(45, 212, 191, 0.06);
+  --amb4: rgba(124, 58, 237, 0.08);
+
+  /* Tailwind's shadow-glow / shadow-elev */
+  --shadow-glow: 0 0 0 1px rgba(45,212,191,0.35), 0 0 28px rgba(45,212,191,0.18), 0 12px 44px -10px rgba(124,58,237,0.22);
+  --shadow-elev: 0 20px 60px -20px rgba(0,0,0,0.9), inset 0 1px 0 rgba(94,234,212,0.18);
+}
+
+/* ── Classic look (the earlier theme): gold & black, exactly as before ──
+   Switched on by the New / Classic slider in the top bar (html[data-look]). */
+:root[data-look='classic'] {
+  --base:   #000000;
+  --panel:  #0C0C0C;
+  --ink:    255 245 210;
+  --muted:  #8C7A50;
+  --faint:  #3D3320;
+  --line:   rgba(212, 160, 23, 0.25);
+  --chip:   rgba(212, 160, 23, 0.08);
+  --chip2:  rgba(212, 160, 23, 0.15);
+  --glass-bg:     rgba(12, 10, 4, 0.90);
+  --glass-soft:   rgba(12, 10, 4, 0.70);
+  --glass-border: rgba(212, 160, 23, 0.28);
   --inp-bg:     rgba(212, 160, 23, 0.06);
   --inp-border: rgba(212, 160, 23, 0.30);
   --inp-ph:     #3D3320;
-
-  /* ── PRIMARY ACCENT: RICH GOLD ── */
-  --accent:      212 160 23;     /* #D4A017  rgb channels                       */
+  --accent:      212 160 23;
   --accent-hex:  #D4A017;
-  --accent2:     #F5C842;        /* bright gold highlight                       */
-
-  /* ── Scrollbar ── */
+  --accent2:     #F5C842;
   --scroll: rgba(212, 160, 23, 0.30);
-
-  /* ── Ambient glow — deep gold halos ── */
-  --amb1: rgba(212, 160, 23, 0.12);    /* top-left gold sweep                   */
-  --amb2: rgba(180, 120, 10, 0.08);    /* top-right deeper gold                 */
-  --amb3: rgba(245, 200, 66, 0.06);    /* bottom-centre bright gold             */
-  --amb4: rgba(212, 160, 23, 0.05);    /* bottom-right warm ember               */
+  --amb1: rgba(212, 160, 23, 0.12);
+  --amb2: rgba(180, 120, 10, 0.08);
+  --amb3: rgba(245, 200, 66, 0.06);
+  --amb4: rgba(212, 160, 23, 0.05);
+  --shadow-glow: 0 0 0 1px rgba(212,160,23,0.35), 0 0 28px rgba(212,160,23,0.20), 0 12px 44px -10px rgba(212,160,23,0.15);
+  --shadow-elev: 0 20px 60px -20px rgba(0,0,0,0.9), inset 0 1px 0 rgba(245,200,66,0.22);
 }
 
 /* ── Light theme ── */
@@ -119,7 +151,14 @@ body {
 
 /* Dark theme background gradients — only for true dark, not green */
 :root:not([data-theme='light']):not([data-theme='green']) body {
-  /* deep gold radial glow baked into the page itself */
+  /* teal and violet glow baked into the page itself */
+  background-image:
+    radial-gradient(ellipse 90% 50% at 50% -5%,  rgba(124,58,237,0.12), transparent 65%),
+    radial-gradient(ellipse 60% 40% at 100% 0%,   rgba(45,212,191,0.06), transparent 60%),
+    radial-gradient(ellipse 55% 35% at 0%   100%, rgba(45,212,191,0.07), transparent 60%);
+}
+
+:root[data-look='classic']:not([data-theme='light']):not([data-theme='green']) body {
   background-image:
     radial-gradient(ellipse 90% 50% at 50% -5%,  rgba(212,160,23,0.07), transparent 65%),
     radial-gradient(ellipse 60% 40% at 100% 0%,   rgba(180,120,10,0.05), transparent 60%),
@@ -215,6 +254,21 @@ body {
     color: var(--muted);
     font-weight: 700;
   }
+}
+
+/* Dark theme glass: soft dark shadows, faint top highlight, teal edge on hover */
+:root:not([data-theme='light']):not([data-theme='green']):not([data-look='classic']) .glass {
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+:root:not([data-theme='light']):not([data-theme='green']):not([data-look='classic']) .glass:hover {
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45), 0 0 26px rgba(45, 212, 191, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  border-color: rgba(94, 234, 212, 0.45);
+}
+:root:not([data-theme='light']):not([data-theme='green']):not([data-look='classic']) .glass-soft {
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+}
+:root:not([data-theme='light']):not([data-theme='green']):not([data-look='classic']) .inp:focus {
+  box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.2), 0 0 14px rgba(45, 212, 191, 0.14);
 }
 
 /* ── Scrollbar ── */
@@ -359,6 +413,12 @@ body {
   .orb-pulse { animation-duration: 1.6s !important; }
 }
 
+/* ── Live map: ring around plastic seen in the last few seconds ── */
+@keyframes plastic-ping {
+  from { opacity: 0.9; transform: scale(0.7); }
+  to   { opacity: 0;   transform: scale(1.6); }
+}
+
 /* ── Subtle scan-line sweep ── */
 @keyframes scanline {
   0%   { transform: translateY(-100vh); opacity: 0; }
@@ -380,6 +440,10 @@ body::after {
 
 /* Dark theme scanline — only for true dark, not green */
 :root:not([data-theme='light']):not([data-theme='green']) body::after {
+  background: linear-gradient(90deg, transparent 0%, rgba(94,234,212,0.7) 50%, transparent 100%);
+}
+
+:root[data-look='classic']:not([data-theme='light']):not([data-theme='green']) body::after {
   background: linear-gradient(90deg, transparent 0%, rgba(212,160,23,0.8) 50%, transparent 100%);
 }
 
@@ -391,8 +455,12 @@ button:focus-visible {
 
 /* Dark theme focus ring — only for true dark, not green */
 :root:not([data-theme='light']):not([data-theme='green']) button:focus-visible {
-  outline: 2px solid rgba(212, 160, 23, 0.7);
+  outline: 2px solid rgba(94, 234, 212, 0.75);
   outline-offset: 2px;
+}
+
+:root[data-look='classic']:not([data-theme='light']):not([data-theme='green']) button:focus-visible {
+  outline: 2px solid rgba(212, 160, 23, 0.7);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -437,3 +505,94 @@ button:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   .rail-spine, .rail-spine-dot, .rail-iconbtn { transition: none; }
 }
+
+/* ── Top bar and navigation rail: theme colours ──────────────────────────
+   Dark (default) and Green get the navy rail; Light keeps the white one. */
+:root {
+  --topbar-bg: rgba(7, 11, 24, 0.82);
+  --rail-bg: rgba(10, 15, 32, 0.92);
+  --rail-border: rgba(94, 234, 212, 0.18);
+  --rail-shadow: 0 24px 60px -12px rgba(0, 0, 0, 0.65), 0 8px 20px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --rail-sep: rgba(255, 255, 255, 0.08);
+  --rail-title: #ffffff;
+  --rail-sub: #5eead4;
+  --rail-logo-bg: rgba(94, 234, 212, 0.12);
+  --rail-logo-1: #5eead4;
+  --rail-item: rgba(226, 232, 255, 0.62);
+  --rail-item-hover: #5eead4;
+  --rail-active-bg: linear-gradient(135deg, #0d9488, #14b8a6 45%, #6d28d9);
+  --rail-active-shadow: 0 6px 18px -4px rgba(45, 212, 191, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  --rail-hover-bg: rgba(94, 234, 212, 0.08);
+  --rail-hover-border: rgba(94, 234, 212, 0.16);
+  --rail-foot: rgba(226, 232, 255, 0.4);
+  --rail-pin-on: #5eead4;
+  --rail-scrim: rgba(3, 6, 15, 0.55);
+}
+:root[data-theme='light'],
+:root[data-look='classic'] {
+  --topbar-bg: rgba(255, 255, 255, 0.95);
+  --rail-bg: rgba(255, 255, 255, 0.86);
+  --rail-border: rgba(167, 139, 250, 0.28);
+  --rail-shadow: 0 24px 60px -12px rgba(76, 29, 149, 0.28), 0 8px 20px rgba(109, 40, 217, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  --rail-sep: rgba(167, 139, 250, 0.18);
+  --rail-title: #1e1b4b;
+  --rail-sub: #8b5cf6;
+  --rail-logo-bg: #f3f0ff;
+  --rail-logo-1: #7c3aed;
+  --rail-item: #64748b;
+  --rail-item-hover: #6d28d9;
+  --rail-active-bg: linear-gradient(135deg, #7c3aed, #8b5cf6 55%, #a78bfa);
+  --rail-active-shadow: 0 6px 18px -4px rgba(124, 58, 237, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  --rail-hover-bg: rgba(139, 92, 246, 0.09);
+  --rail-hover-border: rgba(139, 92, 246, 0.14);
+  --rail-foot: #a78bfa;
+  --rail-pin-on: #7c3aed;
+  --rail-scrim: rgba(30, 27, 75, 0.28);
+}
+.app-topbar { background: var(--topbar-bg); }
+
+/* the rail's edge handle and icon buttons, dark themes */
+:root:not([data-theme='light']):not([data-look='classic']) .rail-spine {
+  background: rgba(10, 15, 32, 0.8); border-color: rgba(94, 234, 212, 0.25); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+}
+:root:not([data-theme='light']):not([data-look='classic']) .rail-spine-dot { background: rgba(94, 234, 212, 0.3); }
+:root:not([data-theme='light']):not([data-look='classic']) .rail-spine-dot.on { background: linear-gradient(#2dd4bf, #a78bfa); box-shadow: 0 0 8px rgba(45, 212, 191, 0.6); }
+:root:not([data-theme='light']):not([data-look='classic']) .rail-edge:hover .rail-spine,
+:root:not([data-theme='light']):not([data-look='classic']) .rail-edge:focus-visible .rail-spine {
+  background: #0d1326; box-shadow: 0 0 0 3px rgba(94, 234, 212, 0.18), 0 6px 22px rgba(0, 0, 0, 0.5);
+}
+:root:not([data-theme='light']):not([data-look='classic']) .rail-edge:hover .rail-spine-dot { background: rgba(94, 234, 212, 0.6); }
+:root:not([data-theme='light']):not([data-look='classic']) .rail-iconbtn { background: rgba(255, 255, 255, 0.05); border-color: rgba(255, 255, 255, 0.1); color: #5eead4; }
+:root:not([data-theme='light']):not([data-look='classic']) .rail-iconbtn:hover { background: rgba(94, 234, 212, 0.12); color: #a5f3fc; }
+
+/* Surfaces that used fixed light colours: theme-aware now */
+.cam-stage { background: linear-gradient(135deg, #0d1326 0%, #070b18 100%); }
+:root[data-theme='light'] .cam-stage,
+:root[data-look='classic'] .cam-stage { background: linear-gradient(to bottom right, #f8fafc, #eff6ff); }
+.chip-solid { background: rgba(10, 15, 32, 0.88); }
+:root[data-theme='light'] .chip-solid,
+:root[data-look='classic'] .chip-solid { background: rgba(255, 255, 255, 0.9); }
+
+/* ── New / Classic look slider (top bar, beside the theme button) ── */
+.look-toggle {
+  display: flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: 8px; cursor: pointer; user-select: none;
+  border: 1px solid var(--line); background: var(--chip); transition: background .2s, border-color .2s;
+}
+.look-toggle:hover { background: var(--chip2); }
+.look-toggle-label {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--muted); transition: color .2s;
+}
+.look-toggle-label[data-on='true'] { color: var(--accent-hex); }
+.look-toggle-track {
+  position: relative; width: 30px; height: 16px; border-radius: 999px; flex-shrink: 0;
+  background: linear-gradient(90deg, #0d9488, #6d28d9); transition: background .25s;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+.look-toggle-track[data-classic='true'] { background: linear-gradient(90deg, #D4A017, #8b5cf6); }
+.look-toggle-knob {
+  position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4); transition: transform .25s cubic-bezier(.34, 1.56, .64, 1);
+}
+.look-toggle-track[data-classic='true'] .look-toggle-knob { transform: translateX(14px); }
+@media (max-width: 640px) { .look-toggle-label { display: none; } }

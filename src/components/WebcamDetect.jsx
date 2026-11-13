@@ -13,9 +13,12 @@ import { useSystem } from './SystemContext'
 import { useLivePosition, useLaptopGps } from '../hooks/useLaptopGps'
 import { pick } from '../lib/format'
 import { StatusOrb } from './ui'
-import { getFovSettings, pixelBoxToRealSize } from '../lib/sizeEstimate'
+import { fmtLength, getFovSettings, metersPerPixel, pixelBoxToRealSize, summarizeSizes } from '../lib/sizeEstimate'
+import { projectBoxes } from '../lib/geoProject'
 import { getAlertSettings } from '../lib/alertSettings'
 import { sendBigDumpEmail } from '../lib/alerts/email'
+import { releaseStream } from './StreamImg'
+import { h264Supported, playH264 } from '../lib/h264Stream'
 import {
   createLearner, boxFeatures, cropInfo, saveFeedback, deleteFeedback, feedbackCount, clearFeedback, exportFeedback,
   learnerEnabled, setLearnerEnabled, showFilteredEnabled, setShowFilteredEnabled,
@@ -92,6 +95,44 @@ const DETECT_CONF_FLOOR = 0.2
 // was last seen (detections flicker, and the tracker then starts a new track).
 const ANSWER_HOLD_MS = 15000
 const TILE_CONF_FACTOR = 0.85
+// The face and person models only stop people being counted as plastic, and
+// people move slowly: running them on every frame tripled each frame's work.
+// They run at most this often; frames in between reuse their last answer.
+const HUMAN_EVERY_MS = 350
+
+// One CPU copy of the current picture per detection pass. Every model, box
+// check and crop then reads from it. Reading pixels straight from the live
+// <video> / video canvas blocks the page ~16 ms EACH time (a GPU readback),
+// and a pass did it 4-15 times (each model, each box the self-learner
+// checks): the Live tab stuttered. VideoFrame.copyTo reads it once, without
+// blocking. Returns null where it isn't supported; callers then use the element.
+// `snap` is the caller's own { cv, ctx, buf, ok } (one per detector on screen).
+async function snapshotFrame(el, snap) {
+  if (!snap.ok || !el) return null
+  let vf = null
+  try {
+    vf = new VideoFrame(el, { timestamp: 0 })
+    const w = vf.displayWidth, h = vf.displayHeight
+    if (!w || !h) return null
+    const size = vf.allocationSize({ format: 'RGBA' })
+    if (!snap.buf || snap.buf.length !== size) snap.buf = new Uint8ClampedArray(size)
+    await vf.copyTo(snap.buf, { format: 'RGBA' })
+    if (!snap.cv) {
+      snap.cv = document.createElement('canvas')
+      snap.ctx = snap.cv.getContext('2d', { willReadFrequently: true })
+    }
+    if (snap.cv.width !== w || snap.cv.height !== h) { snap.cv.width = w; snap.cv.height = h }
+    snap.ctx.putImageData(new ImageData(snap.buf, w, h), 0, 0)
+    return snap.cv
+  } catch (e) {
+    // e.g. an older runtime without RGBA copyTo: stop trying, read the element.
+    console.info('[detect] reading frames directly:', e?.message ?? e)
+    snap.ok = false
+    return null
+  } finally {
+    vf?.close()
+  }
+}
 
 // Hand the main thread back to the browser between model runs, so the UI can
 // paint and take clicks mid-frame instead of freezing while all models run.
@@ -105,6 +146,8 @@ const yieldToUI = () =>
 export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam', autoStart = false, onCount, controlsLift = 0 }) {
   const videoRef     = useRef(null)
   const streamImgRef = useRef(null)
+  const streamCanvasRef = useRef(null)   // drone H.264, decoded into it
+  const h264Ref = useRef(null)
   const canvasRef    = useRef(null)
   const srcElRef     = useRef(null)
   const detRef       = useRef(null)
@@ -140,7 +183,10 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
   const learnOnRef      = useRef(learnerEnabled())
   const showFilteredRef = useRef(showFilteredEnabled())
   const xformRef        = useRef(null)
+  const mppRef          = useRef(null)   // metres per pixel of the drone frame (null = no usable altitude)
   const frameCanvasRef  = useRef(null)
+  const frameElRef      = useRef(null)   // this pass's CPU copy of the picture (snapshotFrame)
+  const snapRef         = useRef({ cv: null, ctx: null, buf: null, ok: typeof VideoFrame === 'function' })
 
   const [status, setStatus]               = useState('init')
   const [msg,    setMsg]                  = useState('Loading AI models...')
@@ -148,7 +194,8 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
   const [fps,    setFps]                  = useState(0)
   const [count,  setCount]                = useState(0)
   const [facing, setFacing]               = useState('environment')
-  const [source, setSource]               = useState(defaultSource)
+  // 'auto' = the drone's camera when it is streaming, else the laptop webcam.
+  const [source, setSource]               = useState(defaultSource === 'auto' ? 'webcam' : defaultSource)
   const [longRange,        setLongRange]        = useState(false)
   const [gridSize,         setGridSize]         = useState(2)
   const [humanDetection,   setHumanDetection]   = useState(true)
@@ -197,6 +244,10 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
           posSource: live.source === 'drone' && simulated ? 'sim' : live.source,
           alt: live.source === 'drone' ? Number(pick(telemetry.data, ['altitude', 'alt', 'relative_alt'])) : null,
           accuracy: live.accuracy ?? null,
+          // Attitude, to place each item on the water from where it is in the picture.
+          heading: live.source === 'drone' ? pick(telemetry.data, ['heading', 'yaw']) : null,
+          roll: live.source === 'drone' ? pick(telemetry.data, ['roll']) : null,
+          pitch: live.source === 'drone' ? pick(telemetry.data, ['pitch']) : null,
         }
   const sourceRef = useRef(source)
   sourceRef.current = source
@@ -215,6 +266,9 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
 
   useEffect(() => {
     let alive = true
+    // Read now: React clears the ref before the cleanup below runs, and an
+    // MJPEG <img> that is only removed keeps streaming (see StreamImg).
+    const streamImg = streamImgRef.current
     ;(async () => {
       try {
         let d
@@ -246,7 +300,12 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
           personDetRef.current = pd; setEp(d.ep + '+face+person')
         } catch (pe) { console.warn('[person] load failed:', pe) }
         setStatus('ready')
-        if (autoStart) start(defaultSource)
+        if (autoStart) {
+          const first = defaultSource === 'auto' ? await pickSource() : defaultSource
+          if (!alive) return
+          setSource(first)
+          start(first)
+        }
       } catch (e) {
         if (!alive) return
         // "memory access out of bounds" is a WASM trap. Once the shared
@@ -260,14 +319,15 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
           : 'Failed to load model: ' + raw)
       }
     })()
-    return () => { alive=false; stop(); detRef.current?.dispose(); faceDetRef.current?.dispose(); personDetRef.current?.dispose() }
+    return () => { alive=false; stop(); releaseStream(streamImg); detRef.current?.dispose(); faceDetRef.current?.dispose(); personDetRef.current?.dispose() }
   }, [defaultSource, autoStart])
 
   function fitCanvas() { const cv=canvasRef.current; if(!cv) return; const r=cv.getBoundingClientRect(); cv.width=Math.max(2,Math.round(r.width)); cv.height=Math.max(2,Math.round(r.height)) }
-  function srcSize(el) { return [el.videoWidth||el.naturalWidth||0, el.videoHeight||el.naturalHeight||0] }
+  function srcSize(el) { return [el.videoWidth||el.naturalWidth||el.width||0, el.videoHeight||el.naturalHeight||el.height||0] }
 
   function drawBoxes(ctx, cw, ch, vw, vh, ox, oy, dw, dh) {
-    const fontSize = Math.max(12, Math.round(cw / 52))
+    // At least 15 px so the labels stay readable on a phone screen.
+    const fontSize = Math.max(15, Math.round(cw / 52))
     ctx.textBaseline = 'middle'
 
     for (const b of boxesRef.current) {
@@ -346,7 +406,10 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
         : b.answered === 0 ? '  ✖ not plastic'
         : unsure ? '  ?'
         : filtered ? (b.why === 'rule' ? '  ✖ your answer' : '  · filtered') : ''
-      const pillText = `${icon}  ${b.label}${confTxt}${mark}`
+      // Real-world size from the drone's altitude ("≈30 cm"), plastic only.
+      const mpp = mppRef.current
+      const sizeTxt = mpp && !isHuman && !filtered ? `  ${fmtLength(Math.max(b.x2 - b.x1, b.y2 - b.y1) * mpp)}` : ''
+      const pillText = `${icon}  ${b.label}${confTxt}${sizeTxt}${mark}`
 
       const textW  = ctx.measureText(pillText).width
       const pillH  = fontSize + 10
@@ -442,23 +505,40 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
   }
 
   async function detectLoop() {
-    let frames=0, t0=performance.now(), taintWarned=false
+    let frames=0, t0=performance.now(), taintWarned=false, lastShotTs=null
+    let humanAt=-Infinity, lastFaces=[], lastPersons=[]
     while(runningRef.current&&detRef.current&&srcElRef.current){
       const tickStart=performance.now()
       const loopFrame={} // the person filter shares one COCO model pass per loop
+      // The drone's pose when this picture was taken (H.264 from the drone Pi):
+      // the detections are placed from it, not from telemetry that arrived later.
+      const shot=srcElRef.current===streamCanvasRef.current?h264Ref.current?.frame():null
+      // Drone video arrives at ~15 fps: don't run the models again on a picture
+      // they have already seen (long range does, a different tile each time).
+      // The next new frame then starts straight away instead of queueing on the GPU.
+      if(shot&&!longRangeRef.current&&shot.tsUs===lastShotTs){await new Promise(r=>requestAnimationFrame(r));continue}
+      lastShotTs=shot?.tsUs??null
+      const src=(await snapshotFrame(srcElRef.current,snapRef.current))||srcElRef.current
+      if(!runningRef.current) break
+      frameElRef.current=src
       let faceBoxes=[], personBoxes=[], trashBoxes=[]
       if(trashDetectionRef.current){
-        try { trashBoxes=await detRef.current.detect(srcElRef.current,{confThr:Math.max(DETECT_CONF_FLOOR,confRef.current),iouThr:0.40}) }
+        try { trashBoxes=await detRef.current.detect(src,{confThr:Math.max(DETECT_CONF_FLOOR,confRef.current),iouThr:0.40}) }
         catch(e){ if(!taintWarned&&/tainted|cross.origin|SecurityError/i.test(e?.message??'')){taintWarned=true;setMsg('Drone stream blocked by CORS')} }
       }
       await yieldToUI()
-      if(faceDetRef.current&&humanDetectionRef.current){
-        try{faceBoxes=await faceDetRef.current.detectFaces(srcElRef.current,{confThr:FACE_CONF,iouThr:0.25})}catch(e){console.warn('[face]',e)}
+      if(humanDetectionRef.current&&tickStart-humanAt>=HUMAN_EVERY_MS){
+        humanAt=tickStart
+        if(faceDetRef.current){
+          try{lastFaces=await faceDetRef.current.detectFaces(src,{confThr:FACE_CONF,iouThr:0.25})}catch(e){console.warn('[face]',e)}
+        }
+        await yieldToUI()
+        if(personDetRef.current){
+          try{lastPersons=await personDetRef.current.detectPersons(src,{confThr:PERSON_CONF,iouThr:0.30,frame:loopFrame})}catch(e){console.warn('[person]',e)}
+        }
       }
-      await yieldToUI()
-      if(personDetRef.current&&humanDetectionRef.current){
-        try{personBoxes=await personDetRef.current.detectPersons(srcElRef.current,{confThr:PERSON_CONF,iouThr:0.30,frame:loopFrame})}catch(e){console.warn('[person]',e)}
-      }
+      if(humanDetectionRef.current){faceBoxes=lastFaces;personBoxes=lastPersons}
+      else{lastFaces=[];lastPersons=[];humanAt=-Infinity}
       let runTile=false
       if(longRangeRef.current){
         if(emaRef.current<=BUDGET_MS){runTile=true;if(emaRef.current<=BUDGET_MS*0.4)gridSizeRef.current=3;else if(emaRef.current>BUDGET_MS*0.7)gridSizeRef.current=2}
@@ -468,7 +548,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
       if(runTile){
         const tiles=ensureTileGrid(),idx=tileIndexRef.current%tiles.length,rect=tiles[idx]
         activeTileRef.current=rect
-        try{const tc=Math.max(DETECT_CONF_FLOOR,confRef.current*TILE_CONF_FACTOR),tb=await detRef.current.detect(srcElRef.current,{confThr:tc,iouThr:0.40,rect});tileBoxesRef.current.set(idx,{boxes:tb,ts:performance.now()})}catch{}
+        try{const tc=Math.max(DETECT_CONF_FLOOR,confRef.current*TILE_CONF_FACTOR),tb=await detRef.current.detect(src,{confThr:tc,iouThr:0.40,rect});tileBoxesRef.current.set(idx,{boxes:tb,ts:performance.now()})}catch{}
         tileIndexRef.current=idx+1
       } else { activeTileRef.current=null }
       const now=performance.now()
@@ -481,7 +561,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
       // drawn with a '?' for the operator to answer (not counted), 'hide' = a
       // learned false alarm. Features are computed even with learning off, so
       // the operator can still teach it.
-      const el=srcElRef.current
+      const el=src
       const [fw,fh]=el?srcSize(el):[0,0]
       const lrn=learnerRef.current
       const scored=finalTrash.map(b=>{
@@ -518,22 +598,45 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
       recordTrashCount(counted.length) // share plastic-only count with the Detections tab
       // Stamp plastic with the aircraft's live position (≤ 2x/sec) for the Detections tab + report,
       // and grab a photo of this frame (the boxed view, exactly what the operator saw).
+      // Real-world scale of this frame (drone feed with a known altitude only):
+      // the boxes are drawn with their size, and the sighting records it.
+      const fovH=getFovSettings().fovHorizontalDeg
+      const fp=shot?.pose
+      const g=sourceRef.current!=='webcam'&&fp&&Number.isFinite(fp.lat)&&Number.isFinite(fp.lng)
+        ?{...geoRef.current,pos:[fp.lat,fp.lng],posSource:'drone',alt:fp.alt,heading:fp.hdg,roll:fp.roll,pitch:fp.pitch}
+        :geoRef.current
+      mppRef.current=sourceRef.current!=='webcam'?metersPerPixel({frameW:fw,altitudeM:g.alt,fovHDeg:fovH}):null
       if(counted.length>0&&now-lastGeoTagRef.current>=500){
         lastGeoTagRef.current=now
-        const g=geoRef.current
-        // Rough real-world size of the biggest box for this frame.
-        let biggest=counted[0]
-        let bestArea=(biggest.x2-biggest.x1)*(biggest.y2-biggest.y1)
-        for(const b of counted){const a=(b.x2-b.x1)*(b.y2-b.y1);if(a>bestArea){bestArea=a;biggest=b}}
-        const size=g.alt?pixelBoxToRealSize({boxW:biggest.x2-biggest.x1,boxH:biggest.y2-biggest.y1,frameW:fw,frameH:fh,altitudeM:g.alt,fovDeg:{horizontal:getFovSettings().fovHorizontalDeg,vertical:getFovSettings().fovVerticalDeg}}):null
+        const biggestOf=(bs)=>bs.reduce((m,b)=>((b.x2-b.x1)*(b.y2-b.y1)>(m.x2-m.x1)*(m.y2-m.y1)?b:m))
+        const biggest=biggestOf(counted)
         const cls=biggest.label||'plastic'
-        recordTrashSighting({
-          lat:g.pos?g.pos[0]:null, lng:g.pos?g.pos[1]:null, alt:g.alt,
-          count:counted.length, confidence:Math.max(...counted.map(b=>Number(b.score)||0)),
-          source:sourceRef.current, posSource:g.posSource, accuracy:g.accuracy,
-          photo:capturePhoto(),
-          className:cls, estWidthM:size?.widthM??null, estHeightM:size?.heightM??null,
-        })
+        const photo=capturePhoto()
+        // Drone feed with a GPS fix, altitude and heading: place each item where it
+        // is on the water (from where it sits in the straight-down picture), one
+        // sighting per group of items within 5 m, so the boat goes to the plastic
+        // itself rather than to the point under the drone. Otherwise: the camera's position.
+        const cam=getFovSettings()
+        const groups=sourceRef.current!=='webcam'&&g.posSource!=='laptop'&&g.pos?projectBoxes(counted,{
+          frameW:fw,frameH:fh,lat:g.pos[0],lng:g.pos[1],altitudeM:g.alt,headingDeg:g.heading,rollDeg:g.roll,pitchDeg:g.pitch,
+          fovHDeg:fovH,rotationDeg:cam.cameraRotationDeg,levelled:cam.cameraGimbal,
+        }):null
+        const record=(bs,lat,lng,where)=>{
+          const big=biggestOf(bs)
+          // The drone's crop of the item: the boat later checks it collects this same piece.
+          const crop=sourceRef.current!=='webcam'?cropBox(big):null
+          const size=mppRef.current?pixelBoxToRealSize({boxW:big.x2-big.x1,boxH:big.y2-big.y1,frameW:fw,altitudeM:g.alt,fovDeg:{horizontal:fovH}}):null
+          recordTrashSighting({
+            lat, lng, alt:g.alt,
+            count:bs.length, confidence:Math.max(...bs.map(b=>Number(b.score)||0)),
+            source:sourceRef.current, posSource:g.posSource, posMethod:where, accuracy:g.accuracy,
+            photo, crop:crop?.url, cropW:crop?.w, cropH:crop?.h,
+            className:big.label||cls, estWidthM:size?.widthM??null, estHeightM:size?.heightM??null,
+            sizes:mppRef.current?summarizeSizes(bs,{frameW:fw,altitudeM:g.alt,fovHDeg:fovH}):null,
+          })
+        }
+        if(groups) for(const grp of groups) record(grp.boxes,grp.lat,grp.lng,'picture')
+        else record(counted,g.pos?g.pos[0]:null,g.pos?g.pos[1]:null,g.pos?'camera':null)
         // Big-dump auto alerts. Guarded by cooldown and per-channel toggles.
         const settings=getAlertSettings()
         if(counted.length>=Math.max(1,Number(settings.bigDumpThreshold)||8)&&Date.now()-lastAlertAtRef.current>ALERT_COOLDOWN_MS){
@@ -554,7 +657,30 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
     const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:f,width:{ideal:1280},height:{ideal:720}},audio:false})
     const v=videoRef.current; v.srcObject=stream; await v.play(); srcElRef.current=v
   }
+  /** The drone camera: H.264 (camera module, browsers with WebCodecs), else MJPEG. */
   function startStream(){
+    return h264Supported()?startH264().catch(()=>startMjpeg()):startMjpeg()
+  }
+  async function startH264(){
+    const st=await api.cameraStatus().catch(()=>null)
+    if(st?.codec!=='h264') throw new Error('the camera sends MJPEG')
+    return new Promise((resolve,reject)=>{
+      const cv=streamCanvasRef.current
+      let started=false
+      const fail=(why)=>{if(started)return;started=true;h264Ref.current?.close();h264Ref.current=null;reject(new Error(why))}
+      const timer=setTimeout(()=>fail('no H.264 picture'),6000)
+      h264Ref.current=playH264({url:api.h264Url()+'?pose=1',canvas:cv,
+        onFirstFrame:()=>{if(started)return;started=true;clearTimeout(timer);srcElRef.current=cv;resolve()},
+        onFatal:(why)=>{
+          clearTimeout(timer)
+          if(!started){fail(why);return}
+          // The camera switched to MJPEG while running (e.g. a webcam was plugged in).
+          h264Ref.current=null
+          if(runningRef.current) startMjpeg().catch(()=>{})
+        }})
+    })
+  }
+  function startMjpeg(){
     return new Promise((resolve,reject)=>{
       const img=streamImgRef.current; img.crossOrigin='anonymous'
       const onLoad=()=>{img.removeEventListener('load',onLoad);srcElRef.current=img;resolve()}
@@ -564,10 +690,21 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
       setTimeout(()=>{if(img.naturalWidth){srcElRef.current=img;resolve()}},1500)
     })
   }
+  /** The drone's camera if it is streaming, else the laptop webcam. */
+  async function pickSource(){
+    try{const r=await api.cameraStatus();return r?.camera_connected?'drone':'webcam'}catch{return 'webcam'}
+  }
   async function start(src=source,f=facing){
     if(!detRef.current) return
     try{
-      if(src==='webcam')await startWebcam(f); else await startStream()
+      if(src==='webcam'){
+        try{await startWebcam(f)}
+        catch(e){
+          // No laptop camera (or no permission): use the drone's if it is streaming.
+          if(defaultSource!=='auto'||(await pickSource())!=='drone')throw e
+          src='drone';setSource('drone');await startStream()
+        }
+      } else await startStream()
       fitCanvas(); runningRef.current=true; setStatus('running'); draw(); detectLoop()
       // Record the whole mission (the boxed view, exactly what the operator saw)
       // from Start to Stop, so a full video — not just still detections — is
@@ -581,13 +718,22 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
     runningRef.current=false; cancelAnimationFrame(rafRef.current)
     stopMissionRecording()
     const v=videoRef.current; if(v?.srcObject){v.srcObject.getTracks().forEach(t=>t.stop());v.srcObject=null}
-    if(streamImgRef.current)streamImgRef.current.src=''
+    releaseStream(streamImgRef.current)
+    h264Ref.current?.close(); h264Ref.current=null
     srcElRef.current=null; boxesRef.current=[]; tileBoxesRef.current.clear()
     tileGridRef.current=null; activeTileRef.current=null; trackerRef.current.reset()
-    answeredRef.current.clear(); xformRef.current=null; setAsk(null)
+    answeredRef.current.clear(); xformRef.current=null; mppRef.current=null; setAsk(null)
     emaRef.current=60; gridSizeRef.current=2; setStatus(s=>s==='running'?'ready':s)
   }
-  async function switchSource(next){if(next===source)return;const was=runningRef.current;stop();setSource(next);if(was)await start(next)}
+  async function switchSource(next){
+    if(next===source)return
+    // Start the new source if the old one was running, or if this view starts by
+    // itself (a failed webcam must not leave the drone feed waiting for Start).
+    const go=runningRef.current||autoStart
+    stop();setSource(next)
+    if(detRef.current){setStatus(s=>s==='error'?'ready':s);setMsg('')}
+    if(go)await start(next)
+  }
   async function flip(){const next=facing==='environment'?'user':'environment';setFacing(next);if(runningRef.current&&source==='webcam'){stop();await start('webcam',next)}}
 
   async function getSaveFolder(){
@@ -645,6 +791,22 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
     const ctx=fc.getContext('2d'); if(!ctx) return null
     ctx.drawImage(el,0,0,fc.width,fc.height)
     try{return fc.toDataURL('image/jpeg',0.85)}catch{return null}
+  }
+
+  // The clean frame around one box (with some water around it), at most 128 px:
+  // the drone's reference image of that item for the boat (droneTargets.js).
+  function cropBox(b){
+    const el=frameElRef.current||srcElRef.current; if(!el||!b) return null
+    const [vw,vh]=srcSize(el); if(!vw||!vh) return null
+    const bw=b.x2-b.x1, bh=b.y2-b.y1; if(bw<2||bh<2) return null
+    const x1=Math.max(0,b.x1-0.35*bw), y1=Math.max(0,b.y1-0.35*bh)
+    const x2=Math.min(vw,b.x2+0.35*bw), y2=Math.min(vh,b.y2+0.35*bh)
+    const k=Math.min(1,128/Math.max(x2-x1,y2-y1))
+    const cv=document.createElement('canvas')
+    cv.width=Math.max(1,Math.round((x2-x1)*k)); cv.height=Math.max(1,Math.round((y2-y1)*k))
+    const ctx=cv.getContext('2d'); if(!ctx) return null
+    try{ctx.drawImage(el,x1,y1,x2-x1,y2-y1,0,0,cv.width,cv.height);return {url:cv.toDataURL('image/jpeg',0.85),w:cv.width,h:cv.height}}
+    catch{return null} // a cross-origin stream can't be read back
   }
 
   function onCanvasTap(e){
@@ -764,9 +926,10 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
   function toggleAllModels(){const next=!allModelsOn;setTrashDetection(next);setHumanDetection(next)}
 
   return (
-    <div className="relative h-full w-full overflow-hidden rounded-2xl bg-gradient-to-br from-slate-50 to-blue-50">
+    <div className="relative h-full w-full overflow-hidden rounded-2xl cam-stage">
       <video ref={videoRef} playsInline muted className="hidden" />
       <img   ref={streamImgRef} alt="" className="hidden" />
+      <canvas ref={streamCanvasRef} className="hidden" />
       <canvas ref={canvasRef} className="h-full w-full" onClick={onCanvasTap} />
 
       {/* ✔ / ✖ for the tapped box — the self-learning filter's reward. Rendered
@@ -803,7 +966,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
       )}
 
       {/* status pill */}
-      <div className="absolute left-3 top-3 z-20 flex items-center gap-2 rounded-full bg-white/90 backdrop-blur px-3 py-1.5 shadow-lg"
+      <div className="absolute left-3 top-3 z-20 flex items-center gap-2 rounded-full chip-solid backdrop-blur px-3 py-1.5 shadow-lg"
         style={{border:'1px solid rgba(255,255,255,0.08)'}}>
         <StatusOrb level={status==='running'?'ok':status==='error'?'bad':'warn'} size={9} pulse={status!=='running'} />
         <span className="text-[11px] font-semibold text-white/90">

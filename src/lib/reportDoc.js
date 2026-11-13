@@ -49,7 +49,7 @@ function metersBetween(a, b) {
  * timestamp}) or the Detections tab's merged rows, which add count, origin,
  * alt, posSource, time and lastSeen (geotagged live-AI sightings).
  */
-import { DEFAULT_AVG_WEIGHT_G, DEFAULT_FOV_DEG, estimateWeightG, getFovSettings } from './sizeEstimate'
+import { DEFAULT_AVG_WEIGHT_G, DEFAULT_FOV_DEG, SIZE_CLASSES, SIZE_LABEL, describeSighting, estimateWeightG, fmtLength, getFovSettings, sizeClassOf } from './sizeEstimate'
 
 export function buildTrashDataset(list = [], trashStats = { peak: 0, last: 0, updatedAt: 0 }) {
   const fov = getFovSettings()
@@ -107,8 +107,41 @@ export function buildTrashDataset(list = [], trashStats = { peak: 0, last: 0, up
       estWidthM: Number.isFinite(Number(d.estWidthM)) ? Number(d.estWidthM) : null,
       estHeightM: Number.isFinite(Number(d.estHeightM)) ? Number(d.estHeightM) : null,
       estWeightG: wG,
+      // Size (drone feed with a known altitude only)
+      largestM: Number(d.largestM) > 0 ? Number(d.largestM) : null,
+      sizeClass: Number(d.largestM) > 0 ? SIZE_LABEL[sizeClassOf(d.largestM)] : null,
+      sizeCounts: d.sizeCounts || null,
+      largeCount: Number(d.largeCount) || 0,
+      totalAreaM2: Number(d.totalAreaM2) > 0 ? Number(d.totalAreaM2) : null,
+      cluster: !!d.cluster,
+      sizeNote: describeSighting(d),
     })
   }
+
+  // Debris size: items per size class (each location's most-seen-at-once
+  // counts), the largest single object, clusters, and total debris area.
+  const sized = detections.filter((d) => d.largestM != null)
+  const sizeBreakdown = Object.fromEntries(SIZE_CLASSES.map((c) => [c.label, 0]))
+  for (const d of sized) {
+    for (const c of SIZE_CLASSES) sizeBreakdown[c.label] += Number(d.sizeCounts?.[c.key]) || 0
+  }
+  const biggest = sized.reduce((a, d) => (!a || d.largestM > a.largestM ? d : a), null)
+  const clusters = sized
+    .filter((d) => d.cluster)
+    .sort((a, b) => b.largeCount - a.largeCount || b.count - a.count)
+  const sizeSummary = sized.length
+    ? {
+        locationsWithSize: sized.length,
+        itemsBySize: sizeBreakdown,
+        largeItems: (sizeBreakdown.Large || 0) + (sizeBreakdown['Very large'] || 0),
+        largestObject: biggest ? { size: fmtLength(biggest.largestM), sizeClass: biggest.sizeClass, lat: biggest.lat, lng: biggest.lng } : null,
+        clusters: clusters.length,
+        largeDebrisClusters: clusters.filter((d) => d.largeCount > 0).length,
+        clusterNotes: clusters.slice(0, 8).map((d) => d.sizeNote),
+        totalDebrisAreaM2: Math.round(sized.reduce((a, d) => a + (d.totalAreaM2 || 0), 0) * 10) / 10,
+        method: 'Box size in pixels x ground metres per pixel, from the drone altitude and the camera field of view; assumes a downward-facing camera; roughly +/-30 %.',
+      }
+    : null
 
   // Survey area: centre of all trash locations, bounding corners, and diagonal span.
   let area = null
@@ -144,7 +177,8 @@ export function buildTrashDataset(list = [], trashStats = { peak: 0, last: 0, up
       byOrigin,
       confidenceBuckets: buckets,
       totalEstWeightG,
-      fovAssumption: `${Math.round(fov.fovHorizontalDeg || DEFAULT_FOV_DEG.horizontal)}° × ${Math.round(fov.fovVerticalDeg || DEFAULT_FOV_DEG.vertical)}°`,
+      fovAssumption: `${Math.round(fov.fovHorizontalDeg || DEFAULT_FOV_DEG.horizontal)}° horizontal`,
+      size: sizeSummary,
     },
     area,
     detections: detections.slice(0, 2000),
@@ -200,7 +234,17 @@ function metricsTable(data) {
     ['Live-camera peak trash', data.liveCamera.peakTrash],
     ['Live-camera last reading', data.liveCamera.lastTrash],
     ['Estimated total weight (rough)', s.totalEstWeightG >= 1000 ? `~${(s.totalEstWeightG / 1000).toFixed(1)} kg` : `~${s.totalEstWeightG || 0} g`],
+    ...(s.size
+      ? [
+          ['Large / very large items (50 cm or more)', s.size.largeItems],
+          ['Debris clusters (3+ items within 15 m)', s.size.clusters],
+          ['Largest single object', s.size.largestObject ? `${s.size.largestObject.size} (${s.size.largestObject.sizeClass})` : '—'],
+          ['Total debris area seen (rough)', `≈${s.size.totalDebrisAreaM2} m²`],
+        ]
+      : []),
     ['Camera FOV assumption', s.fovAssumption || '—'],
+    ...(data.boat?.catch?.total ? [['Items collected by the boat (counted)', data.boat.catch.total]] : []),
+    ...(data.boat?.water?.avgNtu != null ? [['Average water turbidity', `${data.boat.water.avgNtu} NTU`]] : []),
   ]
   return `<table class="tbl"><tr><th>Metric</th><th>Value</th></tr>${rows
     .map((r, i) => `<tr${zebra(i)}><td>${esc(r[0])}</td><td class="num">${fmtNum(r[1])}</td></tr>`)
@@ -214,6 +258,64 @@ function byClassTable(data) {
   return `<h2>Breakdown by Type</h2><table class="tbl"><tr><th>Type</th><th>Count</th></tr>${entries
     .map(([k, v], i) => `<tr${zebra(i)}><td>${esc(k)}</td><td class="num">${fmtNum(v)}</td></tr>`)
     .join('')}</table>`
+}
+
+// Debris by size class, the largest object and the clusters — turns "trash
+// was seen" into "a cluster of large debris was seen here".
+function sizeBlock(data) {
+  const z = data.summary.size
+  if (!z) return ''
+  const rows = SIZE_CLASSES.map(
+    (c, i) =>
+      `<tr${zebra(i)}><td>${esc(c.label)}</td><td>${esc(c.range)}</td><td>${esc(c.examples)}</td><td class="num">${fmtNum(z.itemsBySize[c.label])}</td></tr>`,
+  ).join('')
+  const notes = z.clusterNotes.length
+    ? `<p><b>Clusters found:</b></p>${bullets(z.clusterNotes, z.largeDebrisClusters ? 'action' : 'check')}`
+    : '<p>No clusters (3 or more items close together) were seen; the debris was scattered.</p>'
+  return `<h2>Debris Size</h2>
+    <p>Each item&rsquo;s size is worked out from its size in the picture, the drone&rsquo;s altitude and the camera&rsquo;s field of view (${esc(
+      data.summary.fovAssumption,
+    )}).${z.largestObject ? ` The largest single object was <b>${esc(z.largestObject.size)}</b> (${esc(z.largestObject.sizeClass.toLowerCase())}).` : ''}</p>
+    <table class="tbl"><tr><th>Size</th><th>Longest side</th><th>Typical items</th><th>Items</th></tr>${rows}</table>
+    ${notes}
+    <p class="small">Estimates are rough (about &plusmn;30&nbsp;%): they assume the camera points straight down and use the altitude above the take-off point. Only drone-feed detections with a known altitude are sized (${fmtNum(
+      z.locationsWithSize,
+    )} location${z.locationsWithSize === 1 ? '' : 's'}).</p>`
+}
+
+// The boat's own records: items its ramp camera counted one by one, water
+// turbidity readings, wildlife pauses (data.boat, see boatReport.js).
+function boatBlock(data) {
+  const b = data.boat
+  if (!b) return ''
+  const parts = []
+  if (b.catch && b.catch.total > 0) {
+    const rows = Object.entries(b.catch.byLabel).sort((x, y) => y[1] - x[1])
+      .map(([k, v], i) => `<tr${zebra(i)}><td>${esc(k)}</td><td class="num">${fmtNum(v)}</td></tr>`).join('')
+    const kg = b.catch.estWeightG >= 1000 ? `~${(b.catch.estWeightG / 1000).toFixed(1)} kg` : `~${b.catch.estWeightG} g`
+    parts.push(`<h2>Collected by the Boat (counted)</h2>
+      <p>The boat&rsquo;s ramp camera counted <b>${fmtNum(b.catch.total)}</b> item${b.catch.total === 1 ? '' : 's'} as they came on board (${fmtNum(b.catch.today)} today), about <b>${esc(kg)}</b> by the average weight per type. These are items actually removed from the water, counted one by one.</p>
+      <table class="tbl"><tr><th>Type</th><th>Items collected</th></tr>${rows}</table>`)
+  }
+  const w = b.water
+  if (w && (w.readings.length || w.now)) {
+    const rows = w.readings.slice(0, 40).map((r, i) => `<tr${zebra(i)}><td>${fmtTime(r.t)}</td><td class="num">${fmtNum(r.ntu)}</td><td>${esc(r.quality || '')}</td><td>${
+      Number.isFinite(Number(r.lat)) ? `<a href="${esc(mapsUrl(r.lat, r.lng))}">${Number(r.lat).toFixed(5)}, ${Number(r.lng).toFixed(5)}</a>` : '—'
+    }</td></tr>`).join('')
+    parts.push(`<h2>Water Quality (Turbidity)</h2>
+      <p>${w.readings.length ? `${w.readings.length} reading${w.readings.length === 1 ? '' : 's'} taken by the boat: average <b>${fmtNum(w.avgNtu)} NTU</b> (lowest ${fmtNum(w.minNtu)}, highest ${fmtNum(w.maxNtu)}). ` : ''}${
+      w.now ? `Latest live value: ${fmtNum(w.now.ntu)} NTU (${esc(w.now.quality || '')}). ` : ''
+    }Lower NTU is clearer water: under 10 looks clear, 10&ndash;50 slightly cloudy, 50&ndash;150 cloudy, over 150 murky.${w.calibrated ? '' : ' <i>The sensor was not calibrated in clear water, so values follow the sensor maker&rsquo;s curve and are approximate.</i>'}</p>
+      ${rows ? `<table class="tbl"><tr><th>Time</th><th>NTU</th><th>Clarity</th><th>Location</th></tr>${rows}</table>` : ''}`)
+  }
+  const wl = b.wildlife
+  if (wl && wl.sightings.length) {
+    const counts = {}
+    for (const s of wl.sightings) counts[s.label] = (counts[s.label] || 0) + 1
+    parts.push(`<h2>Wildlife Encounters</h2>
+      <p>The boat stopped for animals or people in its path ${fmtNum(wl.sightings.length)} time${wl.sightings.length === 1 ? '' : 's'} in the records (${Object.entries(counts).map(([k, v]) => `${v} &times; ${esc(k)}`).join(', ')}). Today it paused ${fmtNum(wl.pausesToday)} time${wl.pausesToday === 1 ? '' : 's'}, ${fmtNum(wl.waitedSToday)} s in total. Each time it held position until the way was clear, or until the operator chose to move on.</p>`)
+  }
+  return parts.join('')
 }
 
 function byOriginTable(data) {
@@ -251,7 +353,9 @@ function locationTable(data) {
   const body = rows
     .map(
       (d, i) =>
-        `<tr${zebra(i)}>${hasPhotos ? `<td>${d.photoName ? imgTag(d.photoName, 120, 'trash photo') : '—'}</td>` : ''}<td class="num">${i + 1}</td><td>${esc(d.class)}</td><td class="num">${fmtNum(d.count)}</td><td class="num">${
+        `<tr${zebra(i)}>${hasPhotos ? `<td>${d.photoName ? imgTag(d.photoName, 120, 'trash photo') : '—'}</td>` : ''}<td class="num">${i + 1}</td><td>${esc(d.class)}</td><td class="num">${fmtNum(d.count)}</td><td>${
+          d.largestM != null ? `${esc(d.sizeClass)} ${esc(fmtLength(d.largestM))}${d.cluster ? '<br/><span class="small">cluster</span>' : ''}` : '—'
+        }</td><td class="num">${
           d.confidence != null ? d.confidence + '%' : '—'
         }</td><td class="num">${d.lat.toFixed(6)}</td><td class="num">${d.lng.toFixed(6)}</td><td class="num">${
           d.alt != null ? d.alt + ' m' : '—'
@@ -261,10 +365,10 @@ function locationTable(data) {
     )
     .join('')
   return `<h2>Trash Locations (${rows.length})</h2>
-    <p class="small">Each location is where the camera was when the AI detected trash: the drone&rsquo;s live GPS (WebSocket link) for Drone-feed detections, or the laptop&rsquo;s location for Webcam detections (&plusmn; shows its accuracy). Nearby sightings of the same spot are merged; "Items" is the most pieces seen there at once${
+    <p class="small">For Drone-feed detections each location is the item&rsquo;s own spot on the water, worked out from where it appeared in the straight-down camera picture and the drone&rsquo;s live GPS, altitude, heading and tilt (typically within a few metres); when the altitude or heading was not available, it is the point under the drone. Webcam detections use the laptop&rsquo;s location (&plusmn; shows its accuracy). Nearby sightings of the same spot are merged; "Items" is the most pieces seen there at once${
       hasPhotos ? ', and the photo is the frame the AI actually detected it in' : ''
     }.</p>
-    <table class="tbl"><tr>${hasPhotos ? '<th>Photo</th>' : ''}<th>#</th><th>Type</th><th>Items</th><th>Conf.</th><th>Latitude</th><th>Longitude</th><th>Alt.</th><th>Source</th><th>Time</th><th>Link</th></tr>${body}</table>
+    <table class="tbl"><tr>${hasPhotos ? '<th>Photo</th>' : ''}<th>#</th><th>Type</th><th>Items</th><th>Size</th><th>Conf.</th><th>Latitude</th><th>Longitude</th><th>Alt.</th><th>Source</th><th>Time</th><th>Link</th></tr>${body}</table>
     <h2>Location Links</h2>
     <p class="small">Full links for copying into a browser or GPS app.</p>
     ${rows
@@ -449,8 +553,10 @@ function buildHtml({ data, narrative, charts }) {
     ${n.keyFindings ? `<h2>Key Findings</h2>${bullets(n.keyFindings, 'check')}` : ''}
     ${chartsBlock(charts)}
     ${byClassTable(data)}
+    ${sizeBlock(data)}
     ${byOriginTable(data)}
     ${areaBlock(data)}
+    ${boatBlock(data)}
     ${section('Detection Type Analysis', n.classAnalysis)}
     ${section('Spatial Analysis', n.spatialAnalysis)}
     ${section('Temporal Analysis', n.temporalAnalysis)}
@@ -572,6 +678,14 @@ export function fallbackNarrative(data) {
       `Total detections: ${s.total}`,
       classes ? `Composition: ${classes}` : 'No per-type breakdown available',
       `Geolocated: ${s.located} / ${s.total}`,
+      ...(s.size
+        ? [
+            `Debris size: ${s.size.largeItems} large item(s) of 50 cm or more; largest object ${s.size.largestObject?.size || '—'}`,
+            ...(s.size.clusters ? [`${s.size.clusters} debris cluster(s)${s.size.largeDebrisClusters ? `, ${s.size.largeDebrisClusters} containing large debris` : ''}: ${s.size.clusterNotes[0]}`] : []),
+          ]
+        : []),
+      ...(data.boat?.catch?.total ? [`The boat collected ${data.boat.catch.total} item(s), counted one by one on board`] : []),
+      ...(data.boat?.water?.avgNtu != null ? [`Water turbidity averaged ${data.boat.water.avgNtu} NTU over ${data.boat.water.readings.length} reading(s)`] : []),
       ...(data.area ? [`Survey area centre: ${data.area.centre.lat}, ${data.area.centre.lng} (span ~${data.area.spanMeters} m)`] : []),
       `Live-camera peak trash: ${data.liveCamera.peakTrash}`,
     ],
@@ -588,6 +702,7 @@ export function fallbackNarrative(data) {
     environmentalImpact:
       'Floating plastic and debris degrade water quality, endanger aquatic life through ingestion and entanglement, and accumulate downstream. Prompt removal reduces microplastic breakdown.',
     recommendations: [
+      ...(s.size?.largeDebrisClusters ? ['Send the boat to the large-debris clusters first: they hold the most material per trip, and large items may need a net or two people.'] : []),
       'Prioritize removal at geolocated hotspots with the highest detection density.',
       'Re-survey areas where detections lacked a GPS fix to obtain coordinates.',
       'Schedule repeat patrols to measure cleanup effectiveness over time.',

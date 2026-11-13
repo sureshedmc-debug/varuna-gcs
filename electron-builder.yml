@@ -15,6 +15,9 @@ files:
   - electron/**
   - "!electron/launch.cjs"
   - dist/**
+  # window/taskbar icon (the exe and installer icons are embedded separately)
+  - build/icon.ico
+  - build/icon.png
   - "!node_modules/**/*"
   - node_modules/http-proxy/**/*
   - node_modules/eventemitter3/**/*

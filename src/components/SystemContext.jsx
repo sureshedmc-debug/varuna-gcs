@@ -6,7 +6,7 @@ import { useLivePosition } from '../hooks/useLaptopGps'
 import { setBackendReachable } from '../lib/connectionState'
 import { useSimTelemetry, simSetHome } from '../lib/simulator'
 import { pick } from '../lib/format'
-import { subscribeMission, getActiveMission } from '../lib/missionStore'
+import { subscribeMission, getActiveMission, setMissionStatus } from '../lib/missionStore'
 import { startPositionRecording, stopPositionRecording, samplePosition } from '../lib/positionHistory'
 import { recordMissionCompleted } from '../lib/impactStats'
 import { getTrashLog } from '../lib/trashLog'
@@ -92,6 +92,20 @@ export function SystemProvider({ children }) {
     })
     return unsub
   }, [])
+
+  // A real drone reports its own mission progress (drone-pi backend:
+  // telemetry.mission.state). Mirror it into the mission store, the same way
+  // the simulator does, so Missions/Home show "running" and the flight is
+  // recorded for Replay. Only for a mission that went to the real aircraft.
+  const realMissionState = !simulated ? telemetry.data?.mission?.state : undefined
+  useEffect(() => {
+    if (!realMissionState) return
+    const m = getActiveMission()
+    if (!m || m.target !== 'real') return
+    const flying = ['running', 'paused', 'returning', 'landing'].includes(realMissionState)
+    if (flying && m.status !== 'running') setMissionStatus('running')
+    else if (!flying && m.status === 'running') setMissionStatus('uploaded')
+  }, [realMissionState])
 
   // Sample the drone's position while a mission is running, from the same
   // telemetry stream every screen already reads (real or simulator).

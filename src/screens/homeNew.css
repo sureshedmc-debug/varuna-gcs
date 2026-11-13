@@ -129,7 +129,7 @@
 
 /* â”€â”€ Telemetry rings row â”€â”€ */
 .vh-telem-row {
-  display: grid; grid-template-columns: repeat(5,1fr);
+  display: grid; grid-template-columns: 1fr;
   gap: 12px; padding: 14px 24px 0;
 }
 .vh-telem-card {
@@ -145,6 +145,14 @@
   transform: translateY(-3px);
   box-shadow: 0 8px 24px rgba(109,40,217,0.12), 0 0 0 3px rgba(167,139,250,0.12);
 }
+/* Full-width featured telemetry card (Battery) â€” ring left, details right */
+.vh-telem-card--feature {
+  flex-direction: row; align-items: center; justify-content: flex-start;
+  gap: 26px; padding: 20px 32px;
+}
+.vh-telem-detail { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; }
+.vh-telem-card--feature .vh-telem-label { font-size: 13px; letter-spacing: 0.12em; }
+.vh-telem-card--feature .vh-telem-sub   { font-size: 14px; text-align: left; }
 .vh-ring-wrap { position: relative; width: 72px; height: 72px; flex-shrink: 0; }
 .vh-ring-wrap svg { width: 100%; height: 100%; transform: rotate(-90deg); }
 .vh-ring-track { fill: none; stroke: #ede9fe; stroke-width: 7; }
@@ -179,14 +187,17 @@
 
 /* â”€â”€ Body â”€â”€ */
 .vh-body { padding: 14px 24px 28px; display: flex; flex-direction: column; gap: 14px; }
+/* Below the launchpad, smaller: the buttons and artwork above are the spotlight. */
+.varuna-home > .vh-body { zoom: 0.8; }
+@media (max-width: 860px) { .varuna-home > .vh-body { zoom: 0.9; } }
 
 /* â”€â”€ KPI cards â”€â”€ */
-.vh-kpi-row { display: grid; grid-template-columns: repeat(4,1fr); gap: 14px; }
+.vh-kpi-row { display: grid; grid-template-columns: repeat(3,1fr); gap: 14px; }
 .vh-kpi-card {
   background: #ffffff; border-radius: 16px;
   border: 1.5px solid #f0ecff;
-  padding: 18px 20px;
-  display: flex; align-items: center; gap: 14px;
+  padding: 20px 24px;
+  display: flex; align-items: center; gap: 16px;
   box-shadow: 0 2px 12px rgba(109,40,217,0.06);
   transition: all 0.22s;
 }
@@ -196,7 +207,7 @@
   box-shadow: 0 8px 24px rgba(109,40,217,0.1), 0 0 0 3px rgba(196,181,253,0.15);
 }
 .vh-kpi-icon {
-  width: 50px; height: 50px; border-radius: 14px;
+  width: 54px; height: 54px; border-radius: 14px;
   display: flex; align-items: center; justify-content: center; flex-shrink: 0;
   background: linear-gradient(135deg, #7c3aed, #a78bfa);
   color: #ffffff;
@@ -210,7 +221,7 @@
 .vh-kpi-right { flex: 1; min-width: 0; }
 .vh-kpi-top   { display: flex; justify-content: space-between; align-items: flex-start; }
 .vh-kpi-label { font-size: 10.5px; color: #8b5cf6; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 4px; }
-.vh-kpi-value { font-size: 34px; font-weight: 900; color: #1e1b4b; line-height: 1; margin-bottom: 4px; font-variant-numeric: tabular-nums; }
+.vh-kpi-value { font-size: 38px; font-weight: 900; color: #1e1b4b; line-height: 1; margin-bottom: 4px; font-variant-numeric: tabular-nums; }
 .vh-kpi-delta { font-size: 11px; font-weight: 600; display: flex; align-items: center; gap: 3px; }
 .vh-kpi-delta.up   { color: #059669; }
 .vh-kpi-delta.down { color: #dc2626; }
@@ -362,7 +373,7 @@
 /* -----------------------------------------------------------------------
    PURPLE SHADOWS UNDER GRAPHS / WIDGETS
    Applied to every card/panel on the home page.
-   All rules scoped under .varuna-home — zero impact on other pages.
+   All rules scoped under .varuna-home ï¿½ zero impact on other pages.
    ----------------------------------------------------------------------- */
 
 /* -- All panels and cards get a rich purple drop shadow -- */
@@ -376,7 +387,7 @@
     0  1px  0  rgba(255, 255, 255, 0.90) inset;
 }
 
-/* -- Deeper shadow on hover — lifts the card -- */
+/* -- Deeper shadow on hover ï¿½ lifts the card -- */
 .varuna-home .vh-panel:hover,
 .varuna-home .vh-kpi-card:hover,
 .varuna-home .vh-telem-card:hover {
@@ -388,27 +399,27 @@
     0  1px  0    rgba(255, 255, 255, 1.00) inset;
 }
 
-/* -- Bar chart — purple area shadow under the bars -- */
+/* -- Bar chart ï¿½ purple area shadow under the bars -- */
 .varuna-home .vh-barchart {
   filter: drop-shadow(0 6px 12px rgba(109, 40, 217, 0.18));
 }
 
-/* -- Donut chart SVG — soft purple glow around the ring -- */
+/* -- Donut chart SVG ï¿½ soft purple glow around the ring -- */
 .varuna-home .vh-donut-svg {
   filter: drop-shadow(0 6px 16px rgba(109, 40, 217, 0.20));
 }
 
-/* -- Telemetry rings — purple glow behind each ring -- */
+/* -- Telemetry rings ï¿½ purple glow behind each ring -- */
 .varuna-home .vh-ring-wrap svg {
   filter: drop-shadow(0 4px 10px rgba(109, 40, 217, 0.22));
 }
 
-/* -- Sparkline — subtle purple shadow under each trend line -- */
+/* -- Sparkline ï¿½ subtle purple shadow under each trend line -- */
 .varuna-home .vh-sparkline {
   filter: drop-shadow(0 3px 6px rgba(109, 40, 217, 0.25));
 }
 
-/* -- KPI icon bubbles — deeper glow -- */
+/* -- KPI icon bubbles ï¿½ deeper glow -- */
 .varuna-home .vh-kpi-icon {
   box-shadow:
     0 4px 10px  rgba(109, 40, 217, 0.30),
@@ -416,7 +427,7 @@
     0 1px 0     rgba(255, 255, 255, 0.25) inset;
 }
 
-/* -- Battery bars — glow under the track -- */
+/* -- Battery bars ï¿½ glow under the track -- */
 .varuna-home .vh-battery-bar {
   box-shadow: 0 2px 8px rgba(109, 40, 217, 0.15);
 }
@@ -425,31 +436,31 @@
   box-shadow: 0 0 8px rgba(109, 40, 217, 0.35);
 }
 
-/* -- Progress bar fill — glowing purple beam -- */
+/* -- Progress bar fill ï¿½ glowing purple beam -- */
 .varuna-home .vh-wp-bar-fill {
   box-shadow: 0 0 10px rgba(109, 40, 217, 0.45), 0 0 4px rgba(167, 139, 250, 0.40);
 }
 
-/* -- Mission tiles — inset purple shadow -- */
+/* -- Mission tiles ï¿½ inset purple shadow -- */
 .varuna-home .vh-mission-tile {
   box-shadow:
     inset 0 1px 0   rgba(255, 255, 255, 0.80),
     0 2px 8px  rgba(109, 40, 217, 0.10);
 }
 
-/* -- Hero section — purple shadow below -- */
+/* -- Hero section ï¿½ purple shadow below -- */
 .varuna-home .vh-hero {
   box-shadow: 0 12px 40px rgba(109, 40, 217, 0.18), 0 4px 12px rgba(109, 40, 217, 0.10);
 }
 
-/* -- Header — purple under-glow -- */
+/* -- Header ï¿½ purple under-glow -- */
 .varuna-home .vh-header {
   box-shadow:
     0 2px  6px  rgba(109, 40, 217, 0.06),
     0 6px 16px  rgba(109, 40, 217, 0.07);
 }
 
-/* -- Respect reduced motion — remove filter animations -- */
+/* -- Respect reduced motion ï¿½ remove filter animations -- */
 @media (prefers-reduced-motion: reduce) {
   .varuna-home .vh-barchart,
   .varuna-home .vh-donut-svg,

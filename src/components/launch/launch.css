@@ -1,0 +1,551 @@
+/* Home launchpad (Login / Direct Mission Plan + the VARUNA AI
+   panel) and the pages it opens. Same palette and cards as homeNew.css. */
+
+/* ── Hero: the VARUNA ecosystem in daylight, edge to edge, one screen tall.
+   Account buttons float top-right, Direct Mission Plan floats bottom-left. ── */
+.vl-hero {
+  position: relative; isolation: isolate; overflow: hidden;
+  height: calc(100vh - 72px); height: calc(100dvh - 72px); min-height: 520px; max-height: 1080px;
+  display: flex; flex-direction: column; justify-content: space-between;
+  padding: 22px clamp(18px, 3.2vw, 44px) clamp(22px, 4vh, 40px);
+  background: #9cc7de; color: #fff;
+}
+.vl-hero-video {
+  position: absolute; inset: 0; z-index: -2; width: 100%; height: 100%;
+  object-fit: cover; object-position: 46% 50%; display: block;
+}
+/* legibility: soft shade under the buttons, a deeper one behind the copy, and a
+   fade into the page at the very bottom */
+.vl-hero-scrim {
+  position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(8, 28, 44, 0.42) 0%, rgba(8, 28, 44, 0) 22%),
+    radial-gradient(120% 70% at 0% 100%, rgba(5, 22, 30, 0.72) 0%, rgba(5, 22, 30, 0.3) 45%, rgba(5, 22, 30, 0) 70%),
+    linear-gradient(0deg, #f8f7ff 0%, rgba(248, 247, 255, 0) 7%);
+}
+
+.vl-hero-bar { position: relative; z-index: 2; display: flex; align-items: center; gap: 12px; }
+.vl-hero-badge {
+  display: inline-flex; align-items: center; gap: 8px; padding: 7px 13px; border-radius: 999px;
+  font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+  background: rgba(10, 30, 45, 0.32); border: 1px solid rgba(255, 255, 255, 0.28);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+}
+.vl-hero-account { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+
+.vl-glass-btn, .vl-solid-btn {
+  display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 18px; border-radius: 999px;
+  font-size: 14px; font-weight: 700; cursor: pointer; white-space: nowrap;
+  transition: transform .18s, box-shadow .18s, background .18s;
+}
+.vl-glass-btn {
+  color: #fff; background: rgba(255, 255, 255, 0.16); border: 1px solid rgba(255, 255, 255, 0.5);
+  -webkit-backdrop-filter: blur(14px) saturate(1.3); backdrop-filter: blur(14px) saturate(1.3);
+  box-shadow: 0 6px 20px rgba(6, 24, 40, 0.18);
+}
+.vl-glass-btn:hover { background: rgba(255, 255, 255, 0.26); transform: translateY(-1px); }
+.vl-solid-btn {
+  color: #4c1d95; background: #fff; border: 1px solid #fff; padding: 0 20px; font-size: 14.5px; font-weight: 800;
+  box-shadow: 0 8px 24px rgba(6, 24, 40, 0.28);
+}
+.vl-solid-btn:hover { transform: translateY(-1px); box-shadow: 0 12px 30px rgba(6, 24, 40, 0.34); }
+.vl-glass-btn:focus-visible, .vl-solid-btn:focus-visible, .vl-float-plan:focus-visible, .vl-hero-scroll:focus-visible {
+  outline: 2px solid #fff; outline-offset: 3px;
+}
+.vl-account-chip { padding: 0 16px 0 5px; }
+.vl-avatar-sm {
+  width: 30px; height: 30px; border-radius: 50%; overflow: hidden; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, #6d28d9, #a78bfa); color: #fff; font-weight: 800; font-size: 12px;
+}
+.vl-avatar-sm img { width: 100%; height: 100%; object-fit: cover; }
+.vl-account-name { max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+
+.vl-hero-copy { position: relative; z-index: 1; max-width: 620px; }
+.vl-hero-eyebrow {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 12px; font-weight: 600; letter-spacing: 0.32em; text-transform: uppercase; color: rgba(255, 255, 255, 0.82);
+}
+.vl-hero-title {
+  font-size: clamp(44px, 6.4vw, 92px); font-weight: 900; line-height: 0.98; letter-spacing: -0.03em;
+  margin: 8px 0 0; color: #fff; text-shadow: 0 4px 30px rgba(0, 20, 30, 0.35);
+  overflow-wrap: anywhere;
+}
+.vl-brand-ai {
+  background: linear-gradient(90deg, #a5f3fc, #c4b5fd);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+}
+.vl-hero-sub { margin: 14px 0 0; font-size: clamp(15px, 1.3vw, 18px); line-height: 1.55; color: rgba(255, 255, 255, 0.9); max-width: 520px; }
+
+/* Direct Mission Plan: a frosted card that drifts gently, as if afloat */
+.vl-float-plan {
+  margin-top: 22px; display: flex; align-items: center; gap: 12px; text-align: left; cursor: pointer;
+  max-width: 400px; width: 100%; padding: 11px 16px 11px 11px; border-radius: 18px; color: #134e4a;
+  background: rgba(255, 255, 255, 0.84); border: 1px solid rgba(255, 255, 255, 0.9);
+  -webkit-backdrop-filter: blur(16px) saturate(1.4); backdrop-filter: blur(16px) saturate(1.4);
+  box-shadow: 0 18px 44px rgba(4, 30, 40, 0.3);
+  animation: vl-bob 5.5s ease-in-out infinite;
+  transition: box-shadow .2s, background .2s;
+}
+.vl-float-plan:hover { background: #fff; box-shadow: 0 22px 52px rgba(4, 30, 40, 0.38); }
+.vl-float-plan-icon {
+  width: 44px; height: 44px; border-radius: 13px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+  color: #fff; background: linear-gradient(135deg, #0d9488, #5eead4); box-shadow: 0 6px 16px rgba(13, 148, 136, 0.35);
+}
+.vl-float-plan-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.vl-float-plan-text b { font-size: 16.5px; font-weight: 800; color: #0f2f2c; }
+.vl-float-plan-text small { font-size: 12.5px; color: #0f766e; font-weight: 500; }
+.vl-float-plan > svg { color: #14b8a6; flex-shrink: 0; }
+@keyframes vl-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+
+.vl-hero-roles {
+  position: absolute; right: clamp(18px, 3.2vw, 44px); bottom: clamp(70px, 9vh, 96px); z-index: 1;
+  list-style: none; margin: 0; padding: 10px 14px; display: flex; flex-direction: column; gap: 7px;
+  border-radius: 12px; background: rgba(10, 30, 45, 0.3); border: 1px solid rgba(255, 255, 255, 0.22);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10.5px; letter-spacing: 0.18em; text-transform: uppercase; color: rgba(255, 255, 255, 0.9);
+}
+.vl-hero-roles li { display: flex; align-items: center; gap: 8px; }
+.vl-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.vl-dot.cyan { background: #67e8f9; box-shadow: 0 0 8px 2px rgba(103, 232, 249, 0.6); }
+.vl-dot.saffron { background: #ff9933; box-shadow: 0 0 8px 2px rgba(255, 153, 51, 0.55); }
+.vl-dot.live { background: #4ade80; animation: vl-live 2s ease-out infinite; }
+@keyframes vl-live {
+  0% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.6); }
+  100% { box-shadow: 0 0 0 9px rgba(74, 222, 128, 0); }
+}
+
+.vl-hero-scroll {
+  position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 1; white-space: nowrap;
+  border: 1px solid #ede9fe; background: rgba(255, 255, 255, 0.9); cursor: pointer; padding: 6px 14px; border-radius: 999px;
+  box-shadow: 0 6px 18px rgba(46, 16, 101, 0.16);
+  font-size: 11.5px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: #4c1d95;
+}
+.vl-hero-scroll span { display: inline-block; animation: vl-bob 2.4s ease-in-out infinite; }
+
+/* status cards under the hero */
+.vl-status-row {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px;
+  margin: 14px 24px 0; scroll-margin-top: 72px;
+}
+
+@media (max-width: 860px) {
+  .vl-hero { height: auto; min-height: calc(100svh - 56px); max-height: none; padding: 14px 16px 54px; }
+  .vl-hero-badge { display: none; }
+  .vl-hero-account { gap: 8px; }
+  .vl-glass-btn, .vl-solid-btn { height: 38px; padding: 0 14px; font-size: 13.5px; }
+  .vl-solid-btn { padding: 0 16px; font-size: 14px; }
+  .vl-float-plan { padding: 10px 14px 10px 10px; gap: 10px; }
+  .vl-float-plan-icon { width: 40px; height: 40px; border-radius: 12px; }
+  .vl-float-plan-text b { font-size: 15.5px; }
+  .vl-float-plan-text small { font-size: 12px; }
+  .vl-hero-roles { display: none; }
+  .vl-hero-scrim {
+    background:
+      linear-gradient(180deg, rgba(8, 28, 44, 0.45) 0%, rgba(8, 28, 44, 0) 16%),
+      linear-gradient(0deg, rgba(5, 22, 30, 0.78) 0%, rgba(5, 22, 30, 0.45) 38%, rgba(5, 22, 30, 0) 62%),
+      linear-gradient(0deg, #f8f7ff 0%, rgba(248, 247, 255, 0) 5%);
+  }
+  .vl-status-row { grid-template-columns: 1fr; margin: 12px 12px 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vl-float-plan, .vl-hero-scroll span, .vl-dot.live { animation: none; }
+}
+
+/* ── Small round button (Hide telemetry & stats) ── */
+.vl-step-btn { border: 1.5px solid #ddd6fe; background: #fff; color: #6d28d9; font-size: 13px; font-weight: 700; padding: 6px 14px; border-radius: 999px; cursor: pointer; transition: background .15s, border-color .15s; }
+.vl-step-btn:hover { background: #f5f3ff; border-color: #c4b5fd; }
+.vl-step-btn:focus-visible { outline: 2px solid #7c3aed; outline-offset: 2px; }
+
+/* ── Drone and boat link status ── */
+.vl-ready { display: flex; gap: 12px; align-items: flex-start; padding: 14px 18px; border-radius: 16px; border: 1.5px solid #e2e8f0; background: #fff; }
+.vl-ready-dot { width: 12px; height: 12px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; background: #94a3b8; }
+.vl-ready.ok { border-color: #bbf7d0; background: #f0fdf4; }
+.vl-ready.ok .vl-ready-dot { background: #22c55e; box-shadow: 0 0 0 4px rgba(34,197,94,0.18); }
+.vl-ready.warn { border-color: #fde68a; background: #fffbeb; }
+.vl-ready.warn .vl-ready-dot { background: #f59e0b; box-shadow: 0 0 0 4px rgba(245,158,11,0.18); }
+.vl-ready-title { font-size: 16px; font-weight: 800; color: #1e1b4b; }
+.vl-ready-text { font-size: 14px; color: #475569; margin-top: 2px; }
+.vl-ready-help { margin: 8px 0 0; padding-left: 18px; font-size: 14px; color: #475569; }
+.vl-ready-help li + li { margin-top: 4px; }
+
+.vl-summary-line { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin: 18px 24px 24px;
+  padding: 14px 20px; border-radius: 16px; background: #fff; border: 1.5px solid #f0ecff; font-size: 15px; font-weight: 600; color: #1e1b4b; }
+
+@media (max-width: 860px) {
+  .vl-summary-line { margin: 14px 12px 18px; }
+}
+
+/* ── Pages opened from the launchpad (Home steps back behind them) ── */
+.vl-layer {
+  position: fixed; inset: 56px 0 0 0; z-index: 30; overflow-y: auto; overscroll-behavior: contain;
+  min-height: 0 !important; background: transparent !important;
+  display: flex; align-items: flex-start; justify-content: center; padding: 28px 16px 40px;
+}
+.vl-scrim { position: fixed; inset: 56px 0 0 0; z-index: 29; background: rgba(30,27,75,0.10); }
+.vl-page {
+  position: relative; width: min(100%, 560px); background: #fff; border-radius: 20px; border: 1.5px solid #ede9fe;
+  box-shadow: 0 24px 60px rgba(76,29,149,0.22); padding: 26px 26px 24px; color: #1e1b4b;
+}
+.vl-page.wide { width: min(100%, 860px); }
+.vl-back {
+  display: inline-flex; align-items: center; gap: 6px; background: #f8f7ff; border: 1.5px solid #ede9fe; border-radius: 10px;
+  padding: 6px 12px; font-size: 12px; font-weight: 700; color: #6d28d9; cursor: pointer; margin-bottom: 14px;
+}
+.vl-back:hover { background: #f3f0ff; }
+.vl-h1 { font-size: 24px; font-weight: 900; margin: 0 0 4px; letter-spacing: -0.01em; }
+.vl-sub { font-size: 13px; color: #6d28d9; margin: 0 0 18px; font-weight: 500; }
+.vl-section-title { font-size: 12px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; color: #7c3aed; margin: 18px 0 8px; }
+
+.vl-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-radius: 12px; padding: 11px 18px;
+  font-size: 14px; font-weight: 800; cursor: pointer; border: 1.5px solid transparent; transition: filter .2s, transform .2s;
+  background: linear-gradient(135deg, #6d28d9, #8b5cf6); color: #fff; box-shadow: 0 8px 20px rgba(124,58,237,0.28);
+}
+.vl-btn:hover:not(:disabled) { filter: brightness(1.06); transform: translateY(-1px); }
+.vl-btn:disabled { opacity: .55; cursor: not-allowed; }
+.vl-btn.vl-full { width: 100%; }
+.vl-btn.ghost { background: #fff; color: #5b21b6; border-color: #ddd6fe; box-shadow: none; }
+.vl-btn.google { background: #fff; color: #1f2937; border-color: #e5e7eb; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+.vl-btn.big { padding: 16px 22px; font-size: 16px; border-radius: 14px; }
+
+.vl-field { display: block; margin-bottom: 12px; }
+.vl-label { display: block; font-size: 12px; font-weight: 700; color: #4c1d95; margin-bottom: 5px; }
+.vl-input, .vl-select {
+  width: 100%; border: 1.5px solid #e4defc; border-radius: 10px; padding: 10px 12px; font-size: 14px; color: #1e1b4b;
+  background: #fbfaff; outline: none; transition: border-color .2s, box-shadow .2s; font-family: inherit;
+}
+.vl-input:focus, .vl-select:focus { border-color: #8b5cf6; box-shadow: 0 0 0 3px rgba(139,92,246,0.16); }
+.vl-input[aria-invalid='true'] { border-color: #f87171; }
+.vl-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (max-width: 520px) { .vl-row { grid-template-columns: 1fr; } .vl-page { padding: 20px 16px; } }
+
+.vl-divider { display: flex; align-items: center; gap: 10px; color: #a78bfa; font-size: 11px; font-weight: 700; letter-spacing: .12em; margin: 18px 0; }
+.vl-divider::before, .vl-divider::after { content: ''; flex: 1; height: 1px; background: #ede9fe; }
+
+.vl-msg { border-radius: 10px; padding: 10px 12px; font-size: 13px; font-weight: 600; margin: 10px 0; }
+.vl-msg.bad { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+.vl-msg.ok { background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }
+.vl-msg.info { background: #f5f3ff; color: #5b21b6; border: 1px solid #ede9fe; }
+.vl-link { background: none; border: 0; padding: 0; color: #6d28d9; font-weight: 700; cursor: pointer; text-decoration: underline; font-size: inherit; }
+
+.vl-identity { display: flex; align-items: center; gap: 12px; background: #f8f7ff; border: 1.5px solid #ede9fe; border-radius: 14px; padding: 12px 14px; }
+.vl-avatar {
+  width: 42px; height: 42px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, #6d28d9, #a78bfa); color: #fff; font-weight: 900; font-size: 16px; overflow: hidden;
+}
+.vl-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.vl-identity-name { font-size: 14px; font-weight: 800; }
+.vl-identity-sub { font-size: 12px; color: #6d28d9; overflow-wrap: anywhere; }
+
+.vl-active-plan { margin-top: 14px; }
+
+/* ── Live Mission Plan wizard ── */
+.vl-modal-scrim { position: fixed; inset: 0; z-index: 60; background: rgba(30,27,75,0.35); display: flex; align-items: center; justify-content: center; padding: 16px; }
+.vl-modal { width: min(100%, 520px); max-height: calc(100vh - 32px); overflow-y: auto; }
+.vl-steps { display: flex; gap: 6px; margin: 0 0 16px; }
+.vl-step { flex: 1; height: 4px; border-radius: 2px; background: #ede9fe; }
+.vl-step.on { background: linear-gradient(90deg, #6d28d9, #a78bfa); }
+.vl-choices { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.vl-choice {
+  text-align: left; border: 1.5px solid #ede9fe; background: #fff; border-radius: 12px; padding: 12px; cursor: pointer; color: #1e1b4b;
+  transition: border-color .2s, background .2s;
+}
+.vl-choice:hover { border-color: #c4b5fd; }
+.vl-choice[aria-pressed='true'] { border-color: #7c3aed; background: #f5f3ff; box-shadow: 0 0 0 3px rgba(124,58,237,0.12); }
+.vl-choice-name { font-size: 14px; font-weight: 800; }
+.vl-choice-sub { font-size: 11px; color: #7c3aed; margin-top: 2px; }
+.vl-summary { font-size: 13px; color: #4c1d95; background: #f8f7ff; border-radius: 10px; padding: 10px 12px; margin: 12px 0; }
+.vl-actions { display: flex; gap: 10px; justify-content: space-between; margin-top: 16px; flex-wrap: wrap; }
+
+/* ── Basic data ── */
+.vl-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.vl-table th { text-align: left; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: #7c3aed; padding: 6px 8px; border-bottom: 1.5px solid #ede9fe; }
+.vl-table td { padding: 8px; border-bottom: 1px solid #f3f0ff; }
+.vl-mono { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; overflow-wrap: anywhere; }
+.vl-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.vl-chip { font-size: 12px; font-weight: 600; background: #f5f3ff; color: #5b21b6; border-radius: 999px; padding: 4px 10px; }
+.vl-scroll-x { overflow-x: auto; }
+
+
+@media (prefers-reduced-motion: reduce) {
+  .vl-option, .vl-btn { transition: none; }
+}
+
+/* ── Face check (sign-up / sign-in) ── */
+.vl-face { margin-top: 10px; }
+.vl-face-cam {
+  position: relative; width: min(100%, 360px); aspect-ratio: 4 / 3; margin: 0 auto; border-radius: 18px; overflow: hidden;
+  background: #1e1b4b; box-shadow: 0 8px 24px rgba(109,40,217,0.18); border: 3px solid #ddd6fe; transition: border-color .3s;
+}
+.vl-face-cam.done { border-color: #22c55e; }
+.vl-face-cam video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); display: block; }
+.vl-face-oval {
+  position: absolute; left: 50%; top: 50%; width: 46%; height: 72%; transform: translate(-50%, -50%);
+  border: 2px dashed rgba(255,255,255,0.75); border-radius: 50%; pointer-events: none;
+}
+.vl-face-status { text-align: center; font-size: 15px; font-weight: 700; color: #1e1b4b; margin-top: 12px; min-height: 22px;
+  display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; }
+.vl-face-dots { display: inline-flex; gap: 6px; }
+.vl-face-dots i { width: 9px; height: 9px; border-radius: 50%; background: #ddd6fe; }
+.vl-face-dots i.on { background: #7c3aed; }
+.vl-face-note { font-size: 12px; color: #6b7280; text-align: center; margin: 12px 0 0; }
+
+/* ── Fingerprint (Windows Hello) ── */
+.vl-btn.vl-fp-btn { margin-bottom: 10px; }
+.vl-fp-offer {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 14px 0 4px; padding: 12px 14px;
+  border-radius: 12px; background: #f5f3ff; border: 1px solid #ede9fe; color: #5b21b6;
+}
+.vl-fp-offer > svg { flex: none; }
+.vl-fp-offer > div { flex: 1 1 180px; display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.vl-fp-offer b { color: #1e1b4b; }
+.vl-fp-offer .vl-fp-bad { color: #b91c1c; font-weight: 600; }
+
+/* ── Data tab and its PIN ── */
+.vl-tab-page { display: flex; justify-content: center; padding: 18px 12px 32px; }
+.vl-tab-page .vl-page { box-shadow: 0 6px 24px rgba(109,40,217,0.10); }
+.vl-pin { width: min(100%, 380px); text-align: center; }
+.vl-pin-input { text-align: center; font-size: 26px; letter-spacing: 0.5em; font-weight: 800; }
+
+/* ── Full-screen title transition (Home → Login / Direct Mission Plan) ── */
+.vl-xfade { position: fixed; inset: 0; z-index: 10000; pointer-events: auto; overflow: hidden; cursor: progress; }
+.vl-xfade-panel { position: absolute; inset: 0; will-change: clip-path; }
+.vl-xfade-stage {
+  position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: space-between;
+  padding: clamp(18px, 3.4vw, 44px); color: #fff;
+}
+.vl-xfade-top, .vl-xfade-bottom {
+  display: flex; align-items: center; gap: 18px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; font-weight: 600;
+  letter-spacing: 0.28em; text-transform: uppercase; color: rgba(255, 255, 255, 0.72);
+  opacity: 0; animation: vl-xfade-in .5s ease .4s forwards;
+}
+.vl-xfade-bottom { justify-content: space-between; }
+.vl-xfade-rule { flex: 1; height: 1px; background: linear-gradient(90deg, #5eead4, #c4b5fd); transform-origin: left; }
+.vl-xfade-count { font-size: clamp(14px, 1.6vw, 22px); font-weight: 700; color: #fff; letter-spacing: 0.12em; font-variant-numeric: tabular-nums; }
+.vl-xfade-words {
+  margin: 0; width: 100%; display: flex; flex-direction: column; align-items: flex-start;
+  font-weight: 900; line-height: 0.9; letter-spacing: -0.045em; text-transform: uppercase;
+}
+.vl-xfade-line { display: flex; white-space: nowrap; }
+.vl-xfade-mask { display: inline-block; overflow: hidden; padding: 0 0.02em 0.06em; margin-bottom: -0.06em; }
+.vl-xfade-ch { display: inline-block; transform-origin: 0% 100%; will-change: transform; }
+.vl-xfade-line.l1 .vl-xfade-ch { color: transparent; -webkit-text-stroke: max(1.5px, 0.018em) #fff; }
+.vl-xfade-line.l2 .vl-xfade-ch {
+  background: linear-gradient(90deg, #a5f3fc, #c4b5fd);
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+}
+/* one-word titles (LOGIN) read best solid with the brand gradient */
+.vl-xfade-words .vl-xfade-line.l0:only-child .vl-xfade-ch {
+  background: linear-gradient(90deg, #fff 0%, #a5f3fc 55%, #c4b5fd 100%);
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+}
+.vl-xfade-line.l2 .vl-xfade-ch, .vl-xfade-words .vl-xfade-line.l0:only-child .vl-xfade-ch {
+  background-size: calc(var(--n, 1) * 100%) 100%;
+  background-position: calc(var(--i, 0) / max(var(--n, 1) - 1, 1) * 100%) 0;
+}
+@keyframes vl-xfade-in { to { opacity: 1; } }
+@media (max-width: 520px) { .vl-xfade-top span:last-child { display: none; } }
+
+/* ── Direct Mission Plan, full screen ── */
+.vl-layer.full { inset: 0; z-index: 50; padding: 0; display: block; background: #070b18 !important; }
+.vl-page.full {
+  width: 100%; min-height: 100%; border: 0; border-radius: 0; box-shadow: none; padding: 0; background: transparent;
+}
+.vl-page.full > .vl-back {
+  position: absolute; top: clamp(14px, 2.4vw, 26px); left: clamp(16px, 3.4vw, 44px); z-index: 3; margin: 0;
+  color: #fff; background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.28);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); padding: 8px 14px; font-size: 13px;
+}
+.vl-page.full > .vl-back:hover { background: rgba(255, 255, 255, 0.2); }
+
+.vl-dmp { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(360px, 0.9fr); height: 100vh; height: 100dvh; }
+.vl-dmp-hero {
+  position: relative; overflow: hidden auto; color: #fff; display: flex; align-items: flex-start;
+  padding: clamp(72px, 9vh, 110px) clamp(20px, 4.4vw, 72px) clamp(28px, 6vh, 64px);
+  background:
+    radial-gradient(90% 70% at 10% 100%, rgba(20, 184, 166, 0.28), rgba(20, 184, 166, 0) 60%),
+    radial-gradient(70% 60% at 95% 0%, rgba(109, 40, 217, 0.4), rgba(109, 40, 217, 0) 60%),
+    #070b18;
+}
+.vl-dmp-hero-inner { position: relative; z-index: 1; width: 100%; max-width: 760px; margin: auto 0; }
+.vl-dmp-eyebrow {
+  font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; font-weight: 600;
+  letter-spacing: 0.3em; text-transform: uppercase; color: #5eead4;
+}
+.vl-dmp-title {
+  margin: 14px 0 0; font-size: clamp(54px, min(8.4vw, 13vh), 150px); font-weight: 900; line-height: 0.88; letter-spacing: -0.045em;
+}
+.vl-dmp-outline { color: transparent; -webkit-text-stroke: max(1.5px, 0.016em) #fff; }
+.vl-dmp-sub { margin: 22px 0 0; max-width: 520px; font-size: clamp(15px, 1.25vw, 18px); line-height: 1.6; color: rgba(255, 255, 255, 0.78); }
+
+.vl-dmp-cta { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 28px; }
+.vl-dmp-primary, .vl-dmp-secondary {
+  display: inline-flex; align-items: center; gap: 10px; height: 52px; padding: 0 24px; border-radius: 999px;
+  font-size: 16px; font-weight: 800; cursor: pointer; transition: transform .18s, box-shadow .18s, background .18s;
+}
+.vl-dmp-primary {
+  color: #062925; border: 0; background: linear-gradient(90deg, #5eead4, #a5f3fc);
+  box-shadow: 0 10px 34px rgba(45, 212, 191, 0.35);
+}
+.vl-dmp-primary:hover { transform: translateY(-2px); box-shadow: 0 14px 40px rgba(45, 212, 191, 0.5); }
+.vl-dmp-secondary { color: #fff; background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.3); font-weight: 700; font-size: 15px; }
+.vl-dmp-secondary:hover { background: rgba(255, 255, 255, 0.14); }
+.vl-dmp-primary:focus-visible, .vl-dmp-secondary:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+
+.vl-dmp-stats {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; margin: clamp(28px, 5vh, 52px) 0 0; max-width: 620px;
+  border-top: 1px solid rgba(255, 255, 255, 0.16);
+}
+.vl-dmp-stats div { padding: 16px 16px 0 0; display: flex; flex-direction: column; justify-content: space-between; }
+.vl-dmp-stats div + div { padding-left: 18px; border-left: 1px solid rgba(255, 255, 255, 0.12); }
+.vl-dmp-stats dt {
+  font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 10.5px; letter-spacing: 0.2em; text-transform: uppercase; color: rgba(255, 255, 255, 0.6);
+}
+.vl-dmp-stats dd { margin: 6px 0 0; font-size: clamp(30px, 3.4vw, 52px); font-weight: 900; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+
+.vl-dmp-links { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 24px; }
+.vl-dmp-pill {
+  display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 999px; font-size: 13px;
+  background: rgba(255, 255, 255, 0.07); border: 1px solid rgba(255, 255, 255, 0.16); color: rgba(255, 255, 255, 0.72);
+}
+.vl-dmp-pill b { color: #fff; font-weight: 700; }
+.vl-dmp-pill i { width: 8px; height: 8px; border-radius: 50%; background: #94a3b8; flex-shrink: 0; }
+.vl-dmp-pill.ok i { background: #4ade80; box-shadow: 0 0 10px #4ade80; }
+.vl-dmp-pill.warn i { background: #fbbf24; box-shadow: 0 0 10px rgba(251, 191, 36, 0.7); }
+.vl-dmp-pill.wait i { animation: vl-live 2s ease-out infinite; }
+
+.vl-dmp-river {
+  position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0.6; pointer-events: none;
+  /* fade it out behind the words on the left */
+  -webkit-mask-image: linear-gradient(90deg, rgba(0,0,0,0.12) 0%, rgba(0,0,0,0.22) 45%, #000 85%);
+  mask-image: linear-gradient(90deg, rgba(0,0,0,0.12) 0%, rgba(0,0,0,0.22) 45%, #000 85%);
+}
+.vl-dmp-river path { fill: none; stroke-linecap: round; }
+.vl-dmp-river-bed { stroke: rgba(94, 234, 212, 0.1); stroke-width: 46; }
+.vl-dmp-river-flow {
+  stroke-width: 3; stroke-dasharray: 14 18; animation: vl-dmp-flow 2.4s linear infinite, vl-dmp-draw 1.6s cubic-bezier(.16, 1, .3, 1) both;
+}
+.vl-dmp-mark { opacity: 0; animation: vl-dmp-pop .6s cubic-bezier(.16, 1, .3, 1) forwards; transform-box: fill-box; transform-origin: center; }
+.vl-dmp-mark circle:first-child { fill: rgba(45, 212, 191, 0.14); stroke: rgba(94, 234, 212, 0.6); stroke-width: 1.5; }
+.vl-dmp-mark circle:last-child { fill: #a5f3fc; }
+@keyframes vl-dmp-flow { to { stroke-dashoffset: -64; } }
+@keyframes vl-dmp-draw { from { opacity: 0; } to { opacity: 1; } }
+@keyframes vl-dmp-pop { from { opacity: 0; transform: scale(0.3); } to { opacity: 1; transform: scale(1); } }
+
+.vl-dmp-side {
+  display: flex; flex-direction: column; gap: 12px; color: #1e1b4b;
+  padding: clamp(18px, 3.4vh, 44px) clamp(18px, 3vw, 48px); background: #f8f7ff; overflow-y: auto;
+}
+.vl-dmp-side > :first-child { margin-top: auto; }
+.vl-dmp-side > :last-child { margin-bottom: auto; }
+.vl-dmp-card { background: #fff; border: 1.5px solid #ede9fe; border-radius: 20px; padding: 16px 20px; box-shadow: 0 10px 30px rgba(76, 29, 149, 0.06); }
+.vl-dmp-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.vl-dmp-steps li { display: flex; gap: 14px; align-items: center; padding: 7px 0; }
+.vl-dmp-steps li + li { border-top: 1px dashed #ede9fe; }
+.vl-dmp-step-n {
+  flex-shrink: 0; width: 36px; height: 36px; border-radius: 11px; display: inline-flex; align-items: center; justify-content: center;
+  font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; font-weight: 700; color: #fff;
+  background: linear-gradient(135deg, #0d9488, #6d28d9);
+}
+.vl-dmp-steps b { display: block; font-size: 15px; font-weight: 800; }
+.vl-dmp-steps small { display: block; font-size: 13px; color: #6b7280; line-height: 1.45; margin-top: 2px; }
+.vl-dmp-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.vl-dmp-chip {
+  display: inline-flex; align-items: baseline; gap: 6px; padding: 7px 12px; border-radius: 999px; cursor: pointer;
+  border: 1.5px solid #ddd6fe; background: #faf9ff; color: #4c1d95; font-size: 13px; font-weight: 700;
+  transition: background .15s, border-color .15s;
+}
+.vl-dmp-chip small { font-size: 11px; font-weight: 600; color: #8b5cf6; }
+.vl-dmp-chip:hover { background: #f3f0ff; border-color: #c4b5fd; }
+.vl-dmp-chip.more { cursor: default; background: transparent; border-style: dashed; color: #7c3aed; }
+
+@media (max-width: 980px) {
+  .vl-dmp { grid-template-columns: 1fr; height: auto; min-height: 100svh; }
+  .vl-dmp-hero { min-height: 100svh; align-items: flex-end; }
+  .vl-dmp-side { justify-content: flex-start; }
+}
+@media (max-width: 520px) {
+  .vl-dmp-primary, .vl-dmp-secondary { height: 46px; padding: 0 18px; font-size: 15px; }
+  .vl-dmp-cta > * { flex: 1 1 100%; justify-content: center; }
+  .vl-dmp-stats div { padding-right: 8px; }
+  .vl-dmp-stats div + div { padding-left: 10px; }
+  .vl-dmp-card { padding: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vl-dmp-river-flow, .vl-dmp-mark, .vl-dmp-pill.wait i { animation: none; opacity: 1; }
+}
+/* shorter laptop screens: tighten so the plan page still fits in one screen */
+@media (min-width: 981px) and (max-height: 860px) {
+  .vl-dmp-hero { padding-top: 64px; padding-bottom: 24px; }
+  .vl-dmp-sub { margin-top: 14px; }
+  .vl-dmp-cta { margin-top: 20px; }
+  .vl-dmp-stats { margin-top: 22px; }
+  .vl-dmp-stats div { padding-top: 10px; }
+  .vl-dmp-links { margin-top: 16px; }
+  .vl-dmp-side { gap: 10px; padding-top: 14px; padding-bottom: 14px; }
+  .vl-dmp-card { padding: 12px 16px; border-radius: 16px; }
+  .vl-dmp-card .vl-section-title { margin-bottom: 6px; }
+  .vl-dmp-steps li { padding: 4px 0; gap: 12px; }
+  .vl-dmp-step-n { width: 30px; height: 30px; border-radius: 9px; }
+  .vl-dmp-steps b { font-size: 14px; }
+  .vl-dmp-steps small { font-size: 12px; }
+  .vl-dmp-chips { gap: 6px; }
+  .vl-dmp-chip { padding: 5px 10px; font-size: 12.5px; }
+}
+
+/* ── Login, full screen (same frame as Direct Mission Plan) ── */
+.vl-login-ways {
+  list-style: none; margin: clamp(24px, 4vh, 40px) 0 0; padding: 0; max-width: 620px;
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid rgba(255, 255, 255, 0.16);
+}
+.vl-login-ways li { padding: 14px 16px 0 0; display: flex; flex-direction: column; gap: 4px; }
+.vl-login-ways li + li { padding-left: 18px; border-left: 1px solid rgba(255, 255, 255, 0.12); }
+.vl-login-ways span { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 11px; letter-spacing: 0.2em; color: #5eead4; }
+.vl-login-ways b { font-size: clamp(16px, 1.4vw, 20px); font-weight: 800; color: #fff; }
+.vl-login-ways small { font-size: 13px; line-height: 1.45; color: rgba(255, 255, 255, 0.62); }
+.vl-login-card .vl-h1 { font-size: 26px; }
+@media (max-width: 520px) {
+  .vl-login-ways { grid-template-columns: 1fr; }
+  .vl-login-ways li { padding: 12px 0 0; }
+  .vl-login-ways li + li { padding-left: 0; border-left: 0; border-top: 1px solid rgba(255, 255, 255, 0.1); padding-top: 12px; margin-top: 12px; }
+}
+@media (min-width: 981px) and (max-height: 860px) {
+  .vl-login-ways { margin-top: 20px; }
+  .vl-login-ways li { padding-top: 10px; }
+}
+/* phones: keep the Login hero short so the form is close at hand */
+@media (max-width: 980px) {
+  .vl-dmp-login .vl-dmp-hero { min-height: 0; padding-bottom: 28px; }
+  .vl-dmp-login .vl-login-ways { display: none; }
+}
+
+/* ── Data tab on the dark themes: same navy/teal look as Home ── */
+:root:not([data-theme='light']):not([data-look='classic']) .varuna-home.vl-tab-page { background: transparent; color: #fff; }
+:root:not([data-theme='light']):not([data-look='classic']) .vl-tab-page .vl-page {
+  background: rgba(13, 19, 38, 0.82); border-color: rgba(148, 163, 255, 0.16); color: #fff;
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+:root:not([data-theme='light']):not([data-look='classic']) .vl-tab-page .vl-sub { color: rgba(226, 232, 255, 0.66); }
+:root:not([data-theme='light']):not([data-look='classic']) .vl-tab-page .vl-section-title,
+:root:not([data-theme='light']):not([data-look='classic']) .vl-tab-page .vl-table th { color: #5eead4; }
+:root:not([data-theme='light']):not([data-look='classic']) .vl-tab-page .vl-table th { border-bottom-color: rgba(255, 255, 255, 0.12); }
+:root:not([data-theme='light']):not([data-look='classic']) .vl-tab-page .vl-table td { border-bottom-color: rgba(255, 255, 255, 0.06); }
+:root:not([data-theme='light']):not([data-look='classic']) .vl-tab-page .vl-link { color: #5eead4; }
+:root:not([data-theme='light']):not([data-look='classic']) .vl-tab-page .vl-chip { background: rgba(94, 234, 212, 0.1); color: #5eead4; }
+:root:not([data-theme='light']):not([data-look='classic']) .vl-tab-page .vl-msg.info { background: rgba(94, 234, 212, 0.08); color: #a5f3fc; border-color: rgba(94, 234, 212, 0.25); }
+:root:not([data-theme='light']):not([data-look='classic']) .vl-tab-page .vl-msg.bad { background: rgba(248, 113, 113, 0.1); color: #fca5a5; border-color: rgba(248, 113, 113, 0.3); }
+:root:not([data-theme='light']):not([data-look='classic']) .vl-tab-page .vl-msg.ok { background: rgba(74, 222, 128, 0.1); color: #86efac; border-color: rgba(74, 222, 128, 0.3); }
+:root:not([data-theme='light']):not([data-look='classic']) .vl-tab-page .vl-input {
+  background: rgba(255, 255, 255, 0.04); border-color: rgba(148, 163, 255, 0.22); color: #fff;
+}
+:root:not([data-theme='light']):not([data-look='classic']) .vl-tab-page .vl-input:focus { border-color: #2dd4bf; box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.2); }
+:root:not([data-theme='light']):not([data-look='classic']) .vl-tab-page .vl-btn {
+  color: #062925; border-color: transparent; background: linear-gradient(90deg, #5eead4, #a5f3fc); box-shadow: 0 8px 24px rgba(45, 212, 191, 0.28);
+}
+:root:not([data-theme='light']):not([data-look='classic']) .vl-tab-page .vl-btn.ghost { background: transparent; color: #5eead4; border-color: rgba(94, 234, 212, 0.4); box-shadow: none; }
