@@ -92,7 +92,7 @@ export default function Explore() {
 
       {/* ── opening ── */}
       <section className="vs-xhero">
-        <div className="vs-hero-media"><LoopVideo name="hero" eager /></div>
+        <div className="vs-hero-media"><LoopVideo name="hero-1080" eager /></div>
         <div className="vs-aurora" />
         <div className="vs-hero-body">
           <motion.span className="vs-eyebrow" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3, duration: 1 }}>

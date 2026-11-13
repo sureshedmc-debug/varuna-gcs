@@ -75,7 +75,7 @@ export const COMPARE = [
 ]
 
 export const GALLERY = [
-  { type: 'video', src: 'hero', poster: 'hero', title: 'First flight', sub: 'Varuna takes off over the school field', wide: true },
+  { type: 'video', src: 'hero-1080', poster: 'hero-1080', title: 'First flight', sub: 'Varuna takes off over the school field', wide: true },
   { type: 'img', src: 'p-boat-top', title: 'Nirmal Dhara Jalyan', sub: 'The boat on its test pool' },
   { type: 'img', src: 'p-detect', title: 'What the drone sees', sub: 'The AI marks a plastic bag' },
   { type: 'video', src: 'boat-raw', poster: 'boat-raw', title: 'Into the water', sub: 'Launching the boat by hand' },
