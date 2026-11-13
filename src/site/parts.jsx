@@ -206,7 +206,7 @@ export function Footer() {
         </div>
         <div className="vs-foot-big" aria-hidden="true">VARUNA</div>
         <div className="vs-foot-bottom">
-          <span>© {new Date().getFullYear()} VARUNA AI · Nirmal Dhara Jalyan</span>
+          <span>© {new Date().getFullYear()} VARUNA AI · Nirmal Dhara Jalyan · Created by Aditya Gautam</span>
           <span>Bhai Parmanand Vidya Mandir · Environment &amp; Sustainability</span>
         </div>
       </div>

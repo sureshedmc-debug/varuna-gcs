@@ -23,8 +23,8 @@ import './site.css'
 setupPwa()
 
 const TITLES = {
-  '/': 'VARUNA AI · AI drone and autonomous boat for cleaner rivers',
-  '/explore': 'VARUNA AI · AI drone and autonomous boat for cleaner rivers',
+  '/': 'VARUNA AI GCS by Aditya Gautam · AI drone and river-cleaning boat',
+  '/explore': 'VARUNA AI GCS by Aditya Gautam · AI drone and river-cleaning boat',
   '/login': 'Log in · VARUNA AI',
   '/app': 'VARUNA AI · Ground Control',
 }

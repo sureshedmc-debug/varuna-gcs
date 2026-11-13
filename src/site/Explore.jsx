@@ -248,7 +248,7 @@ export default function Explore() {
       <section id="team" className="vs-sec" style={{ paddingTop: 0 }}>
         <div className="vs-wrap vs-team">
           <Head kicker="Who made it" title={<>Made by students, <span className="vs-grad">for every river.</span></>}
-            lead={`VARUNA AI is a student project from ${TEAM.school}, built for the theme ${TEAM.theme}. The drone, the boat and the app were designed, wired, coded and tested by the team itself.`} />
+            lead={`VARUNA AI was created by ${TEAM.makers[0].name}, a student of ${TEAM.school}, for the theme ${TEAM.theme}. The drone, the boat and the VARUNA GCS ground-control app were designed, wired, coded and tested by hand.`} />
           <Reveal className="vs-team-card">
             {TEAM.makers.map((p) => (
               <div className="vs-maker" key={p.name}>

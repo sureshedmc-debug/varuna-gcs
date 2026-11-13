@@ -90,6 +90,6 @@ export const TEAM = {
   school: 'Bhai Parmanand Vidya Mandir',
   theme: 'Environment & Sustainability',
   makers: [
-    { name: 'Aditya', role: 'Creator · drone, boat and app', initials: 'A' },
+    { name: 'Aditya Gautam', role: 'Creator of VARUNA AI · drone, boat and ground-control app', initials: 'AG' },
   ],
 }
