@@ -5,7 +5,11 @@
 !electron/localData.cjs
 !public/config/rivers.json
 !boat-pi/
+!drone-pi/
 boat-pi/data/
 boat-pi/boat_config.json
-boat-pi/__pycache__/
-boat-pi/**/*.pyc
+drone-pi/data/
+drone-pi/drone_config.json
+drone-pi/web/
+**/__pycache__/
+**/*.pyc

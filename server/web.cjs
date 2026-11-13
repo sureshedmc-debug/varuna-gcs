@@ -9,10 +9,12 @@
 //             it directly (VITE_BOAT_BASE), so the live WebSocket and the video
 //             stream work. FastAPI there already sends CORS headers.
 //   /api, /video_feed, /stream, /tune
-//             the drone. There is no drone simulator, so these answer a fast
-//             plain-text 503 and the app shows the drone as offline.
+//             the drone backend (drone-pi/main.py) with no Pixhawk and a test
+//             camera: screens, missions and video answer; flight commands report
+//             that no flight controller is connected. The browser calls it
+//             directly too (VITE_API_BASE), for its WebSockets and video.
 //
-// Nothing here can reach a real vehicle: the only target is the local simulator.
+// Nothing here can reach a real vehicle: both backends run inside this container.
 //
 // The data store is written for the desktop app and only answers loopback
 // callers whose Host is localhost. Rather than loosen it, it runs on an internal
@@ -28,6 +30,7 @@ const ROOT = path.resolve(__dirname, '..')
 const PORT = Number(process.env.PORT) || 10000
 const BOAT_PORT = Number(process.env.BOAT_SIM_PORT) || 8001
 const LOCAL_PORT = Number(process.env.LOCAL_DATA_PORT) || 8002
+const DRONE_PORT = Number(process.env.DRONE_SIM_PORT) || 8003
 const PYTHON = process.env.PYTHON || 'python3'
 const DATA_DIR = process.env.VARUNA_DATA_DIR || '/tmp/varuna-data'
 
@@ -81,26 +84,32 @@ function sendText(res, status, text, extra = {}) {
   res.end(text)
 }
 
-// ---------------------------------------------------------------- boat simulator
-let boatAlive = false
-let boatRestarts = 0
-
-function startBoatSim() {
-  const child = spawn(PYTHON, ['main.py', '--sim', '--host', '127.0.0.1', '--port', String(BOAT_PORT)], {
-    cwd: path.join(ROOT, 'boat-pi'),
-    stdio: ['ignore', 'inherit', 'inherit'],
-    env: { ...process.env, PYTHONUNBUFFERED: '1' },
-  })
-  boatAlive = true
-  child.on('exit', (code, signal) => {
-    boatAlive = false
-    const wait = Math.min(30000, 2000 * 2 ** Math.min(boatRestarts, 4))
-    boatRestarts += 1
-    console.warn(`[boat-sim] exited (${signal || code}); restarting in ${wait / 1000}s`)
-    setTimeout(startBoatSim, wait)
-  })
-  child.on('error', (err) => console.error(`[boat-sim] could not start ${PYTHON}: ${err.message}`))
+// ---------------------------------------------------------------- vehicle backends
+/** Keep one Python backend running, restarting it with backoff if it exits. */
+function supervise(name, dir, args) {
+  const state = { alive: false, restarts: 0 }
+  const start = () => {
+    const child = spawn(PYTHON, ['main.py', ...args], {
+      cwd: path.join(ROOT, dir),
+      stdio: ['ignore', 'inherit', 'inherit'],
+      env: { ...process.env, PYTHONUNBUFFERED: '1' },
+    })
+    state.alive = true
+    child.on('exit', (code, signal) => {
+      state.alive = false
+      const wait = Math.min(30000, 2000 * 2 ** Math.min(state.restarts, 4))
+      state.restarts += 1
+      console.warn(`[${name}] exited (${signal || code}); restarting in ${wait / 1000}s`)
+      setTimeout(start, wait)
+    })
+    child.on('error', (err) => console.error(`[${name}] could not start ${PYTHON}: ${err.message}`))
+  }
+  return { state, start }
 }
+
+const boat = supervise('boat-sim', 'boat-pi', ['--sim', '--host', '127.0.0.1', '--port', String(BOAT_PORT)])
+// No --connection: it searches for a Pixhawk, finds none, and says so.
+const drone = supervise('drone', 'drone-pi', ['--host', '127.0.0.1', '--port', String(DRONE_PORT), '--camera', 'test'])
 
 // ---------------------------------------------------------------- data store
 const localData = createLocalData({
@@ -124,7 +133,7 @@ proxy.on('proxyReq', (proxyReq, req) => {
 })
 
 proxy.on('error', (err, req, resOrSocket) => {
-  const who = req && req.__local ? 'Data store' : 'Boat simulator'
+  const who = req && req.__local ? 'Data store' : req && req.__boat ? 'Boat simulator' : 'Drone backend'
   if (resOrSocket && typeof resOrSocket.writeHead === 'function') {
     sendText(resOrSocket, 502, `${who} unreachable (${err.code || err.message})`)
   } else if (resOrSocket && typeof resOrSocket.destroy === 'function') {
@@ -142,7 +151,7 @@ const server = http.createServer((req, res) => {
 
   if (p === '/healthz') {
     res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
-    return res.end(JSON.stringify({ ok: true, boatSim: boatAlive }))
+    return res.end(JSON.stringify({ ok: true, boatSim: boat.state.alive, drone: drone.state.alive }))
   }
 
   if (under(p, '/local')) {
@@ -157,38 +166,36 @@ const server = http.createServer((req, res) => {
   if (under(p, BOAT_PREFIX)) {
     stripBoat(req)
     if (!DRONE_PREFIXES.some((x) => under(pathOf(req.url), x))) return sendText(res, 404, 'Not found')
-    if (!boatAlive) return sendText(res, 502, 'Boat simulator unreachable (starting)')
+    if (!boat.state.alive) return sendText(res, 502, 'Boat simulator unreachable (starting)')
+    req.__boat = true
     return proxy.web(req, res, { target: `http://127.0.0.1:${BOAT_PORT}` })
   }
 
   if (DRONE_PREFIXES.some((x) => under(p, x))) {
     // Plain text and non-2xx: src/api/client.js reads this as "Pi unreachable".
-    if (req.method === 'OPTIONS') {
-      return sendText(res, 204, '', {
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type',
-      })
-    }
-    return sendText(res, 503, 'Drone not connected (web demo: only the boat is simulated)')
+    if (!drone.state.alive) return sendText(res, 502, 'Drone backend unreachable (starting)')
+    return proxy.web(req, res, { target: `http://127.0.0.1:${DRONE_PORT}` })
   }
 
   if (p === '/') return sendText(res, 200, 'VARUNA GCS web backend. Open the app on its Vercel address.')
   sendText(res, 404, 'Not found')
 })
 
-// Live telemetry and drive WebSockets: /boat/api/ws and /boat/api/drive.
+// Live WebSockets: the drone's /api/ws and /api/control, the boat's
+// /boat/api/ws and /boat/api/drive.
 server.on('upgrade', (req, socket, head) => {
-  const p = pathOf(req.url)
-  if (!under(p, BOAT_PREFIX) || !boatAlive) return socket.destroy()
   // Browsers send Origin on the handshake; with no allow-list configured the
-  // demo accepts any page (it only reaches the simulator).
+  // demo accepts any page (it only reaches the simulators).
   if (ALLOWED.length && !originAllowed(req.headers.origin)) return socket.destroy()
-  stripBoat(req)
-  if (!under(pathOf(req.url), '/api')) return socket.destroy()
-  proxy.ws(req, socket, head, { target: `http://127.0.0.1:${BOAT_PORT}` })
+  const isBoat = under(pathOf(req.url), BOAT_PREFIX)
+  if (isBoat) stripBoat(req)
+  const v = isBoat ? boat : drone
+  if (!under(pathOf(req.url), '/api') || !v.state.alive) return socket.destroy()
+  proxy.ws(req, socket, head, { target: `http://127.0.0.1:${isBoat ? BOAT_PORT : DRONE_PORT}` })
 })
 
-startBoatSim()
+boat.start()
+drone.start()
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`[web] listening on :${PORT}  boat sim :${BOAT_PORT}  data ${DATA_DIR}`)
   console.log(`[web] allowed origins: ${process.env.ALLOWED_ORIGINS || '(none: same-origin only)'}`)

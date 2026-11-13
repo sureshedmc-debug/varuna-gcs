@@ -14,6 +14,7 @@ services:
       paths:
         - server/**
         - boat-pi/**
+        - drone-pi/**
         - electron/localData.cjs
         - public/config/rivers.json
         - render.yaml
