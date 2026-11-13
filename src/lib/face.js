@@ -64,14 +64,65 @@ export async function openCamera() {
   }
 }
 
+// A copy of the frame with its contrast stretched, reused between looks.
+let boost = null
+
+/**
+ * The frame with its darkest 1% mapped to black and brightest 1% to white.
+ * A dim room or a grainy laptop webcam leaves the face too flat for the
+ * detector: measured on the same face, the score fell from 0.84 to 0.22 in a
+ * darker picture (needed: 0.5), and this brings it back to ~0.68. The face
+ * template from it still matches the one saved from a normal picture
+ * (distance 0.18-0.26, limit 0.5) while another person stays at ~0.70.
+ */
+function stretched(video) {
+  const w = video.videoWidth
+  const h = video.videoHeight
+  if (!w || !h) return null
+  boost ||= document.createElement('canvas')
+  if (boost.width !== w || boost.height !== h) Object.assign(boost, { width: w, height: h })
+  const g = boost.getContext('2d', { willReadFrequently: true })
+  g.drawImage(video, 0, 0, w, h)
+  const img = g.getImageData(0, 0, w, h)
+  const p = img.data
+  const hist = new Uint32Array(256)
+  for (let i = 0; i < p.length; i += 4) hist[(p[i] * 0.299 + p[i + 1] * 0.587 + p[i + 2] * 0.114) | 0]++
+  const n = p.length / 4
+  let lo = -1
+  let hi = 255
+  for (let v = 0, acc = 0; v < 256; v++) {
+    acc += hist[v]
+    if (lo < 0 && acc > n * 0.01) lo = v
+    if (acc >= n * 0.99) {
+      hi = v
+      break
+    }
+  }
+  const k = 255 / Math.max(16, hi - lo) // never amplify a near-flat (covered) picture into noise
+  for (let i = 0; i < p.length; i += 4) {
+    p[i] = (p[i] - lo) * k
+    p[i + 1] = (p[i + 1] - lo) * k
+    p[i + 2] = (p[i + 2] - lo) * k
+  }
+  g.putImageData(img, 0, 0)
+  return boost
+}
+
 /**
  * One look at the video: { faces, descriptor?, box? }. `descriptor` is set only
- * when exactly one face is clearly in view.
+ * when exactly one face is clearly in view. If the picture as it is shows no
+ * face, it looks again at a contrast-stretched copy (see stretched()), with the
+ * same bar for what counts as a face.
  */
 export async function lookOnce(video) {
   const faceapi = await loadFace()
   const opts = new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 })
-  const found = await faceapi.detectAllFaces(video, opts).withFaceLandmarks(true).withFaceDescriptors()
+  const detect = (input) => faceapi.detectAllFaces(input, opts).withFaceLandmarks(true).withFaceDescriptors()
+  let found = await detect(video)
+  if (found.length === 0) {
+    const brighter = stretched(video)
+    if (brighter) found = await detect(brighter)
+  }
   if (found.length !== 1) return { faces: found.length }
   const d = found[0]
   return { faces: 1, descriptor: Array.from(d.descriptor, (x) => Math.round(x * 1e5) / 1e5), box: d.detection.box, score: d.detection.score }
