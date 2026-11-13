@@ -84,7 +84,7 @@ export default function DownloadDialog() {
               <div>
                 <span className="vs-kicker">Official app</span>
                 <h2>Download VARUNA AI</h2>
-                <p>{dl.version ? `Latest version ${dl.version}` : 'The latest version'} · free · by Aditya Gautam</p>
+                <p>{dl.version ? `Latest version ${dl.version}` : 'The latest version'} · free · by Aditya Gautam &amp; Samar Garg</p>
               </div>
             </div>
             <div className="vs-dl-list">

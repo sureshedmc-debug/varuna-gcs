@@ -92,5 +92,6 @@ export const TEAM = {
   theme: 'Environment & Sustainability',
   makers: [
     { name: 'Aditya Gautam', role: 'Creator of VARUNA AI · drone, boat and ground-control app', initials: 'AG' },
+    { name: 'Samar Garg', role: 'Co-creator of VARUNA AI', initials: 'SG' },
   ],
 }

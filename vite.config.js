@@ -253,8 +253,8 @@ function siteOnlyAssets(mode) {
 // <noscript> copy gives crawlers the key facts even before the app's script runs.
 function siteSeo(mode) {
   const URL_ = 'https://varuna-gcs.vercel.app/'
-  const TITLE = 'VARUNA GCS by Aditya Gautam · VARUNA AI drone and river-cleaning boat'
-  const DESC = 'VARUNA AI, created by Aditya Gautam: an AI drone that finds floating plastic and Nirmal Dhara Jalyan, a solar autonomous boat that collects it, run from the VARUNA GCS ground-control app.'
+  const TITLE = 'VARUNA GCS by Aditya Gautam & Samar Garg · VARUNA AI drone and river-cleaning boat'
+  const DESC = 'VARUNA AI, created by Aditya Gautam and Samar Garg: an AI drone that finds floating plastic and Nirmal Dhara Jalyan, a solar autonomous boat that collects it, run from the VARUNA GCS ground-control app.'
   const ld = {
     '@context': 'https://schema.org',
     '@graph': [
@@ -267,13 +267,21 @@ function siteSeo(mode) {
         url: URL_,
       },
       {
+        '@type': 'Person',
+        '@id': `${URL_}#samar-garg`,
+        name: 'Samar Garg',
+        jobTitle: 'Co-creator of VARUNA AI',
+        affiliation: { '@type': 'EducationalOrganization', name: 'Bhai Parmanand Vidya Mandir' },
+        url: URL_,
+      },
+      {
         '@type': 'WebSite',
         '@id': `${URL_}#site`,
         name: 'VARUNA AI',
         alternateName: ['VARUNA GCS', 'Varuna GCS', 'Varuna AI GCS', 'VARUNA AI Ground Control'],
         url: URL_,
-        author: { '@id': `${URL_}#aditya-gautam` },
-        creator: { '@id': `${URL_}#aditya-gautam` },
+        author: [{ '@id': `${URL_}#aditya-gautam` }, { '@id': `${URL_}#samar-garg` }],
+        creator: [{ '@id': `${URL_}#aditya-gautam` }, { '@id': `${URL_}#samar-garg` }],
       },
       {
         '@type': 'SoftwareApplication',
@@ -283,8 +291,8 @@ function siteSeo(mode) {
         operatingSystem: 'Web, Windows, Android',
         url: `${URL_}app`,
         description: DESC,
-        author: { '@id': `${URL_}#aditya-gautam` },
-        creator: { '@id': `${URL_}#aditya-gautam` },
+        author: [{ '@id': `${URL_}#aditya-gautam` }, { '@id': `${URL_}#samar-garg` }],
+        creator: [{ '@id': `${URL_}#aditya-gautam` }, { '@id': `${URL_}#samar-garg` }],
         offers: { '@type': 'Offer', price: '0', priceCurrency: 'INR' },
       },
     ],
@@ -292,8 +300,8 @@ function siteSeo(mode) {
   const esc = (s) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
   const head = [
     `<meta name="description" content="${esc(DESC)}" />`,
-    '<meta name="author" content="Aditya Gautam" />',
-    '<meta name="keywords" content="VARUNA AI, VARUNA GCS, Varuna AI GCS, Aditya Gautam, Nirmal Dhara Jalyan, river cleaning drone, autonomous boat, plastic detection, ground control station" />',
+    '<meta name="author" content="Aditya Gautam, Samar Garg" />',
+    '<meta name="keywords" content="VARUNA AI, VARUNA GCS, Varuna AI GCS, Aditya Gautam, Samar Garg, Nirmal Dhara Jalyan, river cleaning drone, autonomous boat, plastic detection, ground control station" />',
     '<meta name="robots" content="index, follow" />',
     `<link rel="canonical" href="${URL_}" />`,
     '<meta property="og:type" content="website" />',
@@ -309,9 +317,9 @@ function siteSeo(mode) {
     `<script type="application/ld+json">${JSON.stringify(ld).replace(/</g, '\u003c')}</script>`,
   ].join('\n    ')
   const body = `<noscript>
-      <h1>VARUNA GCS · VARUNA AI by Aditya Gautam</h1>
+      <h1>VARUNA GCS · VARUNA AI by Aditya Gautam &amp; Samar Garg</h1>
       <p>${esc(DESC)}</p>
-      <p>VARUNA AI and the VARUNA GCS ground-control app were created by Aditya Gautam, Bhai Parmanand Vidya Mandir (theme: Environment &amp; Sustainability).</p>
+      <p>VARUNA AI and the VARUNA GCS ground-control app were created by Aditya Gautam and Samar Garg, Bhai Parmanand Vidya Mandir (theme: Environment &amp; Sustainability).</p>
     </noscript>`
   return {
     name: 'varuna-site-seo',
