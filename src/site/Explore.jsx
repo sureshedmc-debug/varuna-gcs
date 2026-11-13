@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { navigate } from './router'
 import { EASE, Icon, LoopVideo, Nav, Footer, Reveal, useActiveSection } from './parts'
-import { M, STEPS, MACHINES, STACK, COMPARE, GALLERY, TEAM } from './content'
+import { M, STEPS, MACHINES, STACK, COMPARE, GALLERY, TEAM, FAQ } from './content'
 import Feedback from './Feedback'
 import { openDownloads } from './downloads'
 
@@ -274,6 +274,22 @@ export default function Explore() {
               <div><small>Boat</small><b>Nirmal Dhara Jalyan</b></div>
             </div>
           </Reveal>
+        </div>
+      </section>
+
+      {/* ── questions ── */}
+      <section id="faq" className="vs-sec" style={{ paddingTop: 0 }}>
+        <div className="vs-wrap">
+          <Head kicker="Questions" title={<>VARUNA AI, <span className="vs-grad">answered.</span></>} />
+          <div className="vs-faq">
+            {FAQ.map((f, i) => (
+              <Reveal key={f.q} className="vs-faq-item" delay={Math.min(i, 3) * 0.04}>
+                <h3>{f.q}</h3>
+                <p>{f.a}</p>
+              </Reveal>
+            ))}
+          </div>
+          <p className="vs-faq-more"><a href="/about">More about VARUNA AI and its creators →</a></p>
         </div>
       </section>
 

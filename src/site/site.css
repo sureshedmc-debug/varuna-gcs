@@ -568,3 +568,17 @@ textarea.vs-input { resize: vertical; min-height: 130px; line-height: 1.55; }
   .vs-try-stage { height: 76svh; min-height: 480px; border-radius: 22px; margin-inline: -4px; }
   .vs-try-tips { grid-template-columns: 1fr; }
 }
+
+/* ── questions (home) ── */
+.vs-faq { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 44px; }
+.vs-faq-item { border-radius: 22px; padding: 24px 26px; background: rgba(255, 255, 255, 0.025); border: 1px solid var(--line); }
+.vs-faq-item:first-child { grid-column: 1 / -1; background: linear-gradient(160deg, rgba(103,232,249,0.1), rgba(139,92,246,0.08) 60%, rgba(255,255,255,0.02)); border-color: var(--line2); }
+.vs-faq-item h3 { margin: 0 0 10px; font-size: 19px; letter-spacing: -0.015em; color: var(--ink); }
+.vs-faq-item p { margin: 0; font-size: 15.5px; line-height: 1.65; color: var(--ink2); }
+.vs-faq-more { margin: 22px 0 0; font-size: 15px; }
+.vs-faq-more a { color: #7dd3fc; text-decoration: none; }
+.vs-faq-more a:hover { text-decoration: underline; }
+@media (max-width: 760px) {
+  .vs-faq { grid-template-columns: 1fr; margin-top: 32px; }
+  .vs-faq-item { padding: 20px; }
+}

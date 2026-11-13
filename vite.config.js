@@ -2,6 +2,7 @@ import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import { createRequire } from 'node:module'
 import path from 'node:path'
+import { FAQ, TEAM } from './src/site/content.js'
 
 // The production bundle NEVER contains a backend host: the app calls the API via
 // relative paths (see src/api/client.js), resolved against window.location.origin
@@ -314,7 +315,7 @@ function siteSeo(mode) {
     `<meta name="twitter:title" content="${esc(TITLE)}" />`,
     `<meta name="twitter:description" content="${esc(DESC)}" />`,
     `<meta name="twitter:image" content="${URL_}site/p-poster.jpg" />`,
-    `<script type="application/ld+json">${JSON.stringify(ld).replace(/</g, '\u003c')}</script>`,
+    `<script type="application/ld+json">${jsonLd(ld)}</script>`,
   ].join('\n    ')
   const body = `<noscript>
       <h1>VARUNA GCS · VARUNA AI by Aditya Gautam &amp; Samar Garg</h1>
@@ -329,5 +330,140 @@ function siteSeo(mode) {
         .replace(/<title>[^<]*<\/title>/, `<title>${esc(TITLE)}</title>\n    ${head}`)
         .replace('<div id="root"></div>', `<div id="root"></div>\n    ${body}`)
     },
+    // /about: a plain HTML page (no JavaScript needed to read it) that answers
+    // "who created VARUNA AI?" for search engines and AI answer tools.
+    generateBundle() {
+      if (mode !== 'site') return
+      this.emitFile({ type: 'asset', fileName: 'about/index.html', source: aboutPage(URL_, esc) })
+    },
   }
+}
+
+// JSON for a <script> tag: "<" escaped so text can never close the tag early.
+function jsonLd(obj) {
+  return JSON.stringify(obj).replace(/</g, '\\u003c')
+}
+
+function aboutPage(URL_, esc) {
+  const PAGE = `${URL_}about`
+  const [who, ...rest] = FAQ
+  const title = 'Who created VARUNA AI? Aditya Gautam & Samar Garg'
+  const ld = {
+    '@context': 'https://schema.org',
+    '@graph': [
+      {
+        '@type': 'AboutPage',
+        '@id': `${PAGE}#page`,
+        url: PAGE,
+        name: title,
+        description: who.a,
+        isPartOf: { '@id': `${URL_}#site` },
+        about: TEAM.makers.map((p) => ({ '@id': `${URL_}#${p.name.toLowerCase().replace(/\s+/g, '-')}` })),
+      },
+      ...TEAM.makers.map((p) => ({
+        '@type': 'Person',
+        '@id': `${URL_}#${p.name.toLowerCase().replace(/\s+/g, '-')}`,
+        name: p.name,
+        jobTitle: p.role.split(' · ')[0],
+        affiliation: { '@type': 'EducationalOrganization', name: TEAM.school },
+        url: PAGE,
+      })),
+      {
+        '@type': 'FAQPage',
+        '@id': `${PAGE}#faq`,
+        mainEntity: FAQ.map((f) => ({
+          '@type': 'Question',
+          name: f.q,
+          acceptedAnswer: { '@type': 'Answer', text: f.a },
+        })),
+      },
+    ],
+  }
+  const makers = TEAM.makers.map((p) => `
+        <div class="maker"><span class="av">${esc(p.initials)}</span><div><b>${esc(p.name)}</b><span>${esc(p.role)}</span></div></div>`).join('')
+  const qa = rest.map((f) => `
+      <h3>${esc(f.q)}</h3>
+      <p>${esc(f.a)}</p>`).join('')
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${esc(title)} · VARUNA AI</title>
+    <meta name="description" content="${esc(who.a)}" />
+    <meta name="author" content="${esc(TEAM.makers.map((p) => p.name).join(', '))}" />
+    <meta name="robots" content="index, follow" />
+    <link rel="canonical" href="${PAGE}" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <meta property="og:type" content="profile" />
+    <meta property="og:site_name" content="VARUNA AI" />
+    <meta property="og:title" content="${esc(title)}" />
+    <meta property="og:description" content="${esc(who.a)}" />
+    <meta property="og:url" content="${PAGE}" />
+    <meta property="og:image" content="${URL_}site/p-poster.jpg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <script type="application/ld+json">${jsonLd(ld)}</script>
+    <style>
+      :root { color-scheme: dark; --ink: #f4f7fb; --ink2: rgba(236,242,250,.74); --ink3: rgba(236,242,250,.5); --line: rgba(255,255,255,.1); }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: #04060a; color: var(--ink); font: 16px/1.7 Inter, system-ui, -apple-system, 'Segoe UI', sans-serif; }
+      a { color: #7dd3fc; }
+      .wrap { max-width: 820px; margin: 0 auto; padding: 0 20px; }
+      header { padding: 22px 0; border-bottom: 1px solid var(--line); }
+      header a { color: var(--ink); text-decoration: none; font-weight: 900; letter-spacing: .02em; }
+      header a span, .grad { background: linear-gradient(100deg, #67e8f9, #7dd3fc 35%, #a78bfa); -webkit-background-clip: text; background-clip: text; color: transparent; }
+      main { padding: 56px 0 40px; }
+      .kicker { font-size: 12px; letter-spacing: .22em; text-transform: uppercase; color: #67e8f9; font-weight: 700; }
+      h1 { font-size: clamp(34px, 6vw, 56px); line-height: 1.05; letter-spacing: -.035em; margin: 12px 0 18px; }
+      .lead { font-size: clamp(17px, 2vw, 20px); color: var(--ink2); margin: 0; }
+      .makers { margin: 34px 0; border: 1px solid rgba(255,255,255,.16); border-radius: 24px; padding: 8px 24px; background: linear-gradient(160deg, rgba(103,232,249,.1), rgba(139,92,246,.08) 60%, rgba(255,255,255,.02)); }
+      .maker { display: flex; align-items: center; gap: 16px; padding: 16px 0; }
+      .maker + .maker { border-top: 1px solid var(--line); }
+      .av { flex: none; width: 54px; height: 54px; border-radius: 17px; display: grid; place-items: center; font-weight: 900; font-size: 21px; color: #05070a; background: linear-gradient(100deg, #67e8f9, #7dd3fc 35%, #a78bfa); }
+      .maker b { display: block; font-size: 20px; letter-spacing: -.02em; }
+      .maker span { font-size: 14px; color: var(--ink2); }
+      .facts { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px 24px; margin: 0 0 40px; }
+      .facts small { display: block; font-size: 11px; letter-spacing: .18em; text-transform: uppercase; color: var(--ink3); }
+      figure { margin: 0 0 44px; }
+      figure img { display: block; width: 100%; height: auto; border-radius: 20px; border: 1px solid var(--line); }
+      figcaption { font-size: 13px; color: var(--ink3); margin-top: 10px; }
+      h2 { font-size: 28px; letter-spacing: -.025em; margin: 0 0 8px; }
+      h3 { font-size: 19px; margin: 28px 0 6px; letter-spacing: -.01em; }
+      p { color: var(--ink2); margin: 0; }
+      .links { display: flex; flex-wrap: wrap; gap: 10px; margin: 44px 0 0; padding: 0; list-style: none; }
+      .links a { display: inline-block; padding: 11px 18px; border-radius: 999px; border: 1px solid rgba(255,255,255,.16); color: var(--ink); text-decoration: none; font-weight: 600; font-size: 15px; }
+      .links a:hover { border-color: #7dd3fc; }
+      footer { border-top: 1px solid var(--line); padding: 26px 0 40px; font-size: 13px; color: var(--ink3); }
+      @media (max-width: 560px) { .facts { grid-template-columns: 1fr; } .makers { padding: 4px 18px; } }
+    </style>
+  </head>
+  <body>
+    <header><div class="wrap"><a href="/">VARUNA <span>AI</span></a></div></header>
+    <main class="wrap">
+      <div class="kicker">About VARUNA AI</div>
+      <h1>${esc(who.q.replace(/\?$/, ''))}<span class="grad">?</span></h1>
+      <p class="lead">${esc(who.a)}</p>
+      <div class="makers">${makers}
+      </div>
+      <div class="facts">
+        <div><small>School</small>${esc(TEAM.school)}</div>
+        <div><small>Theme</small>${esc(TEAM.theme)}</div>
+        <div><small>Drone</small>Varuna, the AI aerial scout</div>
+        <div><small>Boat</small>Nirmal Dhara Jalyan</div>
+      </div>
+      <figure>
+        <img src="/site/p-poster.jpg" alt="VARUNA AI, the river-cleaning drone and boat by ${esc(TEAM.makers.map((p) => p.name).join(' and '))}" loading="lazy" />
+        <figcaption>VARUNA AI by ${esc(TEAM.makers.map((p) => p.name).join(' and '))}.</figcaption>
+      </figure>
+      <h2>About the project</h2>${qa}
+      <ul class="links">
+        <li><a href="/">Explore VARUNA AI</a></li>
+        <li><a href="/try">Try the AI on your webcam</a></li>
+        <li><a href="/app">Open the VARUNA GCS app</a></li>
+      </ul>
+    </main>
+    <footer><div class="wrap">© ${new Date().getFullYear()} VARUNA AI · Nirmal Dhara Jalyan · Created by ${esc(TEAM.makers.map((p) => p.name).join(' & '))}</div></footer>
+  </body>
+</html>
+`
 }

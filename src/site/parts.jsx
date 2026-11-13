@@ -196,7 +196,10 @@ export function Footer() {
           </div>
           <div>
             <h4>Explore</h4>
-            <ul>{NAV.map(([t, to]) => <li key={t}><a {...linkProps(to)}>{t}</a></li>)}</ul>
+            <ul>
+              {NAV.map(([t, to]) => <li key={t}><a {...linkProps(to)}>{t}</a></li>)}
+              <li><a href="/about">About the creators</a></li>
+            </ul>
           </div>
           <div>
             <h4>The app</h4>

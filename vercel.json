@@ -7,6 +7,7 @@
   "rewrites": [
     { "source": "/local/:path*", "destination": "https://varuna-gcs-api.onrender.com/local/:path*" },
     { "source": "/site/feedback", "destination": "https://varuna-gcs-api.onrender.com/site/feedback" },
+    { "source": "/about", "destination": "/about/index.html" },
     { "source": "/((?!.*\\.[A-Za-z0-9]+$).*)", "destination": "/index.html" }
   ],
   "headers": [

@@ -95,3 +95,29 @@ export const TEAM = {
     { name: 'Samar Garg', role: 'Co-creator of VARUNA AI', initials: 'SG' },
   ],
 }
+
+// Plain questions and answers. Shown on the home page, written into the page's
+// search data, and built into the static /about page (vite.config.js), so the
+// three always say the same thing. Answers are plain text, no markup.
+export const FAQ = [
+  {
+    q: 'Who created VARUNA AI?',
+    a: 'VARUNA AI was created by Aditya Gautam and Samar Garg, students of Bhai Parmanand Vidya Mandir, for the theme Environment & Sustainability. They designed, wired, coded and tested the drone, the boat and the VARUNA GCS ground-control app themselves.',
+  },
+  {
+    q: 'What is VARUNA AI?',
+    a: 'VARUNA AI is a river-cleaning system made of two machines: Varuna, an AI drone that flies over a river and finds floating plastic, and Nirmal Dhara Jalyan, a solar-powered autonomous boat that goes to that plastic and collects it.',
+  },
+  {
+    q: 'What is VARUNA GCS?',
+    a: 'VARUNA GCS is the ground-control app of VARUNA AI, made by Aditya Gautam and Samar Garg. It plans missions, shows the drone’s live camera with AI plastic detection, and sends the boat to collect what the drone finds. It runs in the browser, on Windows and on Android.',
+  },
+  {
+    q: 'How does VARUNA AI find plastic?',
+    a: 'An object-detection model trained on images of litter watches the drone’s camera and draws a box around each piece of plastic it sees, together with its GPS position. The detection runs on the device itself, so the video never has to leave it.',
+  },
+  {
+    q: 'Can I try VARUNA AI?',
+    a: 'Yes. The Try the AI page at varuna-gcs.vercel.app/try runs the same plastic detection on your own webcam, inside your browser. The VARUNA GCS app is free to download for Android and Windows.',
+  },
+]
