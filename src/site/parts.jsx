@@ -129,7 +129,7 @@ export function Nav({ active }) {
           </a>
           <nav className="vs-links" aria-label="Sections">
             {NAV.map(([t, to]) => (
-              <a key={t} className={active === to.split('#')[1] ? 'on' : ''} {...linkProps(to)}>{t}</a>
+              <a key={t} className={active && active === (to.includes('#') ? to.split('#')[1] : to) ? 'on' : ''} {...linkProps(to)}>{t}</a>
             ))}
           </nav>
           <div className="vs-nav-right">
@@ -202,6 +202,7 @@ export function Footer() {
             <h4>The app</h4>
             <ul>
               <li><a {...linkProps('/app')}>Open the app</a></li>
+              <li><a {...linkProps('/try')}>Try the AI on your webcam</a></li>
               <li><button type="button" onClick={openDownloads}>Download the app</button></li>
               <li><a {...linkProps('/login?next=/')}>Log in or sign up</a></li>
               <li><a {...linkProps('/#feedback')}>Send feedback</a></li>

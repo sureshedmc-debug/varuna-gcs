@@ -141,9 +141,21 @@ const yieldToUI = () =>
     ? globalThis.scheduler.yield()
     : new Promise((r) => { const ch = new MessageChannel(); ch.port1.onmessage = () => r(); ch.port2.postMessage(0) })
 
+// The public website (Vercel, `--mode site`): its drone is a demo on a server
+// with a test camera, so the visitor's own webcam is the camera instead.
+const WEB_SITE = import.meta.env.VITE_SITE === '1'
+const NO_SYSTEM = { telemetry: { data: null }, simulated: false }
+
 // controlsLift: extra px to raise the Start/Stop/Record row, for hosts that
 // overlay their own bottom panel (e.g. the Live tab's flight commands).
-export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam', autoStart = false, onCount, controlsLift = 0 }) {
+// demo: the website's public "Try the AI" page — webcam only, nothing saved,
+// no location asked for. background: the off-screen detector (BackgroundDetect).
+export default function WebcamDetect({ confThr = 0.15, defaultSource: sourceProp = 'webcam', autoStart: autoProp = false, onCount, controlsLift = 0, demo = false, background = false }) {
+  // On the website the webcam comes first and starts on a click, so a visitor
+  // is never asked for their camera before they choose to try it.
+  const webcamFirst = demo || (WEB_SITE && sourceProp === 'auto' && !background)
+  const defaultSource = webcamFirst ? 'webcam' : sourceProp
+  const autoStart = webcamFirst ? false : autoProp
   const videoRef     = useRef(null)
   const streamImgRef = useRef(null)
   const streamCanvasRef = useRef(null)   // drone H.264, decoded into it
@@ -227,9 +239,9 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
   //  - Webcam mode: the camera is the laptop's, so always the laptop's own
   //    location — never the drone's (or the simulator's) position.
   // Kept in refs so the detect loop always reads the latest fix.
-  const { telemetry, simulated } = useSystem()
+  const { telemetry, simulated } = useSystem() || NO_SYSTEM
   const live = useLivePosition(telemetry.data)
-  const laptop = useLaptopGps(true)
+  const laptop = useLaptopGps(!demo)
   const geoRef = useRef({ pos: null, posSource: null, alt: null, accuracy: null })
   geoRef.current =
     source === 'webcam'
@@ -595,7 +607,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
       if(answers.size){const live=new Set(tracked.map(b=>b.id));for(const id of answers.keys()){if(!live.has(id))answers.delete(id)}}
       boxesRef.current=tracked.filter(b=>b.rl!=='rejected'||showFilteredRef.current)
       const counted=tracked.filter(b=>b.cls!=='human'&&b.rl==='show')
-      recordTrashCount(counted.length) // share plastic-only count with the Detections tab
+      if(!demo)recordTrashCount(counted.length) // share plastic-only count with the Detections tab
       // Stamp plastic with the aircraft's live position (≤ 2x/sec) for the Detections tab + report,
       // and grab a photo of this frame (the boxed view, exactly what the operator saw).
       // Real-world scale of this frame (drone feed with a known altitude only):
@@ -606,7 +618,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
         ?{...geoRef.current,pos:[fp.lat,fp.lng],posSource:'drone',alt:fp.alt,heading:fp.hdg,roll:fp.roll,pitch:fp.pitch}
         :geoRef.current
       mppRef.current=sourceRef.current!=='webcam'?metersPerPixel({frameW:fw,altitudeM:g.alt,fovHDeg:fovH}):null
-      if(counted.length>0&&now-lastGeoTagRef.current>=500){
+      if(!demo&&counted.length>0&&now-lastGeoTagRef.current>=500){
         lastGeoTagRef.current=now
         const biggestOf=(bs)=>bs.reduce((m,b)=>((b.x2-b.x1)*(b.y2-b.y1)>(m.x2-m.x1)*(m.y2-m.y1)?b:m))
         const biggest=biggestOf(counted)
@@ -709,7 +721,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
       // Record the whole mission (the boxed view, exactly what the operator saw)
       // from Start to Stop, so a full video — not just still detections — is
       // available for the report.
-      try{startMissionRecording(canvasRef.current.captureStream(15))}catch(e){console.warn('[mission-video]',e)}
+      if(!demo)try{startMissionRecording(canvasRef.current.captureStream(15))}catch(e){console.warn('[mission-video]',e)}
     }catch(e){
       setStatus('error'); setMsg(src==='webcam'?'Camera unavailable: '+(e?.message??e)+' (needs HTTPS + permission)':'Drone stream unavailable: '+(e?.message??e))
     }
@@ -923,6 +935,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
   useEffect(()=>{const f=()=>fitCanvas();window.addEventListener('resize',f);return()=>window.removeEventListener('resize',f)},[defaultSource,autoStart])
 
   const allModelsOn = trashDetection && humanDetection
+  const tryCard = webcamFirst && source === 'webcam' && status !== 'running'
   function toggleAllModels(){const next=!allModelsOn;setTrashDetection(next);setHumanDetection(next)}
 
   return (
@@ -981,8 +994,38 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
         </div>
       )}
 
+      {/* website: what this is, and one big button to start the webcam */}
+      {tryCard&&(
+        <div className="absolute inset-0 z-[25] flex items-center justify-center p-4"
+          style={{paddingBottom:controlsLift?controlsLift+70:undefined,background:'radial-gradient(ellipse at center,rgba(8,12,22,0.55),rgba(5,8,14,0.92))'}}>
+          <div className="w-full max-w-[420px] rounded-3xl p-6 text-center"
+            style={{background:'rgba(11,18,32,0.9)',border:'1px solid rgba(255,255,255,0.1)',boxShadow:'0 24px 60px rgba(0,0,0,0.5)',backdropFilter:'blur(14px)'}}>
+            <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl text-2xl"
+              style={{background:'linear-gradient(135deg,#5EEAD4,#6BB8FF 55%,#A78BFA)',color:'#04121f'}}>◉</div>
+            <div className="text-[18px] font-extrabold text-white">Try VARUNA's AI on your webcam</div>
+            <p className="mt-2 text-[13px] leading-relaxed text-white/65">
+              Hold up a plastic bottle, a wrapper or a bag. The AI draws a box round each piece of plastic it finds, live.
+            </p>
+            {status==='error'?(
+              <p className="mt-3 rounded-xl px-3 py-2 text-[12px] font-semibold" style={{background:'rgba(255,69,58,0.14)',color:'#FF8A80'}}>
+                {/permission|denied|notallowed/i.test(msg)?'The browser blocked the camera. Allow camera access for this site (the camera icon in the address bar), then try again.':msg}
+              </p>
+            ):null}
+            <button type="button" disabled={status==='init'||(status==='error'&&!detRef.current)}
+              onClick={()=>{setStatus('ready');setMsg('');start('webcam')}}
+              className="mt-5 w-full rounded-2xl px-6 py-3.5 text-[14px] font-extrabold text-[#04121f] transition-all active:scale-[0.98] disabled:opacity-50"
+              style={{background:'linear-gradient(135deg,#5EEAD4,#6BB8FF 55%,#A78BFA)',boxShadow:'0 10px 30px rgba(107,184,255,0.35)'}}>
+              {status==='init'?msg||'Loading the AI…':status==='error'?'Try again':'▶  Start webcam detection'}
+            </button>
+            <p className="mt-3 text-[11px] leading-relaxed text-white/45">
+              The AI runs inside your browser. Your video never leaves your device and nothing is saved.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* source toggle */}
-      <div className="absolute right-3 top-3 z-20 flex gap-1 rounded-xl p-0.5"
+      {!demo&&<div className="absolute right-3 top-3 z-20 flex gap-1 rounded-xl p-0.5"
         style={{background:'rgba(11,18,32,0.88)',border:'1px solid rgba(255,255,255,0.08)'}}>
         {[['webcam','Webcam'],['stream','Drone']].map(([id,label])=>(
           <button key={id} type="button" onClick={()=>switchSource(id)}
@@ -991,7 +1034,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
             {label}
           </button>
         ))}
-      </div>
+      </div>}
 
       {/* ALL MODELS master button */}
       {status!=='init'&&status!=='error'&&(
@@ -1010,7 +1053,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
 
       {/* start/stop row */}
       <div className="absolute left-1/2 z-20 -translate-x-1/2 flex flex-wrap items-center justify-center gap-2" style={{bottom:80+controlsLift}}>
-        {status!=='running'?(
+        {tryCard?null:status!=='running'?(
           <button disabled={status==='init'} onClick={()=>start()}
             className="rounded-2xl px-6 py-2.5 text-sm font-bold text-white disabled:opacity-40 transition-all active:scale-95"
             style={{background:'linear-gradient(180deg,var(--accent2,#6BB8FF),var(--accent-hex,#3B9EFF))',boxShadow:'0 0 18px rgba(59,158,255,0.35)'}}>

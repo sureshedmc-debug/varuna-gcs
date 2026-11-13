@@ -9,6 +9,7 @@ export const NAV = [
   ['Technology', '/#tech'],
   ['Gallery', '/#gallery'],
   ['Team', '/#team'],
+  ['Try the AI', '/try'],
   ['Feedback', '/#feedback'],
 ]
 

@@ -543,3 +543,26 @@ textarea.vs-input { resize: vertical; min-height: 130px; line-height: 1.55; }
   .vs-dl { border-radius: 26px 26px 0 0; padding-bottom: max(22px, env(safe-area-inset-bottom)); }
 }
 @media (prefers-reduced-motion: reduce) { .vs-dlbtn::after, .vs-dlbtn .ic svg { animation: none; } }
+
+/* try the AI on your webcam (/try, and its link in the hero) */
+.vs-try-pill i { background: linear-gradient(135deg, #5eead4, #6bb8ff 55%, #a78bfa); color: #04121f; }
+.vs-try { position: relative; padding: clamp(110px, 14vh, 150px) 0 clamp(60px, 9vh, 100px);
+  background: radial-gradient(ellipse 70% 50% at 50% 0%, rgba(107, 184, 255, 0.13), transparent 70%); }
+.vs-try-head { max-width: 760px; }
+.vs-try-head .vs-h2 { margin-top: 14px; }
+.vs-try-stage { position: relative; margin-top: clamp(28px, 4vh, 44px); height: min(72vh, 720px); min-height: 440px;
+  border-radius: 28px; overflow: hidden; border: 1px solid var(--line2); background: #05080e;
+  box-shadow: 0 40px 120px -40px rgba(107, 184, 255, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.03) inset; }
+.vs-try-wait { height: 100%; display: grid; place-items: center; color: var(--ink3); font-size: 14px; }
+.vs-try-tips { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 26px; }
+.vs-try-tip { position: relative; padding: 20px 20px 20px 66px; border-radius: 20px; border: 1px solid var(--line); background: rgba(255, 255, 255, 0.03); }
+.vs-try-tip i { position: absolute; left: 20px; top: 20px; width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center;
+  font-style: normal; font-weight: 800; font-size: 14px; color: #04121f; background: linear-gradient(135deg, #5eead4, #6bb8ff 55%, #a78bfa); }
+.vs-try-tip b { display: block; font-size: 15px; }
+.vs-try-tip span { display: block; margin-top: 4px; font-size: 13px; line-height: 1.5; color: var(--ink2); }
+.vs-try-note { margin: 18px 0 0; font-size: 12.5px; color: var(--ink3); }
+.vs-try-cta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 26px; }
+@media (max-width: 760px) {
+  .vs-try-stage { height: 76svh; min-height: 480px; border-radius: 22px; margin-inline: -4px; }
+  .vs-try-tips { grid-template-columns: 1fr; }
+}

@@ -38,7 +38,7 @@ export default function BackgroundDetect({ onOpen }) {
       <div aria-hidden className="pointer-events-none fixed top-0 h-[720px] w-[1280px] overflow-hidden"
         style={{ left: -10000, visibility: 'hidden' }}>
         <Suspense fallback={null}>
-          <WebcamDetect confThr={conf} defaultSource="auto" autoStart />
+          <WebcamDetect confThr={conf} defaultSource="auto" autoStart background />
         </Suspense>
       </div>
       <button type="button" onClick={onOpen} title="Open the Live tab"

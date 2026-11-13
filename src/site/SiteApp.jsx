@@ -1,6 +1,7 @@
 // The public website (Vercel build, `--mode site`):
 //   /            → home: Open the app / Explore Varuna, then the whole
 //                  project, ending with feedback (/explore shows the same)
+//   /try         → try the plastic detector on your own webcam, no sign-in
 //   /login       → sign in (then back to ?next=)
 //   /app         → the app's own cinematic intro, then the ground-control app
 //                  for signed-in users (sign-in first otherwise), with the
@@ -17,6 +18,7 @@ import { useUser } from '../lib/auth'
 import { usePath, navigate } from './router'
 import { setupPwa, isStandalone } from './pwa'
 import Explore from './Explore'
+import Try from './Try'
 import InstallSheet from './InstallSheet'
 import DownloadDialog from './DownloadDialog'
 import './site.css'
@@ -26,6 +28,7 @@ setupPwa()
 const TITLES = {
   '/': 'VARUNA AI GCS by Aditya Gautam · AI drone and river-cleaning boat',
   '/explore': 'VARUNA AI GCS by Aditya Gautam · AI drone and river-cleaning boat',
+  '/try': 'Try the AI on your webcam · VARUNA AI',
   '/login': 'Log in · VARUNA AI',
   '/app': 'VARUNA AI · Ground Control',
 }
@@ -89,8 +92,8 @@ export default function SiteApp({ renderApp }) {
   return (
     <div className="vs">
       <div className="vs-grain" aria-hidden="true" />
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.6 }}>
-        <Explore />
+      <motion.div key={path === '/try' ? 'try' : 'home'} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.6 }}>
+        {path === '/try' ? <Try /> : <Explore />}
       </motion.div>
       <DownloadDialog />
     </div>

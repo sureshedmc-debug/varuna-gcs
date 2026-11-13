@@ -128,6 +128,10 @@ export default function Explore() {
               <i><Icon name="play" size={22} /></i>
               <span><b>Watch the film</b><small>56 seconds · sound on</small></span>
             </button>
+            <button type="button" className="vs-play vs-try-pill" onClick={() => navigate('/try')}>
+              <i><Icon name="compass" size={22} /></i>
+              <span><b>Try the AI on your webcam</b><small>Live demo · no sign-in</small></span>
+            </button>
             <div className="vs-stats">
               <div className="vs-stat"><b>2</b><span>machines, one mission</span></div>
               <div className="vs-stat"><b>3</b><span>steps: detect · locate · collect</span></div>
