@@ -57,6 +57,19 @@
         "::1"
       ],
       "port": 8001
+    },
+    {
+      "name": "varuna-site",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "vite",
+        "--mode",
+        "site",
+        "--port",
+        "5175",
+        "--strictPort"
+      ],
+      "port": 5175
     }
   ]
 }

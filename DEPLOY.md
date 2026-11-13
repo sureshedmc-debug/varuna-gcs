@@ -12,6 +12,22 @@ What runs in the Render container:
 - **Drone:** `drone-pi/main.py` with no Pixhawk and a small test camera (320×240, 5 fps). Screens, missions and video work. Flight commands answer "No Pixhawk found".
 - **Boat:** `boat-pi/main.py --sim`, a fully simulated boat, under `/boat/*`.
 
+## Website (Vercel build only)
+
+Vercel builds with `vite build --mode site` (`.env.site` sets `VITE_SITE=1`). That puts a website in front of the app:
+
+- `/`: the app's own intro, then a landing page with **Open the app** and **Explore Varuna**, and Log in in the top bar.
+- `/explore`: the problem, how it works, the machines, a comparison, the gallery and film, who made it, and a feedback form.
+- `/login` and `/app`: `/app` opens the app only for a signed-in user. Then the "Install VARUNA AI" card slides up from the bottom, which installs the site as an app (`public/sw.js`, `public/site/manifest.webmanifest`). Set `VITE_DOWNLOAD_ANDROID` / `VITE_DOWNLOAD_WINDOWS` on Vercel to links of the APK / installer to add download buttons to that card.
+
+The media in `public/site` is cut from *varuna project videos*. The desktop and Android builds drop `public/site` and `sw.js` from `dist`, and never load the website code. To try it locally, run `npx vite --mode site`.
+
+Feedback goes to the backend (`POST /site/feedback`, rewritten by Vercel). Each entry is printed to the Render log as a `[feedback]` line and appended to `feedback.csv`, which is wiped on restart. Download it with:
+
+```bash
+curl -H "Authorization: Bearer $FEEDBACK_KEY" https://varuna-gcs-api.onrender.com/site/feedback
+```
+
 ## How requests flow
 
 - **Sign-in and records** (`/local/*`): the browser calls Vercel, and Vercel rewrites to Render, so it stays same-origin.

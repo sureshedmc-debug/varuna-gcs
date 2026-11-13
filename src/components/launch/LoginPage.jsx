@@ -48,7 +48,7 @@ function LoginShell({ kind, onOpen, children }) {
             </motion.ol>
           )}
 
-          {(signedOut || kind === 'profile') && (
+          {(signedOut || kind === 'profile') && onOpen && (
             <motion.div className="vl-dmp-cta" {...rise(4)}>
               <button type="button" className={kind === 'profile' ? 'vl-dmp-primary' : 'vl-dmp-secondary'} onClick={() => onOpen('plan')}>
                 <RouteIcon size={18} /> {kind === 'profile' ? 'Direct Mission Plan' : 'Plan without signing in'} <ChevronRight size={16} />

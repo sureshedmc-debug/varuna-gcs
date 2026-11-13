@@ -21,6 +21,7 @@
 // loopback port and this server forwards to it after its own origin check.
 
 const http = require('node:http')
+const fs = require('node:fs')
 const path = require('node:path')
 const { spawn } = require('node:child_process')
 const httpProxy = require('http-proxy')
@@ -177,9 +178,96 @@ const server = http.createServer((req, res) => {
     return proxy.web(req, res, { target: `http://127.0.0.1:${DRONE_PORT}` })
   }
 
+  if (p === '/site/feedback') return feedback(req, res)
+
   if (p === '/') return sendText(res, 200, 'VARUNA GCS web backend. Open the app on its Vercel address.')
   sendText(res, 404, 'Not found')
 })
+
+// ---------------------------------------------------------------- website feedback
+// POST /site/feedback  {name, email, role, rating, message} from the Explore page
+//   (Vercel rewrites it to us, so it is same-origin). Each entry is appended to
+//   feedback.csv in the data dir and printed to the log as one JSON line, so it
+//   survives in Render's logs even after the free disk is wiped on a restart.
+// GET  /site/feedback  with "Authorization: Bearer $FEEDBACK_KEY" returns the CSV.
+const FEEDBACK_FILE = path.join(DATA_DIR, 'feedback.csv')
+const FEEDBACK_COLS = ['time', 'name', 'email', 'role', 'rating', 'message']
+const feedbackHits = new Map() // ip -> [timestamps]
+
+function sendJson(res, status, obj) {
+  res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
+  res.end(JSON.stringify(obj))
+}
+
+const csvCell = (v) => {
+  let s = String(v ?? '').replace(/\r?\n/g, ' ').trim()
+  if (/^[=+\-@\t]/.test(s)) s = "'" + s // keep spreadsheet apps from running it as a formula
+  return /[",]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+}
+
+function feedback(req, res) {
+  if (req.method === 'GET') {
+    const key = process.env.FEEDBACK_KEY
+    if (!key || req.headers.authorization !== `Bearer ${key}`) return sendJson(res, 403, { ok: false, error: 'Forbidden' })
+    let csv = FEEDBACK_COLS.join(',') + '\n'
+    try {
+      csv = fs.readFileSync(FEEDBACK_FILE, 'utf8')
+    } catch {
+      /* nothing yet */
+    }
+    res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Cache-Control': 'no-store' })
+    return res.end(csv)
+  }
+  if (req.method !== 'POST') return sendJson(res, 405, { ok: false, error: 'Method not allowed' })
+  if (!localCallerAllowed(req)) return sendJson(res, 403, { ok: false, error: 'Forbidden' })
+
+  const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim()
+  const now = Date.now()
+  const recent = (feedbackHits.get(ip) || []).filter((t) => now - t < 10 * 60 * 1000)
+  if (recent.length >= 5) return sendJson(res, 429, { ok: false, error: 'Too many messages. Please try again in a few minutes.' })
+
+  let body = ''
+  let tooBig = false
+  req.setEncoding('utf8')
+  req.on('data', (c) => {
+    body += c
+    if (body.length > 16 * 1024) {
+      tooBig = true
+      req.destroy()
+    }
+  })
+  req.on('end', () => {
+    if (tooBig) return
+    let f
+    try {
+      f = JSON.parse(body)
+    } catch {
+      return sendJson(res, 400, { ok: false, error: 'Bad request' })
+    }
+    const str = (v, n) => (typeof v === 'string' ? v.trim().slice(0, n) : '')
+    const entry = {
+      time: new Date().toISOString(),
+      name: str(f.name, 80),
+      email: str(f.email, 120),
+      role: str(f.role, 40),
+      rating: Math.max(0, Math.min(5, Math.round(Number(f.rating) || 0))),
+      message: str(f.message, 2000),
+    }
+    if (!entry.message) return sendJson(res, 400, { ok: false, error: 'Please write a message.' })
+    if (entry.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(entry.email)) return sendJson(res, 400, { ok: false, error: 'That email address does not look right.' })
+    recent.push(now)
+    feedbackHits.set(ip, recent)
+    try {
+      fs.mkdirSync(DATA_DIR, { recursive: true })
+      if (!fs.existsSync(FEEDBACK_FILE)) fs.writeFileSync(FEEDBACK_FILE, FEEDBACK_COLS.join(',') + '\n')
+      fs.appendFileSync(FEEDBACK_FILE, FEEDBACK_COLS.map((k) => csvCell(entry[k])).join(',') + '\n')
+    } catch (err) {
+      console.error('[feedback] could not save:', err.message)
+    }
+    console.log('[feedback]', JSON.stringify(entry))
+    sendJson(res, 200, { ok: true })
+  })
+}
 
 // Live WebSockets: the drone's /api/ws and /api/control, the boat's
 // /boat/api/ws and /boat/api/drive.

@@ -112,7 +112,7 @@ export default defineConfig(({ mode }) => {
   }
 
   return {
-    plugins: [react(), watcherResilience(), localDataStore(env)],
+    plugins: [react(), watcherResilience(), localDataStore(env), siteOnlyAssets(mode)],
     // `preview` gets the same proxy as `server`: without it, npm run preview
     // serves the built bundle with no route to the Pi, so a production-shaped
     // smoke test would look broken for the wrong reason.
@@ -225,6 +225,25 @@ function watcherResilience() {
           `  [watch] skipped ${err?.code || 'error'} on ${err?.path || err?.message || err}`,
         )
       })
+    },
+  }
+}
+
+// The website's media (public/site, ~15 MB) and its service worker belong to the
+// Vercel build only (`--mode site`); the desktop and Android builds drop them.
+function siteOnlyAssets(mode) {
+  let outDir = 'dist'
+  return {
+    name: 'varuna-site-only-assets',
+    apply: 'build',
+    configResolved(c) {
+      outDir = path.resolve(c.root, c.build.outDir)
+    },
+    async closeBundle() {
+      if (mode === 'site') return
+      const { rm } = await import('node:fs/promises')
+      await rm(path.join(outDir, 'site'), { recursive: true, force: true })
+      await rm(path.join(outDir, 'sw.js'), { force: true })
     },
   }
 }

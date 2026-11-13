@@ -25,3 +25,7 @@ services:
       # Free plan: no disk, so accounts and records reset on every restart.
       - key: VARUNA_DATA_DIR
         value: /tmp/varuna-data
+      # Key for downloading the website's feedback (GET /site/feedback with
+      # "Authorization: Bearer <key>"). Render makes a random one; see its dashboard.
+      - key: FEEDBACK_KEY
+        generateValue: true

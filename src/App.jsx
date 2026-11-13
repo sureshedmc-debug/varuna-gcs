@@ -33,6 +33,11 @@ const BoatVisionScreen = lazy(() => import('./screens/BoatVisionScreen'))
 const WaterLabScreen = lazy(() => import('./screens/WaterLabScreen'))
 const DataScreen = lazy(() => import('./screens/DataScreen'))
 
+// The public website (Vercel, `vite build --mode site`) wraps the app in a
+// landing page, Explore Varuna and a sign-in gate. Other builds never load it.
+const SITE = import.meta.env.VITE_SITE === '1'
+const SiteApp = SITE ? lazy(() => import('./site/SiteApp')) : null
+
 const SCREENS = {
   home: MissionControlScreen,
   live: LiveScreen,
@@ -168,7 +173,35 @@ function entered() {
   }
 }
 
+/** The app itself: live system state around the shell. */
+function AppShell({ onLock }) {
+  return (
+    <ToastProvider>
+      <SystemProvider>
+        <BoatProvider>
+          <BoatVisionProvider>
+            <BoatDriveProvider>
+              <Shell onLock={onLock} />
+            </BoatDriveProvider>
+          </BoatVisionProvider>
+        </BoatProvider>
+      </SystemProvider>
+    </ToastProvider>
+  )
+}
+
 export default function App() {
+  if (SITE) {
+    return (
+      <Suspense fallback={<div style={{ position: 'fixed', inset: 0, background: '#000' }} />}>
+        <SiteApp renderApp={(onLock) => <AppShell onLock={() => { lockData(); onLock() }} />} />
+      </Suspense>
+    )
+  }
+  return <DesktopApp />
+}
+
+function DesktopApp() {
   const [active, setActive] = useState(entered())
 
   // Intro / activation screen first. Click anywhere → activate → home page.
@@ -197,17 +230,5 @@ export default function App() {
     setActive(false)
   }
 
-  return (
-    <ToastProvider>
-      <SystemProvider>
-        <BoatProvider>
-          <BoatVisionProvider>
-            <BoatDriveProvider>
-              <Shell onLock={lock} />
-            </BoatDriveProvider>
-          </BoatVisionProvider>
-        </BoatProvider>
-      </SystemProvider>
-    </ToastProvider>
-  )
+  return <AppShell onLock={lock} />
 }
