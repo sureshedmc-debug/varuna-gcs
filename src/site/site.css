@@ -474,3 +474,72 @@ textarea.vs-input { resize: vertical; min-height: 130px; line-height: 1.55; }
 @media (prefers-reduced-motion: reduce) {
   .vs-grain, .vs-aurora, .vs-marquee-track { animation: none; }
 }
+
+/* ───────────────────────── download the app ───────────────────────── */
+.vs-dlbtn {
+  position: relative; display: flex; align-items: center; gap: 16px; width: 100%; max-width: 980px; margin-top: 16px; padding: 16px 18px 16px 16px;
+  border-radius: 20px; border: 0; cursor: pointer; text-align: left; color: #05070a; overflow: hidden; isolation: isolate;
+  background: linear-gradient(100deg, #67e8f9 0%, #7dd3fc 40%, #a78bfa 100%);
+  box-shadow: 0 18px 50px rgba(103, 232, 249, 0.28), 0 0 0 1px rgba(255,255,255,0.35) inset;
+  transition: transform 0.45s var(--ease), box-shadow 0.45s var(--ease);
+}
+.vs-dlbtn::after {
+  content: ''; position: absolute; inset: 0; z-index: -1; transform: translateX(-100%);
+  background: linear-gradient(100deg, transparent 20%, rgba(255,255,255,0.55) 50%, transparent 80%);
+  animation: vs-shine 3.6s var(--ease) infinite 1.6s;
+}
+@keyframes vs-shine { 0% { transform: translateX(-100%); } 45%, 100% { transform: translateX(100%); } }
+.vs-dlbtn:hover { transform: translateY(-3px); box-shadow: 0 26px 60px rgba(103, 232, 249, 0.4), 0 0 0 1px rgba(255,255,255,0.5) inset; }
+.vs-dlbtn .ic { flex-shrink: 0; width: 52px; height: 52px; border-radius: 15px; display: grid; place-items: center; background: #05070a; color: #fff; box-shadow: 0 8px 20px rgba(5,7,10,0.35); }
+.vs-dlbtn .ic svg { animation: vs-bob 2.2s ease-in-out infinite; }
+@keyframes vs-bob { 50% { transform: translateY(3px); } }
+.vs-dlbtn .t { flex: 1; min-width: 0; }
+.vs-dlbtn .t b { display: block; font-size: clamp(17px, 1.8vw, 21px); font-weight: 900; letter-spacing: -0.02em; }
+.vs-dlbtn .t small { display: block; font-size: 13px; font-weight: 600; opacity: 0.72; margin-top: 2px; }
+.vs-dlbtn .go { flex-shrink: 0; display: inline-flex; align-items: center; gap: 8px; padding: 10px 16px; border-radius: 999px; background: #05070a; color: #fff; font-weight: 800; font-size: 14px; }
+.vs-nav-dl { display: inline-flex; align-items: center; gap: 8px; padding: 9px 15px; border-radius: 999px; border: 0; cursor: pointer; font-size: 13.5px; font-weight: 800; color: #05070a; background: var(--grad); box-shadow: 0 6px 22px rgba(103,232,249,0.3); transition: transform 0.3s var(--ease), box-shadow 0.3s; }
+.vs-nav-dl:hover { transform: translateY(-1px); box-shadow: 0 10px 28px rgba(103,232,249,0.45); }
+
+.vs-dl-wrap { z-index: 97; }
+.vs-dl {
+  position: relative; width: min(100%, 520px); border-radius: 28px; padding: clamp(22px, 4vw, 32px); color: var(--ink);
+  background: linear-gradient(170deg, rgba(20, 26, 40, 0.98), rgba(8, 11, 18, 0.98)); border: 1px solid var(--line2);
+  box-shadow: 0 50px 120px rgba(0,0,0,0.65), 0 0 0 1px rgba(103,232,249,0.08) inset;
+}
+.vs-dl::before { content: ''; position: absolute; inset: -1px -1px auto; height: 140px; border-radius: 28px 28px 0 0; pointer-events: none; background: radial-gradient(60% 100% at 30% 0%, rgba(103,232,249,0.18), transparent 70%), radial-gradient(50% 100% at 85% 0%, rgba(139,92,246,0.2), transparent 70%); }
+.vs-dl-x { position: absolute; top: 14px; right: 14px; width: 38px; height: 38px; border-radius: 50%; border: 1px solid var(--line2); background: rgba(255,255,255,0.05); color: #fff; cursor: pointer; display: grid; place-items: center; }
+.vs-dl-x:hover { background: rgba(255,255,255,0.12); }
+.vs-dl-head { position: relative; display: flex; align-items: center; gap: 16px; margin-bottom: 22px; padding-right: 36px; }
+.vs-dl-head img { width: 64px; height: 64px; border-radius: 18px; box-shadow: 0 12px 30px rgba(139,92,246,0.45); }
+.vs-dl-head h2 { margin: 6px 0 2px; font-size: 26px; font-weight: 900; letter-spacing: -0.03em; }
+.vs-dl-head p { margin: 0; font-size: 13px; color: var(--ink3); }
+.vs-dl-list { display: grid; gap: 10px; }
+.vs-dl-opt {
+  display: flex; align-items: center; gap: 14px; width: 100%; padding: 14px 16px; border-radius: 18px; text-align: left; cursor: pointer;
+  border: 1px solid var(--line2); background: rgba(255,255,255,0.04); color: #fff; transition: background 0.25s, border-color 0.25s, transform 0.35s var(--ease);
+}
+.vs-dl-opt:hover:not(.off) { background: rgba(255,255,255,0.09); border-color: rgba(103,232,249,0.45); transform: translateY(-2px); }
+.vs-dl-opt.primary { background: linear-gradient(100deg, rgba(103,232,249,0.2), rgba(139,92,246,0.18)); border-color: rgba(103,232,249,0.5); }
+.vs-dl-opt.off { opacity: 0.45; cursor: default; }
+.vs-dl-ic { flex-shrink: 0; width: 46px; height: 46px; border-radius: 14px; display: grid; place-items: center; background: rgba(255,255,255,0.08); }
+.vs-dl-opt.primary .vs-dl-ic { background: #fff; color: #05070a; }
+.vs-dl-txt { flex: 1; min-width: 0; }
+.vs-dl-txt b { display: flex; align-items: center; gap: 8px; font-size: 16px; }
+.vs-dl-txt b em { font-style: normal; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; background: rgba(45,212,191,0.18); color: var(--teal); }
+.vs-dl-txt small { display: block; margin-top: 2px; font-size: 12.5px; color: var(--ink3); }
+.vs-dl-go { flex-shrink: 0; width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; border: 1px solid var(--line2); }
+.vs-dl-opt.primary .vs-dl-go { background: #fff; color: #05070a; border-color: #fff; }
+.vs-dl-how { overflow: hidden; margin-top: 12px; padding: 12px 14px; border-radius: 14px; background: rgba(255,255,255,0.05); font-size: 13.5px; color: var(--ink2); line-height: 1.55; }
+.vs-dl-how b { color: #fff; }
+.vs-dl-all { display: block; margin-top: 16px; text-align: center; font-size: 13px; color: var(--ink3); }
+.vs-dl-all:hover { color: #fff; }
+@media (max-width: 640px) {
+  .vs-dlbtn { gap: 12px; padding: 12px; border-radius: 16px; }
+  .vs-dlbtn .ic { width: 44px; height: 44px; border-radius: 12px; }
+  .vs-dlbtn .go { display: none; }
+  .vs-nav-dl span { display: none; }
+  .vs-nav-dl { padding: 0; width: 42px; height: 42px; justify-content: center; border-radius: 12px; }
+  .vs-dl-wrap { align-items: end; padding: 0; }
+  .vs-dl { border-radius: 26px 26px 0 0; padding-bottom: max(22px, env(safe-area-inset-bottom)); }
+}
+@media (prefers-reduced-motion: reduce) { .vs-dlbtn::after, .vs-dlbtn .ic svg { animation: none; } }

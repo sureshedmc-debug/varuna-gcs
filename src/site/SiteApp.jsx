@@ -18,6 +18,7 @@ import { usePath, navigate } from './router'
 import { setupPwa, isStandalone } from './pwa'
 import Explore from './Explore'
 import InstallSheet from './InstallSheet'
+import DownloadDialog from './DownloadDialog'
 import './site.css'
 
 setupPwa()
@@ -91,6 +92,7 @@ export default function SiteApp({ renderApp }) {
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.6 }}>
         <Explore />
       </motion.div>
+      <DownloadDialog />
     </div>
   )
 }

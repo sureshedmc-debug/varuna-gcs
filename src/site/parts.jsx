@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { useUser, displayName, logout } from '../lib/auth'
 import { navigate, linkProps, usePath } from './router'
 import { M, NAV } from './content'
+import { openDownloads } from './downloads'
 
 export const EASE = [0.16, 1, 0.3, 1]
 
@@ -135,6 +136,7 @@ export function Nav({ active }) {
             {user ? <UserMenu user={user} /> : (
               <button type="button" className="vs-login" onClick={login}><Icon name="user" size={16} /> Log in</button>
             )}
+            <button type="button" className="vs-nav-dl" onClick={openDownloads} aria-label="Download the VARUNA app"><Icon name="download" size={16} stroke={2.2} /> <span>Download</span></button>
             <button type="button" className="vs-btn primary small vs-hide-sm" onClick={() => navigate('/app')}>Open app <Icon name="arrow" size={16} className="arrow" /></button>
             <button type="button" className="vs-menu-btn" aria-label={drawer ? 'Close menu' : 'Open menu'} aria-expanded={drawer} onClick={() => setDrawer((d) => !d)}>
               <i style={drawer ? { transform: 'translateY(2.75px) rotate(45deg)' } : undefined} />
@@ -153,6 +155,7 @@ export function Nav({ active }) {
               </motion.a>
             ))}
             <div className="vs-drawer-foot">
+              <button type="button" className="vs-btn ghost block" onClick={() => { setDrawer(false); openDownloads() }}><Icon name="download" size={16} /> Download the app</button>
               <button type="button" className="vs-btn primary block" onClick={() => { setDrawer(false); navigate('/app') }}>Open the app <Icon name="arrow" size={16} /></button>
               {!user && <button type="button" className="vs-btn ghost block" onClick={() => { setDrawer(false); login() }}>Log in</button>}
             </div>
@@ -199,6 +202,7 @@ export function Footer() {
             <h4>The app</h4>
             <ul>
               <li><a {...linkProps('/app')}>Open the app</a></li>
+              <li><button type="button" onClick={openDownloads}>Download the app</button></li>
               <li><a {...linkProps('/login?next=/')}>Log in or sign up</a></li>
               <li><a {...linkProps('/#feedback')}>Send feedback</a></li>
             </ul>

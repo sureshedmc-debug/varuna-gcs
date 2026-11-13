@@ -7,6 +7,7 @@ import { navigate } from './router'
 import { EASE, Icon, LoopVideo, Nav, Footer, Reveal, useActiveSection } from './parts'
 import { M, STEPS, MACHINES, STACK, COMPARE, GALLERY, TEAM } from './content'
 import Feedback from './Feedback'
+import { openDownloads } from './downloads'
 
 const SECTIONS = ['story', 'how', 'tech', 'gallery', 'team', 'feedback']
 
@@ -116,7 +117,13 @@ export default function Explore() {
               onClick={() => document.getElementById('story')?.scrollIntoView({ behavior: 'smooth' })} />
           </div>
 
-          <motion.div className="vs-hero-foot" {...rise(3)}>
+          <motion.button type="button" className="vs-dlbtn" onClick={openDownloads} {...rise(3)}>
+            <span className="ic"><Icon name="download" size={24} stroke={2.2} /></span>
+            <span className="t"><b>Download the VARUNA app</b><small>Android · Windows · install on any device</small></span>
+            <span className="go">Free download <Icon name="arrow" size={16} /></span>
+          </motion.button>
+
+          <motion.div className="vs-hero-foot" {...rise(4)}>
             <button type="button" className="vs-play" onClick={() => setView({ items: FILM, index: 0 })}>
               <i><Icon name="play" size={22} /></i>
               <span><b>Watch the film</b><small>56 seconds · sound on</small></span>
@@ -276,6 +283,7 @@ export default function Explore() {
             <p className="vs-lead" style={{ marginInline: 'auto' }}>Sign in and open the same ground-control app the team uses — plan a river mission, watch the drone feed and drive the boat in the simulator.</p>
             <div className="row">
               <button type="button" className="vs-btn primary" onClick={() => navigate('/app')}>Open the app <Icon name="arrow" size={16} className="arrow" /></button>
+              <button type="button" className="vs-btn ghost" onClick={openDownloads}><Icon name="download" size={16} /> Download the app</button>
               <button type="button" className="vs-btn ghost" onClick={() => document.getElementById('feedback')?.scrollIntoView({ behavior: 'smooth' })}>Leave feedback</button>
             </div>
           </Reveal>
