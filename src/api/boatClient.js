@@ -3,7 +3,8 @@
 // The boat is a second vehicle with its own Pi and its own Netbird address, so
 // it has its own base URL, resolved at runtime like the drone's (client.js):
 //   1. localStorage 'varuna.boatBase'  (browser: set from System → Boat connection)
-//   2. '/boat'                         (default: same-origin proxy)
+//   2. build-time VITE_BOAT_BASE       (the hosted web build: Render's /boat)
+//   3. '/boat'                         (default: same-origin proxy)
 //
 // The default goes through a proxy that strips the '/boat' prefix: the desktop
 // app's built-in server (electron/server.cjs, address saved in its settings)
@@ -30,6 +31,9 @@ export function getBoatBase() {
   } catch {
     /* private mode */
   }
+  // The hosted web build (Vercel) sets this to the Render backend's /boat, so
+  // the boat's WebSocket and video go straight there (Vercel can't proxy them).
+  if (import.meta.env && import.meta.env.VITE_BOAT_BASE) return trimSlash(import.meta.env.VITE_BOAT_BASE)
   return BOAT_PROXY_BASE
 }
 

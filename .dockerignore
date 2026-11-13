@@ -1,0 +1,11 @@
+# Only what server/Dockerfile copies goes into the build context.
+*
+!server/package.json
+!server/web.cjs
+!electron/localData.cjs
+!public/config/rivers.json
+!boat-pi/
+boat-pi/data/
+boat-pi/boat_config.json
+boat-pi/__pycache__/
+boat-pi/**/*.pyc

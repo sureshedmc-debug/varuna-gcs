@@ -1,0 +1,26 @@
+# Render Blueprint: the hosted backend for the VARUNA GCS web demo.
+# The frontend is on Vercel (vercel.json); see DEPLOY.md.
+services:
+  - type: web
+    name: varuna-gcs-api
+    runtime: docker
+    plan: free
+    branch: boat-vision
+    dockerfilePath: ./server/Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz
+    autoDeploy: true
+    buildFilter:
+      paths:
+        - server/**
+        - boat-pi/**
+        - electron/localData.cjs
+        - public/config/rivers.json
+        - render.yaml
+    envVars:
+      # The Vercel frontend's address(es). '*' matches preview-deploy suffixes.
+      - key: ALLOWED_ORIGINS
+        value: https://varuna-gcs.vercel.app,https://varuna-gcs-*.vercel.app
+      # Free plan: no disk, so accounts and records reset on every restart.
+      - key: VARUNA_DATA_DIR
+        value: /tmp/varuna-data
