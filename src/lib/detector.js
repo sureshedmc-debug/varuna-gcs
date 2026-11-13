@@ -445,6 +445,20 @@ export function suppressByPerson(trashBoxes, personBoxes) {
   })
 }
 
+/**
+ * For a webcam, where the person holding the plastic is always in the picture.
+ * A trash box mostly on a person is removed when it IS the person (a large part
+ * of their size: their shirt, their body) or when it is unsure (below
+ * `minOnPerson`: a hand, a face), unless another model named it (`sure`, a
+ * COCO bottle). Something they hold up stays.
+ */
+export function suppressPersonBody(trashBoxes, personBoxes, minOnPerson = 0.5) {
+  if (!personBoxes || !personBoxes.length) return trashBoxes
+  const area = (b) => Math.max(0, b.x2 - b.x1) * Math.max(0, b.y2 - b.y1)
+  return trashBoxes.filter((t) => !personBoxes.some((p) =>
+    overlapRatio(t, p) > 0.6 && (area(t) > 0.3 * area(p) || (t.score < minOnPerson && !t.sure))))
+}
+
 function nms(boxes, iouThr) {
   boxes.sort((p, q) => q.score - p.score)
   const keep = []

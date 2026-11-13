@@ -27,7 +27,9 @@
 .vs *, .vs *::before, .vs *::after { box-sizing: border-box; }
 .vs a { color: inherit; text-decoration: none; }
 .vs button { font: inherit; color: inherit; }
-.vs img, .vs video { display: block; max-width: 100%; }
+/* :where() keeps this at zero specificity, so utilities like Tailwind's
+   .hidden still win (the detector on /try keeps its source <video> hidden). */
+:where(.vs) :where(img, video) { display: block; max-width: 100%; }
 .vs ::selection { background: rgba(103, 232, 249, 0.35); color: #fff; }
 .vs-mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
 .vs-grad { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }

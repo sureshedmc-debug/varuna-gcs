@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  createPlasticDetector, mergeBoxes, makeTileGrid, overlapRatio, suppressByPerson,
+  createPlasticDetector, mergeBoxes, makeTileGrid, overlapRatio, suppressByPerson, suppressPersonBody,
   DETECT_MODELS, DEFAULT_DETECT_MODEL, getDetectModel, setDetectModel,
 } from '../lib/detector'
 import { BoxTracker } from '../lib/track'
@@ -99,6 +99,14 @@ const TILE_CONF_FACTOR = 0.85
 // people move slowly: running them on every frame tripled each frame's work.
 // They run at most this often; frames in between reuse their last answer.
 const HUMAN_EVERY_MS = 350
+// A webcam is not a drone looking down at a river: the plastic is held up
+// close, by a person who is in the picture. There, the general (COCO) model's
+// bottles and cups are added from the same pass that finds people (ITEM_CONF),
+// a zoomed tile runs on every pass (the river model misses close-up items at
+// full-frame scale; CAM_TILE_CONF keeps its zoomed-in guesses honest), and only
+// boxes that ARE a person are dropped, not ones they hold.
+const ITEM_CONF = 0.35
+const CAM_TILE_CONF = 0.35
 
 // One CPU copy of the current picture per detection pass. Every model, box
 // check and crop then reads from it. Reading pixels straight from the live
@@ -518,7 +526,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource: sourceProp
 
   async function detectLoop() {
     let frames=0, t0=performance.now(), taintWarned=false, lastShotTs=null
-    let humanAt=-Infinity, lastFaces=[], lastPersons=[]
+    let humanAt=-Infinity, lastFaces=[], lastPersons=[], lastItems=[]
     while(runningRef.current&&detRef.current&&srcElRef.current){
       const tickStart=performance.now()
       const loopFrame={} // the person filter shares one COCO model pass per loop
@@ -539,20 +547,28 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource: sourceProp
         catch(e){ if(!taintWarned&&/tainted|cross.origin|SecurityError/i.test(e?.message??'')){taintWarned=true;setMsg('Drone stream blocked by CORS')} }
       }
       await yieldToUI()
-      if(humanDetectionRef.current&&tickStart-humanAt>=HUMAN_EVERY_MS){
+      const cam=sourceRef.current==='webcam'
+      const wantItems=cam&&trashDetectionRef.current
+      if((humanDetectionRef.current||wantItems)&&tickStart-humanAt>=HUMAN_EVERY_MS){
         humanAt=tickStart
-        if(faceDetRef.current){
+        if(humanDetectionRef.current&&faceDetRef.current){
           try{lastFaces=await faceDetRef.current.detectFaces(src,{confThr:FACE_CONF,iouThr:0.25})}catch(e){console.warn('[face]',e)}
         }
         await yieldToUI()
-        if(personDetRef.current){
+        if(humanDetectionRef.current&&personDetRef.current){
           try{lastPersons=await personDetRef.current.detectPersons(src,{confThr:PERSON_CONF,iouThr:0.30,frame:loopFrame})}catch(e){console.warn('[person]',e)}
+        }
+        // Same COCO pass as the people (same frame token): no extra model run.
+        if(wantItems&&personDetRef.current){
+          try{lastItems=await personDetRef.current.detectItems(src,{confThr:ITEM_CONF,frame:loopFrame})}catch(e){console.warn('[items]',e)}
         }
       }
       if(humanDetectionRef.current){faceBoxes=lastFaces;personBoxes=lastPersons}
-      else{lastFaces=[];lastPersons=[];humanAt=-Infinity}
+      else{lastFaces=[];lastPersons=[];if(!wantItems)humanAt=-Infinity}
+      if(!wantItems)lastItems=[]
       let runTile=false
-      if(longRangeRef.current){
+      if(cam&&!longRangeRef.current){runTile=true;gridSizeRef.current=2}
+      else if(longRangeRef.current){
         if(emaRef.current<=BUDGET_MS){runTile=true;if(emaRef.current<=BUDGET_MS*0.4)gridSizeRef.current=3;else if(emaRef.current>BUDGET_MS*0.7)gridSizeRef.current=2}
         else if(emaRef.current<=BUDGET_MS*1.8){runTile=tileSkipRef.current++%2===0;gridSizeRef.current=2}
         else{gridSizeRef.current=2}
@@ -560,15 +576,19 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource: sourceProp
       if(runTile){
         const tiles=ensureTileGrid(),idx=tileIndexRef.current%tiles.length,rect=tiles[idx]
         activeTileRef.current=rect
-        try{const tc=Math.max(DETECT_CONF_FLOOR,confRef.current*TILE_CONF_FACTOR),tb=await detRef.current.detect(src,{confThr:tc,iouThr:0.40,rect});tileBoxesRef.current.set(idx,{boxes:tb,ts:performance.now()})}catch{}
+        try{const tc=cam&&!longRangeRef.current?Math.max(CAM_TILE_CONF,confRef.current):Math.max(DETECT_CONF_FLOOR,confRef.current*TILE_CONF_FACTOR),tb=await detRef.current.detect(src,{confThr:tc,iouThr:0.40,rect});tileBoxesRef.current.set(idx,{boxes:tb,ts:performance.now()})}catch{}
         tileIndexRef.current=idx+1
       } else { activeTileRef.current=null }
       const now=performance.now()
       emaRef.current=emaRef.current*0.8+(now-tickStart)*0.2
       const ft=[];for(const{boxes,ts}of tileBoxesRef.current.values()){if(now-ts<=TILE_TTL)ft.push(boxes)}
-      const merged=ft.length?mergeBoxes([trashBoxes,...ft],MERGE_IOU):trashBoxes
+      const extra=lastItems.length?[...ft,lastItems]:ft
+      const merged=extra.length?mergeBoxes([trashBoxes,...extra],MERGE_IOU):trashBoxes
       let finalTrash=merged
-      if(humanDetectionRef.current){finalTrash=suppressByPerson(suppressByFace(merged,faceBoxes),personBoxes)}
+      if(humanDetectionRef.current){
+        const noFace=suppressByFace(merged,faceBoxes)
+        finalTrash=cam?suppressPersonBody(noFace,personBoxes):suppressByPerson(noFace,personBoxes)
+      }
       // Self-learning: score every box. 'show' = counted as before, 'explore' =
       // drawn with a '?' for the operator to answer (not counted), 'hide' = a
       // learned false alarm. Features are computed even with learning off, so
