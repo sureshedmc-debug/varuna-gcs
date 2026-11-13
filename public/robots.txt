@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://varuna-gcs.vercel.app/sitemap.xml
