@@ -307,6 +307,12 @@ class DroneLink:
         if not self._tried:
             return "Looking for the Pixhawk…"
         parts = [f"{k}: {v}" for k, v in self._tried.items()]
+        forced = (self.cfg["mav_connection"] or "").strip()
+        if forced.startswith("udpout:"):
+            # Through the phone relay (phone-link/): the wiring hints below are for a Pi.
+            return (f"No drone data from the phone relay at {forced[7:]}. Check that relay.py is running on the "
+                    "phone and shows 'drone link from …' (the ESP32 is on the phone's hotspot and wired to "
+                    "TELEM2), and that the phone and this laptop are both connected in NetBird.")
         hint = ""
         seen = set(self._tried.values())
         if any(v.startswith("data") for v in seen):

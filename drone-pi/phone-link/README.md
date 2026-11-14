@@ -56,22 +56,26 @@ DroneBridge and start the relay with `--esp <that IP>`.
    - **Settings:** video resolution **640x480** (or 800x480), quality about
      **50**, FPS limit **15**. No login or password; NetBird already keeps it
      private.
-   - **Start:** tap **Start server**.
+   - **Start:** tap **Start server**. The free version shows an ad first: close
+     it with its ✕, and don't tap Install. The server address is shown at the
+     bottom of the camera screen.
 4. **Termux** (telemetry relay):
-   - **Install:** get Termux from **F-Droid**. The Play Store version is outdated.
-   - **Copy the relay:** put `relay.py` on the phone, for example in Downloads.
-   - **Run, in Termux:**
+   - **Install:** get Termux from Google Play (publisher Fredrik Fornwall) or from F-Droid.
+   - **Set up, in Termux:**
      ```
-     pkg install python
-     termux-setup-storage
-     cp ~/storage/downloads/relay.py ~/
-     termux-wake-lock
-     python relay.py
+     pkg install -y python
+     curl -fsSLO https://raw.githubusercontent.com/sureshedmc-debug/varuna-gcs/boat-vision/drone-pi/phone-link/relay.py
+     curl -fsSLO https://raw.githubusercontent.com/sureshedmc-debug/varuna-gcs/boat-vision/drone-pi/phone-link/relay.sh
+     chmod +x relay.sh
      ```
+   - **Each flight:** run `./relay.sh`. It keeps the phone awake and starts the relay.
    - **What you should see:** within a few seconds it prints
      `drone link from 192.168.x.x` once the ESP32 answers, then
      `ground station … connected` once the laptop backend runs. A status line
      every 10 s counts packets each way.
+   - **Stopping it:** press CTRL on Termux's extra-keys row, then `c`.
+   - The relay finds the ESP32 by reading the phone's network interfaces. That
+     works on Android 16, where `ip addr` is not allowed.
 5. **Keep everything running:** in Android settings, set **battery optimisation
    off** (Unrestricted) for Termux, NetBird and IP Webcam. Otherwise Android stops
    them in the background.

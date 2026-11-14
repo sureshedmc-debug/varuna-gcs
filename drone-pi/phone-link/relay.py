@@ -18,7 +18,7 @@ Plain Python 3 standard library, nothing to install:
 DroneBridge in Wi-Fi client mode sends nothing until a ground station sends it
 a packet first; it then answers to where that packet came from. So the relay
 "pokes" it with a GCS heartbeat: at --esp, or, without --esp, at every address
-of the phone's hotspot network (found with "ip addr") until the ESP32 answers.
+of the phone's hotspot network (read from its network interfaces) until the ESP32 answers.
 The ESP32 side is then learned from the MAVLink arriving on --fc-port, the
 backend side from the first packet on --gcs-port (the backend sends a heartbeat
 every second, so it shows up at once). Any number of ground stations may connect
@@ -42,31 +42,65 @@ POKE_S = 2              # poke the ESP32 this often until it answers
 NOT_HOTSPOT = ("lo", "rmnet", "ccmni", "clat", "v4-", "tun", "wt", "dummy", "ip6", "sit", "radio", "p2p")
 
 
-def hotspot_hosts(ip_output=None):
-    """Every other address of the phone's own Wi-Fi/hotspot networks (/24 around
-    the phone's address), from "ip -4 -o addr". Empty if that can't be read."""
+def interfaces_ioctl():
+    """(name, "address/24") of every IPv4 interface, read with the SIOCGIFCONF
+    ioctl. It works where "ip addr" is refused: Termux from Google Play on
+    recent Android may not open netlink sockets."""
+    try:
+        import array
+        import fcntl                                     # not on Windows
+    except ImportError:
+        return []
+    ifreq = 40 if struct.calcsize("P") == 8 else 32      # struct ifreq size
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        buf = array.array("B", bytes(ifreq * 64))
+        req = struct.pack("iL", len(buf), buf.buffer_info()[0])
+        n = struct.unpack("iL", fcntl.ioctl(s.fileno(), 0x8912, req))[0]   # SIOCGIFCONF
+        raw = buf.tobytes()[:n]
+    except Exception:
+        return []
+    finally:
+        s.close()
+    out = []
+    for i in range(0, len(raw) - ifreq + 1, ifreq):
+        name = raw[i:i + 16].split(b"\0", 1)[0].decode("ascii", "replace")
+        out.append((name, socket.inet_ntoa(raw[i + 20:i + 24]) + "/24"))
+    return out
+
+
+def interfaces_ip(ip_output=None):
+    """(name, "address/prefix") from "ip -4 -o addr" output (run it if not given)."""
     if ip_output is None:
         try:
             ip_output = subprocess.run(["ip", "-4", "-o", "addr"], capture_output=True, text=True,
                                        timeout=3).stdout
         except Exception:
             return []
-    hosts = []
+    out = []
     for line in ip_output.splitlines():
         parts = line.split()
-        if "inet" not in parts or len(parts) < 4:
-            continue
-        name = parts[1].rstrip(":")
+        if "inet" in parts and len(parts) >= 4:
+            out.append((parts[1].rstrip(":"), parts[parts.index("inet") + 1]))
+    return out
+
+
+def hotspot_hosts(ip_output=None):
+    """Every other address of the phone's own Wi-Fi/hotspot networks (/24 around
+    the phone's address). Empty if the interfaces can't be read."""
+    pairs = interfaces_ip(ip_output) if ip_output is not None else (interfaces_ioctl() or interfaces_ip())
+    hosts = []
+    for name, cidr in pairs:
         if name.startswith(NOT_HOTSPOT):
             continue
         try:
-            iface = ipaddress.ip_interface(parts[parts.index("inet") + 1])
+            iface = ipaddress.ip_interface(cidr)
         except ValueError:
             continue
         if not iface.ip.is_private or iface.ip in ipaddress.ip_network("100.64.0.0/10"):
             continue
         net = ipaddress.ip_network(f"{iface.ip}/{max(iface.network.prefixlen, 24)}", strict=False)
-        hosts += [str(h) for h in net.hosts() if h != iface.ip]
+        hosts += [str(h) for h in net.hosts() if h != iface.ip and str(h) not in hosts]
     return hosts
 
 
