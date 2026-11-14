@@ -119,7 +119,20 @@ DroneBridge and start the relay with `--esp <that IP>`.
      curl -fsSLO https://raw.githubusercontent.com/sureshedmc-debug/varuna-gcs/boat-vision/drone-pi/phone-link/relay.sh
      chmod +x relay.sh
      ```
-   - **Each flight:** run `./relay.sh`. It keeps the phone awake and starts the relay.
+   - **Home-screen shortcut (optional):**
+     - **Create the script, in Termux:**
+       ```
+       mkdir -p ~/.shortcuts
+       printf '#!/data/data/com.termux/files/usr/bin/bash\ncd ~\n./relay.sh\ntermux-wake-unlock\nread -r -p "Relay stopped. Press Enter to close. " _\n' > ~/.shortcuts/VARUNA-Relay
+       chmod +x ~/.shortcuts/VARUNA-Relay
+       ```
+     - **Add it to the home screen:** long-press the home screen, open
+       **Widgets**, find **Termux**, and add the shortcut. Then pick
+       **VARUNA-Relay**.
+     - **What it does:** opens Termux and runs the relay. When the relay stops,
+       it releases the wake lock and waits for Enter.
+   - **Each flight:** tap **VARUNA-Relay**, or run `./relay.sh`. It keeps the
+     phone awake and starts the relay.
    - **With the ESP32 on USB:**
      - **First time:** Android asks whether Termux may use the USB device. Tick
        "always" if offered, then tap OK.
