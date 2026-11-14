@@ -5,20 +5,70 @@ ESP32 carries the telemetry. The VARUNA drone backend runs on the laptop instead
 of the Pi, so the app works as before.
 
 ```
-Pixhawk TELEM2 ──wires──► ESP32 (DroneBridge) ──phone hotspot Wi-Fi──► phone
-                                                                        ├─ IP Webcam        :8080  video
-                                                                        └─ relay.py (Termux) :14551 telemetry
-                                                                              │  4G + NetBird
-                                                                              ▼
-                          laptop: start_laptop_backend.bat (port 8000) ──► VARUNA app
+Pixhawk TELEM2 ──wires──► ESP32 ──USB-C cable (or hotspot Wi-Fi)──► phone
+                                                                     ├─ IP Webcam        :8080  video
+                                                                     └─ relay.py (Termux) :14551 telemetry
+                                                                           │  4G + NetBird
+                                                                           ▼
+                       laptop: start_laptop_backend.bat (port 8000) ──► VARUNA app
 ```
 
-**Why the relay is needed:** NetBird gives only the phone itself an address on
-the private network. The ESP32 is behind the phone's hotspot, and Android doesn't
-route NetBird traffic to hotspot devices. `relay.py` on the phone passes the
-MAVLink across.
+The ESP32 reaches the phone in one of two ways. Set up one of them:
 
-## 1. ESP32: DroneBridge
+- **USB-C cable (recommended), section 1A:** the phone powers the ESP32, there's
+  no hotspot to set up, and nothing on the drone depends on Wi-Fi.
+- **Wi-Fi hotspot, section 1B:** the ESP32 runs DroneBridge and joins the phone's
+  hotspot.
+
+**Why the relay is needed:** NetBird gives only the phone itself an address on
+the private network. The ESP32 hangs off the phone (USB or hotspot), not on
+NetBird. `relay.py` on the phone passes the MAVLink across. `./relay.sh` uses USB
+when the ESP32 is plugged in, and the hotspot otherwise.
+
+## 1A. ESP32 on the phone's USB-C port
+
+1. **Flash the bridge sketch:**
+   - **Open:** in Arduino IDE (with the "esp32" boards package by Espressif),
+     open `esp32_usb_bridge/esp32_usb_bridge.ino`.
+   - **Board:** pick your board. For an ESP32-S3 or C3 that has only the native
+     USB port, also set Tools > USB CDC On Boot > Enabled.
+   - **Upload:** upload it from the laptop.
+   - **What it does:** copies bytes between the Pixhawk and USB, with Wi-Fi and
+     Bluetooth off. It compiles with no errors or warnings for ESP32, ESP32-S3
+     and ESP32-C3 (esp32 core 3.3.2).
+2. **Wiring:**
+
+   | Pixhawk TELEM2 | ESP32 DevKit | ESP32-S3 | ESP32-C3 |
+   |---|---|---|---|
+   | TX | GPIO 16 (RX2) | GPIO 18 | GPIO 4 |
+   | RX | GPIO 17 (TX2) | GPIO 17 | GPIO 5 |
+   | GND | GND | GND | GND |
+   | 5 V | **don't connect** | **don't connect** | **don't connect** |
+
+   - **Pins:** to use other pins, change `FC_RX_PIN` / `FC_TX_PIN` at the top of
+     the sketch.
+   - **Pixhawk side:** no change. TELEM2 stays MAVLink2 at 57600.
+3. **Cable to the phone:**
+   - **Power:** the phone powers the ESP32 through the cable (OTG).
+   - **Use an OTG adapter:** a USB-C OTG adapter (USB-C plug to USB-A socket)
+     plus a USB-A to USB-C cable to the ESP32. Many ESP32 boards lack the USB-C
+     resistors that make a phone supply power over a plain C-to-C cable, so
+     the adapter is the reliable way.
+   - **Check:** the ESP32's power LED lights when it's plugged in.
+   - **vivo phones:** turn on **Settings → Other network & connections → OTG**.
+     vivo turns it off after a few idle minutes, so turn it on just before
+     starting the relay.
+4. **Termux, once:** run `pkg install -y termux-api`. That provides
+   `termux-usb`, which the Play Store Termux needs to use USB devices.
+5. **Supported USB chips:** the relay drives the ESP32's USB chip itself:
+   - CH340 / CH341
+   - CP2102 / CP210x
+   - CH9102 and other CDC devices
+   - the native USB of the ESP32-S3 / C3
+
+   It talks to the chip at 115200 baud (`USB_BAUD` in the sketch).
+
+## 1B. ESP32 on the phone's hotspot: DroneBridge
 
 1. **Flash it:** use DroneBridge for ESP32 from its web flasher,
    <https://drone-bridge.com/flasher/>, in Chrome or Edge with the ESP32 on USB.
@@ -49,7 +99,8 @@ DroneBridge and start the relay with `--esp <that IP>`.
 
 ## 2. Phone (Android)
 
-1. **Hotspot and data:** turn the **hotspot on**, with **mobile data on**.
+1. **Data (and hotspot):** turn **mobile data on**. Turn the **hotspot on** only
+   for an ESP32 on Wi-Fi (1B).
 2. **NetBird:** install NetBird, sign in to the same network as the laptop, and
    connect. Note the phone's **NetBird IP** (100.x.x.x).
 3. **IP Webcam** (video):
@@ -63,16 +114,23 @@ DroneBridge and start the relay with `--esp <that IP>`.
    - **Install:** get Termux from Google Play (publisher Fredrik Fornwall) or from F-Droid.
    - **Set up, in Termux:**
      ```
-     pkg install -y python
+     pkg install -y python termux-api
      curl -fsSLO https://raw.githubusercontent.com/sureshedmc-debug/varuna-gcs/boat-vision/drone-pi/phone-link/relay.py
      curl -fsSLO https://raw.githubusercontent.com/sureshedmc-debug/varuna-gcs/boat-vision/drone-pi/phone-link/relay.sh
      chmod +x relay.sh
      ```
    - **Each flight:** run `./relay.sh`. It keeps the phone awake and starts the relay.
-   - **What you should see:** within a few seconds it prints
-     `drone link from 192.168.x.x` once the ESP32 answers, then
-     `ground station … connected` once the laptop backend runs. A status line
-     every 10 s counts packets each way.
+   - **With the ESP32 on USB:**
+     - **First time:** Android asks whether Termux may use the USB device. Tick
+       "always" if offered, then tap OK.
+     - **Startup line:** it prints `ESP32 on USB (CH340/CH341 …)`, or whichever
+       chip the board has.
+     - **Drone data:** it prints `drone link over USB` once the Pixhawk's data
+       arrives.
+   - **With the ESP32 on Wi-Fi:** it prints `drone link from 192.168.x.x` once
+     the ESP32 answers.
+   - **Then:** `ground station … connected` once the laptop backend runs. A
+     status line every 10 s counts packets each way.
    - **Stopping it:** press CTRL on Termux's extra-keys row, then `c`.
    - The relay finds the ESP32 by reading the phone's network interfaces. That
      works on Android 16, where `ip addr` is not allowed.
@@ -113,6 +171,11 @@ DroneBridge and start the relay with `--esp <that IP>`.
 
 ## Test without the drone
 
-`python drone-pi/test_phone_link.py` runs a simulated vehicle, the relay, a fake
-IP Webcam and the real backend on this computer. It checks that telemetry,
-commands and video all pass through.
+- **Whole chain:** `python drone-pi/test_phone_link.py` runs a simulated
+  vehicle, the relay, a fake IP Webcam and the real backend on this computer. It
+  checks that telemetry, commands and video all pass through.
+- **USB mode:** `python drone-pi/test_relay_usb.py` checks the relay's USB mode
+  against fake CH340, CP2102 and ESP32-S3 devices:
+  - the setup requests and baud rate
+  - MAVLink framing
+  - telemetry out and commands in
