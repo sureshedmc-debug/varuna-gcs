@@ -119,20 +119,23 @@ DroneBridge and start the relay with `--esp <that IP>`.
      curl -fsSLO https://raw.githubusercontent.com/sureshedmc-debug/varuna-gcs/boat-vision/drone-pi/phone-link/relay.sh
      chmod +x relay.sh
      ```
-   - **Home-screen shortcut (optional):**
-     - **Create the script, in Termux:**
+   - **Home-screen shortcut: VARUNA-Start (camera and relay together):**
+     - **Install the script, in Termux:**
        ```
        mkdir -p ~/.shortcuts
-       printf '#!/data/data/com.termux/files/usr/bin/bash\ncd ~\n./relay.sh\ntermux-wake-unlock\nread -r -p "Relay stopped. Press Enter to close. " _\n' > ~/.shortcuts/VARUNA-Relay
-       chmod +x ~/.shortcuts/VARUNA-Relay
+       curl -fsS https://raw.githubusercontent.com/sureshedmc-debug/varuna-gcs/boat-vision/drone-pi/phone-link/VARUNA-Start -o ~/.shortcuts/VARUNA-Start
+       chmod +x ~/.shortcuts/VARUNA-Start
        ```
      - **Add it to the home screen:** long-press the home screen, open
        **Widgets**, find **Termux**, and add the shortcut. Then pick
-       **VARUNA-Relay**.
-     - **What it does:** opens Termux and runs the relay. When the relay stops,
-       it releases the wake lock and waits for Enter.
-   - **Each flight:** tap **VARUNA-Relay**, or run `./relay.sh`. It keeps the
-     phone awake and starts the relay.
+       **VARUNA-Start**.
+     - **What it does:** opens IP Webcam and starts the relay in Termux at the
+       same time. In IP Webcam, tap **Start server** and OK the ad. IP Webcam
+       lets other apps open its screen, but not start its server.
+     - **When the relay stops:** it releases the wake lock and waits for Enter.
+       The camera keeps running.
+   - **Each flight:** tap **VARUNA-Start**, or run `./relay.sh` for the relay
+     alone. It keeps the phone awake.
    - **With the ESP32 on USB:**
      - **First time:** Android asks whether Termux may use the USB device. Tick
        "always" if offered, then tap OK.
@@ -147,9 +150,16 @@ DroneBridge and start the relay with `--esp <that IP>`.
    - **Stopping it:** press CTRL on Termux's extra-keys row, then `c`.
    - The relay finds the ESP32 by reading the phone's network interfaces. That
      works on Android 16, where `ip addr` is not allowed.
-5. **Keep everything running:** in Android settings, set **battery optimisation
-   off** (Unrestricted) for Termux, NetBird and IP Webcam. Otherwise Android stops
-   them in the background.
+5. **Keep everything running:** otherwise the phone closes these apps in the
+   background, and NetBird drops first. Do all four:
+   - **Background power:** set Termux, NetBird and IP Webcam to **Allow
+     background power usage**. On vivo: Settings → Battery → Background power
+     control.
+   - **IP Webcam:** under Optional permissions, turn on **Allow streaming in
+     background**, and allow display over other apps.
+   - **Lock in Recents:** open Recents, tap the ▼ next to each of the three
+     apps, and choose Lock. vivo's memory cleaner skips locked apps.
+   - **Never swipe them away:** swiping an app away in Recents closes it.
 
 ## 3. Laptop
 

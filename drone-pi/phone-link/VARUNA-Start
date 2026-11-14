@@ -1,0 +1,20 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# VARUNA: open the phone camera (IP Webcam) and start the drone telemetry relay together.
+# Home-screen shortcut: copy to ~/.shortcuts/VARUNA-Start (see README.md).
+#
+# IP Webcam lets other apps open only its main screen, not start its server, so
+# tap "Start server" there once. With "Allow streaming in background" on, it keeps
+# streaming when you leave it. The relay starts here at the same time.
+
+if am start -n com.pas.webcam/.Configuration >/dev/null 2>&1; then
+  echo "IP Webcam is open: tap Start server (skip it if the camera is already running)."
+else
+  echo "Couldn't open IP Webcam: open it yourself and tap Start server."
+fi
+
+echo "Starting the relay..."
+cd ~ || exit 1
+./relay.sh
+termux-wake-unlock
+echo
+read -r -p "Relay stopped (the camera keeps running). Press Enter to close. " _
