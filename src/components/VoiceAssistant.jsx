@@ -98,6 +98,15 @@ export default function VoiceAssistant({ tab, wakeSignal, wakeWordOn, onWakeStat
   }, [])
 
   // ---- wake word ("Hi Varuna") in the background while asleep ----
+  // Not on the Live tab: always-on speech recognition takes one to two CPU
+  // cores, which the live video and the AI detection need (tap-to-talk works).
+  const liveRef = useRef(tab === 'live')
+  liveRef.current = tab === 'live'
+  useEffect(() => {
+    if (tab === 'live') wakeRef.current?.pause()
+    else if (!awakeRef.current) wakeRef.current?.resume()
+  }, [tab])
+
   useEffect(() => {
     if (!wakeWordOn || !wakeWordSupported) {
       onWakeState?.(wakeWordSupported ? 'off' : 'unsupported')
@@ -106,7 +115,7 @@ export default function VoiceAssistant({ tab, wakeSignal, wakeWordOn, onWakeStat
     const w = createWakeListener({ onWake: ({ rest }) => wake(rest), onState: (s) => onWakeState?.(s) })
     if (!w) onWakeState?.('unsupported')
     wakeRef.current = w
-    if (awakeRef.current) w?.pause()
+    if (awakeRef.current || liveRef.current) w?.pause()
     return () => {
       w?.stop()
       wakeRef.current = null
@@ -163,7 +172,7 @@ export default function VoiceAssistant({ tab, wakeSignal, wakeWordOn, onWakeStat
       return null
     })
     setTimeout(() => {
-      if (!awakeRef.current) wakeRef.current?.resume()
+      if (!awakeRef.current && !liveRef.current) wakeRef.current?.resume()
     }, 600)
   }
 

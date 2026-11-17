@@ -1,21 +1,29 @@
 @echo off
 rem VARUNA drone backend on this laptop, with the phone on the drone.
-rem   Telemetry: Pixhawk -> ESP32 -> phone (relay.py) -> NetBird -> here
-rem   Video:     phone IP Webcam -> NetBird -> here
+rem   Telemetry: Pixhawk -> ESP32 -> phone (relay.py) -> Wi-Fi -> here
+rem   Video:     phone VARUNA Cam app -> Wi-Fi -> here
+rem The phone and this laptop must be on the same Wi-Fi (or the laptop on the
+rem phone's hotspot). Over the internet, use the phone's NetBird IP instead.
 rem Then the VARUNA app connects to http://localhost:8000 as it did to the Pi.
 rem
-rem   start_laptop_backend.bat              (asks for the phone's NetBird IP the first time)
-rem   start_laptop_backend.bat 100.99.1.2   (use and remember this IP)
+rem   start_laptop_backend.bat              (asks for the phone's IP the first time)
+rem   start_laptop_backend.bat 192.168.1.3  (use and remember this IP)
+rem   start_laptop_backend.bat 192.168.1.23 192.168.1.40
+rem                                         (several drone phones: whichever runs VARUNA Cam is used)
 setlocal
 cd /d "%~dp0"
-set "PHONE=%~1"
-if "%PHONE%"=="" if exist phone_ip.txt set /p PHONE=<phone_ip.txt
-if "%PHONE%"=="" set /p "PHONE=Phone's NetBird IP (shown in the NetBird app on the phone, 100.x.x.x): "
-if "%PHONE%"=="" (
+set "PHONES=%*"
+if "%PHONES%"=="" if exist phone_ip.txt set /p PHONES=<phone_ip.txt
+if "%PHONES%"=="" set /p "PHONES=Phone's IP (shown in the VARUNA Cam app, e.g. 192.168.1.3): "
+if "%PHONES%"=="" (
   echo No phone IP given.
   exit /b 1
 )
-> phone_ip.txt echo %PHONE%
+> phone_ip.txt echo %PHONES%
+for /f "tokens=1" %%a in ("%PHONES%") do set "PHONE=%%a"
+set "VARUNA_PHONE_IPS=%PHONES%"
+rem The backend finds VARUNA Cam by itself (it answers a broadcast) and saves its new address here.
+set "VARUNA_PHONE_IP_FILE=%~dp0phone_ip.txt"
 
 set "PY=py"
 where py >nul 2>nul || set "PY=python"
@@ -23,9 +31,16 @@ where py >nul 2>nul || set "PY=python"
   echo Installing the backend's Python packages...
   %PY% -m pip install -r ..\requirements.txt || exit /b 1
 )
+rem Video stabilisation (stabilize.py) needs OpenCV and ffmpeg on this computer.
+%PY% -c "import cv2, numpy" 2>nul || (
+  echo Installing OpenCV for video stabilisation...
+  %PY% -m pip install opencv-python-headless numpy || echo Without OpenCV the video is not stabilised.
+)
+where ffmpeg >nul 2>nul || echo ffmpeg is missing: install it ^(winget install Gyan.FFmpeg^) for H.264 video and stabilisation.
 
 echo.
-echo Phone: %PHONE%  ^|  telemetry udpout:%PHONE%:14551  ^|  video http://%PHONE%:8080/video
+echo Phones: %PHONES%  ^(starts with %PHONE%, moves to whichever runs VARUNA Cam^)
+echo Phone: %PHONE%  ^|  video http://%PHONE%:8080/video  ^|  GPS http://%PHONE%:8080/location/stream  ^|  telemetry udpout:%PHONE%:14551 ^(if the ESP32 relay runs^)
 echo App:   http://localhost:8000   (Ctrl+C to stop)
 echo.
 cd ..

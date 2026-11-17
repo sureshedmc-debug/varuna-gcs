@@ -1,14 +1,23 @@
 # Phone link: fly without the drone Pi
 
+> **No backend to start (phone only, 2026-11-17):** with only the phone on the
+> drone (video and GPS, no telemetry link), `npm run dev` is all that runs. Open
+> VARUNA Cam (2.5 or later) on the phone, put the phone and the laptop on the
+> same Wi-Fi or hotspot, and open http://localhost:5173. The dev server finds
+> the phone by itself, follows it if its address changes, and serves its video
+> and GPS to the app (`electron/droneDirect.cjs`; test:
+> `node scripts/test-drone-direct.mjs`). If `start_laptop_backend.bat` is
+> running anyway, the app uses that backend instead, as below.
+
 When the drone has no Raspberry Pi, a phone on the drone carries the video and an
 ESP32 carries the telemetry. The VARUNA drone backend runs on the laptop instead
 of the Pi, so the app works as before.
 
 ```
 Pixhawk TELEM2 ──wires──► ESP32 ──USB-C cable (or hotspot Wi-Fi)──► phone
-                                                                     ├─ IP Webcam        :8080  video
+                                                                     ├─ VARUNA Cam       :8080  video
                                                                      └─ relay.py (Termux) :14551 telemetry
-                                                                           │  4G + NetBird
+                                                                           │  same Wi-Fi
                                                                            ▼
                        laptop: start_laptop_backend.bat (port 8000) ──► VARUNA app
 ```
@@ -20,10 +29,31 @@ The ESP32 reaches the phone in one of two ways. Set up one of them:
 - **Wi-Fi hotspot, section 1B:** the ESP32 runs DroneBridge and joins the phone's
   hotspot.
 
-**Why the relay is needed:** NetBird gives only the phone itself an address on
-the private network. The ESP32 hangs off the phone (USB or hotspot), not on
-NetBird. `relay.py` on the phone passes the MAVLink across. `./relay.sh` uses USB
-when the ESP32 is plugged in, and the hotspot otherwise.
+**Same network:** the phone and the laptop must be on the same Wi-Fi, or the
+laptop joins the phone's hotspot. The laptop reaches the phone at its Wi-Fi IP,
+which VARUNA Cam shows (for example 192.168.1.3). No NetBird or internet is needed.
+
+**Without the telemetry link (phone GPS):** the ESP32 and `relay.py` can be left
+out. VARUNA Cam 2.2 or newer then gives the drone's position from the phone's own
+GPS, and the camera's heading and tilt from its sensors (gyroscope, or compass +
+accelerometer on phones without one). The backend reads them from
+`http://<phone>:8080/location/stream` and shows them as the drone's position:
+the floating map on the Live tab, the path flown, and each detection placed on
+the water from the exact moment its video frame was taken. Allow **Location
+(precise)** when VARUNA Cam asks, and keep Location on in the phone's settings.
+The first good fix becomes the take-off point (height 0). Tap **Set take-off
+point here** in VARUNA Cam (or in the enlarged map on the Live tab) at the launch
+spot. Phones without a barometer give height from GPS, which is several metres
+rough. For accurate detection positions, set `phone_fixed_alt_m` to the height
+you fly at (System → Live tuning). `position_source` picks the source: `auto`
+(the Pixhawk's GPS when it has a fix, else the phone's), `phone` or `pixhawk`.
+Mount the phone with the camera **looking straight down**. Arm, take-off and
+land buttons are hidden while no flight controller is connected: fly by RC.
+
+**Why the relay is needed:** the ESP32 hangs off the phone (USB or hotspot), so
+the laptop can't reach it directly. `relay.py` on the phone passes the MAVLink
+across. `./relay.sh` uses USB when the ESP32 is plugged in, and the hotspot
+otherwise.
 
 ## 1A. ESP32 on the phone's USB-C port
 
@@ -99,17 +129,59 @@ DroneBridge and start the relay with `--esp <that IP>`.
 
 ## 2. Phone (Android)
 
-1. **Data (and hotspot):** turn **mobile data on**. Turn the **hotspot on** only
-   for an ESP32 on Wi-Fi (1B).
-2. **NetBird:** install NetBird, sign in to the same network as the laptop, and
-   connect. Note the phone's **NetBird IP** (100.x.x.x).
-3. **IP Webcam** (video):
-   - **Settings:** video resolution **640x480** (or 800x480), quality about
-     **50**, FPS limit **15**. No login or password; NetBird already keeps it
-     private.
-   - **Start:** tap **Start server**. The free version shows an ad first: close
-     it with its ✕, and don't tap Install. The server address is shown at the
-     bottom of the camera screen.
+1. **Network:** join the same Wi-Fi as the laptop. Or turn the phone's
+   **hotspot on** and join the laptop to it; the hotspot is also what an ESP32 on
+   Wi-Fi (1B) uses.
+2. **Phone's IP:** VARUNA Cam shows it under "Video address" (for example
+   `http://192.168.1.3:8080/video`). The laptop needs it once.
+3. **VARUNA Cam** (video): our own camera app, in `varuna-cam/`.
+   - **What it does:** streams the back camera on port 8080, with no ads and no
+     login, so use it only on your own Wi-Fi or hotspot.
+     - **H.264 (`/h264`), the main video:** from the phone's hardware encoder,
+       like a drone video link: 720p at 30 fps in about 2–3 Mbit/s, no B-frames.
+       The phone fits the bitrate to the Wi-Fi as it goes. A viewer that falls
+       behind skips to a fresh keyframe instead of building up delay. The
+       backend uses it by itself.
+     - **MJPEG (`/video`), a light backup:** 640 wide, for older backends and
+       browsers. Pictures are only encoded while someone watches it.
+   - **Getting the APK onto a phone without USB debugging:** plug the phone in
+     for file transfer and copy `app-debug.apk` into its Download folder. On the
+     phone, open it from Files and allow installing from that app when asked.
+   - **Build and install it from the laptop,** with the phone on USB and USB
+     debugging on:
+     ```
+     cd drone-pi\phone-link\varuna-cam
+     set JAVA_HOME=C:\Program Files\Android\Android Studio\jbr
+     gradlew assembleDebug
+     adb install -r app\build\outputs\apk\debug\app-debug.apk
+     ```
+     It needs the Android SDK from Android Studio. If Gradle can't find it,
+     create `local.properties` with
+     `sdk.dir=C\:\\Users\\<you>\\AppData\\Local\\Android\\Sdk`.
+   - **First start:** open **VARUNA Cam** and allow **Camera** and
+     **Notifications**. It starts streaming straight away and shows the video
+     addresses. Stop it with **Stop streaming** or from its notification.
+   - **Video quality** (buttons in VARUNA Cam; it remembers the choice):
+     - **720p 30fps (best), the default:** smooth, live video and the detail
+       the app's long-range 2x2 scan uses. At most 3 Mbit/s of H.264, which
+       ordinary 2.4 GHz Wi-Fi carries.
+     - **1080p sharp (strong Wi-Fi):** up to 6 Mbit/s; for 5 GHz Wi-Fi.
+     - **480p light:** up to 1.5 Mbit/s, for a far-away drone or a weak signal.
+     - If the Wi-Fi can't carry the MJPEG backup even at its lowest JPEG
+       quality, VARUNA Cam makes the picture smaller by itself and says so;
+       tap a quality to try again.
+     - It also turns on the lens's optical stabilisation (or electronic
+       stabilisation if the lens has none), for a steadier picture on the drone.
+     - Its screen shows the H.264 size, fps and Mbit/s, and how many are
+       watching. Each viewer gets its own copy over the Wi-Fi, so keep the
+       backend the only one: don't leave a browser tab open on the phone's
+       address.
+   - **Display over other apps:** tap **Allow display over other apps** in
+     VARUNA Cam and switch it on. Without it, vivo and similar phones close the
+     camera as soon as VARUNA Cam is in the background. While streaming it shows
+     a small **● VARUNA LIVE** badge.
+   - **Port 8080:** if another camera app such as IP Webcam is serving on 8080,
+     VARUNA Cam says the port is busy. Stop that app first.
 4. **Termux** (telemetry relay):
    - **Install:** get Termux from Google Play (publisher Fredrik Fornwall) or from F-Droid.
    - **Set up, in Termux:**
@@ -129,9 +201,8 @@ DroneBridge and start the relay with `--esp <that IP>`.
      - **Add it to the home screen:** long-press the home screen, open
        **Widgets**, find **Termux**, and add the shortcut. Then pick
        **VARUNA-Start**.
-     - **What it does:** opens IP Webcam and starts the relay in Termux at the
-       same time. In IP Webcam, tap **Start server** and OK the ad. IP Webcam
-       lets other apps open its screen, but not start its server.
+     - **What it does:** starts VARUNA Cam streaming, comes back to Termux, and
+       starts the relay, all with one tap.
      - **When the relay stops:** it releases the wake lock and waits for Enter.
        The camera keeps running.
    - **Each flight:** tap **VARUNA-Start**, or run `./relay.sh` for the relay
@@ -151,25 +222,41 @@ DroneBridge and start the relay with `--esp <that IP>`.
    - The relay finds the ESP32 by reading the phone's network interfaces. That
      works on Android 16, where `ip addr` is not allowed.
 5. **Keep everything running:** otherwise the phone closes these apps in the
-   background, and NetBird drops first. Do all four:
-   - **Background power:** set Termux, NetBird and IP Webcam to **Allow
-     background power usage**. On vivo: Settings → Battery → Background power
-     control.
-   - **IP Webcam:** under Optional permissions, turn on **Allow streaming in
-     background**, and allow display over other apps.
-   - **Lock in Recents:** open Recents, tap the ▼ next to each of the three
-     apps, and choose Lock. vivo's memory cleaner skips locked apps.
+   background. Do all of these:
+   - **VARUNA Cam:** allow display over other apps (step 3).
+   - **Background power:** set Termux and VARUNA Cam to **Allow background power
+     usage**. On vivo: Settings → Battery → Background power control.
+   - **Free memory:** on a phone with 4 GB of RAM, opening the camera can make
+     Android close background apps. Close other apps before a flight.
+   - **Lock in Recents:** open Recents, tap the ▼ next to Termux and VARUNA Cam,
+     and choose Lock. vivo's memory cleaner skips locked apps.
    - **Never swipe them away:** swiping an app away in Recents closes it.
 
 ## 3. Laptop
 
-1. **NetBird:** make sure it's connected. If it sticks at "Connecting", run
-   `netbird down`, then `netbird up`.
+1. **Network:** join the same Wi-Fi as the phone, or the phone's hotspot.
 2. **Start the backend:** run `drone-pi\phone-link\start_laptop_backend.bat`.
-   - **First time:** it asks for the phone's NetBird IP, then remembers it in
-     `phone_ip.txt`.
-   - **If the phone's IP changes:** run `start_laptop_backend.bat <new IP>`.
-3. **App address:** the app's dev server already points at
+   - **First time:** it asks for the phone's IP (shown in VARUNA Cam), then
+     remembers it in `phone_ip.txt`.
+   - **If the phone's IP changes:** run `start_laptop_backend.bat <new IP>`. A
+     router may give the phone a new IP after a while; reserving its address in
+     the router stops that.
+3. **Stabilisation (on by default):** the backend steadies the phone's video
+   before the app gets it (`stabilize.py`). It tracks the picture's shake,
+   smooths the camera's path, taking out vibration and jitter but keeping real
+   turns, and zooms in 12% to hide the moving edges. It needs ffmpeg and OpenCV
+   on the laptop; the start script installs OpenCV if it's missing.
+   - **Delay:** it adds about 0.4 s (`stabilize_delay_ms` = 300 plus encoding).
+     Lower `stabilize_delay_ms` in **System → Live tuning** for less delay and
+     a bit less smoothing, or set `video_stabilize` to `off`.
+   - **Vibration faster than one frame** (wobbly "jello" picture) can't be
+     taken out in software: mount the phone on foam or dampers.
+   - **Test it:** `py drone-pi\test_stabilize.py` shakes a test video and checks
+     how much shake is left.
+4. **Smooth playback in the app:** the app shows pictures on the camera's own
+   rhythm, 150 ms behind the quickest arrival, so uneven Wi-Fi delivery doesn't
+   show as stutter. A picture that arrives later still shows at once.
+5. **App address:** the app's dev server already points at
    `http://localhost:8000`, via `VITE_DEV_API_TARGET` in `.env.local`. In any
    other copy of the app, set **System → Connection** to `http://localhost:8000`.
 
@@ -186,19 +273,39 @@ DroneBridge and start the relay with `--esp <that IP>`.
 
 ## What to expect
 
-- **Telemetry delay:** about 0.2–0.5 s over 4G.
-- **Video delay:** about 0.5–1 s. Fine for monitoring, missions and AI
-  detection; don't fly by the video.
-- **If 4G drops:** the app loses the drone, but the Pixhawk keeps flying on its
+- **Telemetry delay:** under 0.1 s on Wi-Fi.
+- **Video delay:** with H.264 the phone itself adds about 0.1 s. Stabilisation on
+  the laptop adds its look-ahead (`stabilize_delay_ms`, 160 ms) plus about 0.1 s,
+  and the app's smooth playback 80 ms (localStorage `varuna.videoBufferMs`). That
+  is about 0.4 s in all at 30 fps (720p) on a good Wi-Fi signal. A phone sending
+  fewer frames (an old VARUNA Cam, low light) waits a frame's time at each step, so
+  it lags more: keep VARUNA Cam up to date. If the laptop is too busy to keep up
+  (AI detection in the browser takes most of a laptop's CPU), stabilisation turns
+  itself off after 2 s of running 0.8 s behind, and the phone's own video goes on
+  (about 0.1 s). Stabilisation is off by default for the least delay; turn
+  `video_stabilize` on in System → Live tuning for a steadier picture.
+- **Position indoors:** with no GPS, the phone gives a Wi-Fi/cell position
+  (±100 m, every ~20 s). It is held for 60 s and shown as a coarse fix: take
+  off outdoors and wait for "GPS" with a few metres' accuracy. Fine for monitoring, missions and AI detection;
+  don't fly by the video.
+- **Range:** the drone must stay within Wi-Fi range of the laptop. **If the
+  link drops:** the app loses the drone, but the Pixhawk keeps flying on its
   own failsafes. Keep the RC transmitter in hand.
 
 ## Test without the drone
 
 - **Whole chain:** `python drone-pi/test_phone_link.py` runs a simulated
-  vehicle, the relay, a fake IP Webcam and the real backend on this computer. It
+  vehicle, the relay, a fake phone camera and the real backend on this computer. It
   checks that telemetry, commands and video all pass through.
 - **USB mode:** `python drone-pi/test_relay_usb.py` checks the relay's USB mode
   against fake CH340, CP2102 and ESP32-S3 devices:
   - the setup requests and baud rate
   - MAVLink framing
   - telemetry out and commands in
+
+## Far away, over the internet (optional)
+
+Off your Wi-Fi, NetBird can carry the same link over 4G: install NetBird on the
+phone and the laptop, sign both in to the same network, and give
+`start_laptop_backend.bat` the phone's NetBird IP (100.x.x.x) instead. Lock
+NetBird in Recents too, since vivo closes it in the background.

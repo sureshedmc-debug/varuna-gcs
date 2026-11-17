@@ -57,7 +57,9 @@ export function useLiveCollectFeed(live, reachable) {
   const refSentRef = useRef(new Set())     // boat ids whose drone crop the boat has
   const busyRef = useRef(false)
   const statesAtRef = useRef(0)
-  const running = reachable && live?.state === 'running'
+  // Sent whenever the boat is reachable (not only while running), so the Boat
+  // tab shows the drone's picture as soon as the drone finds something.
+  const running = !!(reachable && live)
   const startedAt = live?.started_at ? live.started_at * 1000 : null
 
   useEffect(() => {

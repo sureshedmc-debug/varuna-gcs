@@ -16,10 +16,14 @@ out of a Raspberry Pi 3:
     for its own MJPEG at 1280x720/30 and copies the frames through untouched;
     if it can't do MJPEG at that size, raw YUYV that ffmpeg encodes (heavier),
     then 640x480.
-  * url  → a phone (or IP camera) on the drone sending MJPEG over the network,
-    e.g. the Android "IP Webcam" app at http://<phone NetBird IP>:8080/video
-    (camera_url). Its JPEGs pass straight through; nothing runs but an HTTP
-    read, so it works on a laptop backend too (see phone-link/README.md).
+  * url  → a phone (or IP camera) on the drone sending video over the network,
+    e.g. the VARUNA Cam app at http://<phone IP>:8080/video (camera_url).
+    With camera_codec = h264, VARUNA Cam's H.264 stream (/h264 next to /video)
+    is used: the phone's hardware encoder, smooth at 720p30 in 2-3 Mbit/s, its
+    bitrate fitted to the Wi-Fi by the phone. Otherwise, or if the phone has no
+    /h264 (older VARUNA Cam, IP cameras), its MJPEG. Either passes straight
+    through; nothing runs but an HTTP read, so it works on a laptop backend too
+    (see phone-link/README.md).
   * test → a generated test picture (laptop testing / no camera), in H.264 or
     MJPEG like the camera module.
 
@@ -41,14 +45,20 @@ process dies (camera unplugged), it is restarted every few seconds.
 """
 
 import glob
+import json
 import logging
 import os
 import shutil
+import socket
 import subprocess
 import threading
 import time
+import urllib.parse
 import urllib.request
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
+
+import stabilize
 
 log = logging.getLogger("drone.camera")
 
@@ -56,6 +66,161 @@ SOI, EOI = b"\xff\xd8", b"\xff\xd9"
 STALL_S = 10          # restart a capture process that sends nothing for this long
 IDLE_S = 30           # camera off this long after the last viewer left (less heat); back on in ~2 s
 START_WAIT_S = 8      # how long a snapshot waits for the camera to come out of standby
+PHONE_PROBE_S = 1.0   # the phone camera's server must accept a connection this fast
+PHONE_SCAN_AFTER_S = 6   # silent this long: look for the phone at another address (DHCP gave it a new one)
+PHONE_SCAN_EVERY_S = 15
+DISCOVERY_PORT = 47800   # VARUNA Cam (2.5+) answers "VARUNA_CAM?" here with where its video is
+PHONE_ASK_EVERY_S = 1.0  # no video: ask the phone's last addresses this often
+PHONE_SWEEP_EVERY_S = 3.0  # nobody answers there: ask every address on this computer's networks this often
+
+
+def _looks_like_varuna_cam(ip, port):
+    """VARUNA Cam's /status answers with its state and an h264 section."""
+    try:
+        with socket.create_connection((ip, port), timeout=1.0):
+            pass
+        with urllib.request.urlopen(f"http://{ip}:{port}/status", timeout=2.0) as r:
+            body = r.read(4096)
+        return b'"state"' in body and b'"h264"' in body
+    except (OSError, ValueError):
+        return False
+
+
+def _own_ips():
+    ips = set()
+    try:
+        ips.update(socket.gethostbyname_ex(socket.gethostname())[2])
+    except OSError:
+        pass
+    return ips
+
+
+def discover_phones(timeout=0.7, ask=(), sweep=False):
+    """The VARUNA Cams that answer "VARUNA_CAM?" (VARUNA Cam 2.5+), as [(ip, port)].
+
+    Asks the addresses in `ask` directly (again every 0.25 s: a phone saving
+    power on Wi-Fi can miss one), broadcasts on this computer's networks (some
+    hotspots, like Android's, drop broadcasts), and with `sweep` also asks every
+    address on those networks once — 254 tiny packets each, which finds the phone
+    wherever DHCP put it. Without `sweep` it returns as soon as one in `ask` answers."""
+    found = []
+    nets = _local_networks()
+    again = list(ask) + [f"{b}.255" for b in nets] + ["255.255.255.255"]
+    once = []
+    if sweep:
+        own = _own_ips()
+        once = [f"{b}.{n}" for b in nets for n in range(1, 255)
+                if f"{b}.{n}" not in own and f"{b}.{n}" not in ask]
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    except OSError:
+        return found
+    try:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        if hasattr(socket, "SIO_UDP_CONNRESET"):
+            # Windows: an address with nothing listening ("port unreachable")
+            # must not make the next receive fail.
+            s.ioctl(socket.SIO_UDP_CONNRESET, False)
+        s.bind(("0.0.0.0", 0))
+        s.settimeout(0.05)
+
+        def send(targets):
+            for t in targets:
+                try:
+                    s.sendto(b"VARUNA_CAM?", (t, DISCOVERY_PORT))
+                except OSError:
+                    pass
+
+        send(again)
+        send(once)
+        end = time.time() + timeout
+        resend = time.time() + 0.25
+        while time.time() < end:
+            if time.time() >= resend:
+                send(again)
+                resend = time.time() + 0.25
+            try:
+                data, (ip, _port) = s.recvfrom(1024)
+            except (socket.timeout, ConnectionResetError):
+                continue
+            except OSError:
+                break
+            try:
+                info = json.loads(data.decode("utf-8", "replace"))
+            except ValueError:
+                continue
+            if isinstance(info, dict) and info.get("varuna_cam"):
+                item = (ip, int(info.get("port") or 8080))
+                if item not in found:
+                    found.append(item)
+                if not sweep and ip in ask:
+                    break
+    finally:
+        s.close()
+    return found
+
+
+def known_phones():
+    """The phones VARUNA Cam may run on (VARUNA_PHONE_IPS, from phone-link's
+    phone_ip.txt): whichever one has it running is used."""
+    raw = os.environ.get("VARUNA_PHONE_IPS", "")
+    return [ip for ip in raw.replace(",", " ").split() if ip]
+
+
+def _local_networks():
+    """The /24 networks this computer is on now ("10.247.245"), main one first."""
+    ips = []
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))     # no packet is sent: this only picks the main interface
+            ips.append(s.getsockname()[0])
+    except OSError:
+        pass
+    try:
+        ips += socket.gethostbyname_ex(socket.gethostname())[2]
+    except OSError:
+        pass
+    nets = []
+    for ip in ips:
+        if ip.startswith(("127.", "169.254.")):
+            continue
+        base = ip.rsplit(".", 1)[0]
+        if base not in nets:
+            nets.append(base)
+    return nets
+
+
+def _port_open(ip, port):
+    # A phone saving power on Wi-Fi can miss the first try: give it two.
+    for timeout in (1.0, 1.5):
+        try:
+            with socket.create_connection((ip, port), timeout=timeout):
+                return True
+        except OSError:
+            pass
+    return False
+
+
+def find_phone(port, near):
+    """The address of a VARUNA Cam on the network of `near` or on any network
+    this computer is on now (the laptop may have moved to another Wi-Fi or a
+    hotspot with the phone), or None."""
+    parts = str(near).split(".")
+    old = ".".join(parts[:3]) if len(parts) == 4 and all(p.isdigit() for p in parts) else None
+    local = _local_networks()
+    # Only networks this computer is on (the old one first if it still is).
+    bases = ([old] if old in local else []) + [b for b in local if b != old]
+    if not bases and old:
+        bases = [old]
+    for base in bases:
+        ips = [f"{base}.{i}" for i in range(1, 255) if f"{base}.{i}" != near]
+        with ThreadPoolExecutor(64) as ex:
+            open_ = [ip for ip, ok in zip(ips, ex.map(lambda ip: _port_open(ip, port), ips)) if ok]
+        # Only the few that answer get the (slower) VARUNA Cam check.
+        for ip in open_:
+            if _looks_like_varuna_cam(ip, port) or _looks_like_varuna_cam(ip, port):
+                return ip
+    return None
 ENCODE_LAG_S = 0.1    # camera module: exposure → encoded frame on the pipe (ISP + encoder, roughly)
 CSI_CHECK_S = 30      # how long a "camera module there or not" answer is trusted
 FAILED_SKIP_S = 60    # auto: after a camera fails every setting, prefer the other one this long
@@ -63,6 +228,8 @@ H264_KEEP = 120       # H.264 frames kept for viewers (a few seconds)
 JPEG_DEMAND_S = 10    # H.264: keep decoding it to JPEG for /video_feed this long after the last request
 START4 = b"\x00\x00\x00\x01"
 URL_CMD = "<url>"     # marks a "capture command" that is an HTTP MJPEG stream, not a process
+URL_H264_CMD = "<url-h264>"   # … an HTTP H.264 (Annex-B) stream from VARUNA Cam
+PHONE_ENCODE_LAG_S = 0.05     # phone: exposure → H.264 frame on the network (encoder), roughly
 
 # Standard JPEG Huffman tables (ITU-T T.81, Annex K.3). Many USB webcams leave
 # them out of their MJPEG frames ("AVI1" style); browsers usually cope, but
@@ -170,6 +337,10 @@ class H264Splitter:
         while True:
             j = buf.find(b"\x00\x00\x01", self.scan)
             if j == -1:
+                # VARUNA Cam 2.2 ends each frame with an access-unit delimiter: the
+                # frame is complete now, no need to wait for the next one to start.
+                if self.has_slice and len(buf) > 3 and buf[3] & 0x1F == 9:
+                    self._emit()
                 self.scan = max(3, len(buf) - 3)
                 if len(buf) > 8_000_000:              # garbage: resync
                     buf.clear()
@@ -197,6 +368,17 @@ class H264Splitter:
         if is_slice:
             self.has_slice = True
             self.key = self.key or kind == 5
+
+    def flush(self):
+        """What has come so far ends a frame (its writer went quiet): hand it on
+        now instead of one frame later, when the next one starts."""
+        buf = self.buf
+        if self.synced and len(buf) > 3:
+            self._nal(bytes(buf[3:]).rstrip(b"\x00"))
+            buf.clear()
+            self.synced, self.scan = False, 3
+        if self.has_slice:
+            self._emit()
 
     def _emit(self):
         self.frames += 1
@@ -315,6 +497,15 @@ def jpeg_size(frame):
     return None
 
 
+def phone_h264_url(url):
+    """VARUNA Cam's H.264 stream next to its MJPEG one (/video → /h264), or None
+    for an address that isn't one of its video paths."""
+    parts = urllib.parse.urlsplit(url)
+    if parts.path.rstrip("/") not in ("/video", "/video_feed", "/mjpeg"):
+        return None
+    return urllib.parse.urlunsplit((parts.scheme, parts.netloc, "/h264", "", ""))
+
+
 class _HttpStream:
     """An HTTP response read like a pipe: read(n) returns what has arrived (up to
     n bytes) instead of waiting for all n, so each frame goes out as it lands."""
@@ -409,6 +600,10 @@ class CameraManager:
         self._demand_at = time.time()
         self._demand = threading.Event()
         self._was_ok = False       # the last capture delivered pictures (standby still counts as connected)
+        self._phone_lost_at = None # the phone camera's server stopped answering then
+        self._phone_scan_at = 0.0
+        self._ask_at = 0.0
+        self._sweep_at = 0.0
 
     # ------------------------------------------------------------------ lifecycle
     def start(self):
@@ -469,7 +664,12 @@ class CameraManager:
             url = (self.cfg["camera_url"] or "").strip()
             if not url:
                 return "url", None, []
-            return "url", url, [("phone camera (MJPEG over the network)", "as sent", [URL_CMD, url], "mjpeg")]
+            attempts = [("phone camera (MJPEG over the network)", "as sent", [URL_CMD, url], "mjpeg")]
+            h264_url = phone_h264_url(url) if h264 else None
+            if h264_url:
+                attempts.insert(0, ("phone camera (H.264 over the network)", "as sent",
+                                    [URL_H264_CMD, h264_url], "h264"))
+            return "url", url, attempts
         if source == "test":
             mjpeg = ("test pattern", f"{w}x{h}",
                      base + ["-re", "-f", "lavfi", "-i", f"testsrc2=size={w}x{h}:rate={fps}",
@@ -587,6 +787,15 @@ class CameraManager:
                 }.get(source, "No camera found.")
                 self._stop.wait(5)
                 continue
+            if source == "url" and not self._phone_ready():
+                # The phone's server is not up (VARUNA Cam stopped, the phone off
+                # the Wi-Fi): check again every second, so its video comes the
+                # moment it starts, instead of waiting out capture timeouts.
+                self._was_ok = False
+                self.status_text = "WAITING"
+                self.last_error = f"Waiting for VARUNA Cam at {self.cfg['camera_url']} (start it on the phone)."
+                self._stop.wait(PHONE_PROBE_S)
+                continue
             name, res, cmd, fmt = attempts[attempt_index % len(attempts)]
             self.codec = fmt
             self._setting = self._setting_key()
@@ -603,10 +812,79 @@ class CameraManager:
                         _csi_cache["present"] = None   # re-check: maybe it was unplugged
                     self._was_ok = False
                     self.status_text = "ERROR"
-                    self._stop.wait(5)             # all failed: wait, then start over
+                    self._stop.wait(1 if source == "url" else 5)   # all failed: wait, then start over
             else:
                 _csi_cache["present"] = None       # it was streaming and stopped: re-check, retry
+                # The phone's MJPEG backup ran: next time try its H.264 again first
+                # (it was only missing while the app restarted).
+                if fmt == "mjpeg" and attempts[0][3] == "h264":
+                    attempt_index = 0
                 self._stop.wait(2)
+
+    def _phone_ready(self):
+        """Whether the phone camera's server accepts a connection now. If it has
+        been silent a few seconds, look for VARUNA Cam elsewhere on the network
+        and follow it there (the phone's address can change when it reconnects)."""
+        url = self.cfg.get("camera_url") or ""
+        u = urllib.parse.urlsplit(url)
+        if not u.hostname:
+            return True                    # nothing to probe: let the capture report it
+        port = u.port or 80
+        now = time.time()
+        # Ask VARUNA Cam where it is (it answers "VARUNA_CAM?"): at its last
+        # addresses, and if nobody answers there, at every address on this
+        # computer's networks. Follow it at once if it is somewhere else — a new
+        # address after reconnecting, or another device now has the old one.
+        if now - self._ask_at >= PHONE_ASK_EVERY_S:
+            self._ask_at = now
+            ask = [u.hostname] + [ip for ip in known_phones() if ip != u.hostname]
+            found = discover_phones(0.4, ask=ask)
+            if not found and now - self._sweep_at >= PHONE_SWEEP_EVERY_S:
+                self._sweep_at = now
+                found = discover_phones(0.8, ask=ask, sweep=True)
+            ips = [ip for ip, _p in found]
+            if ips and u.hostname not in ips:
+                pick = next((ip for ip in known_phones() if ip in ips), ips[0])
+                return self._follow_phone(u, pick)
+            if u.hostname in ips:
+                self._phone_lost_at = None
+                return True
+        try:
+            with socket.create_connection((u.hostname, port), timeout=PHONE_PROBE_S):
+                self._phone_lost_at = None
+                return True
+        except OSError:
+            pass
+        now = time.time()
+        if self._phone_lost_at is None:
+            self._phone_lost_at = now
+        # Another of the known phones (a second drone phone) has VARUNA Cam on: use it straight away.
+        for ip in known_phones():
+            if ip != u.hostname and _looks_like_varuna_cam(ip, port):
+                return self._follow_phone(u, ip)
+        if now - self._phone_lost_at >= PHONE_SCAN_AFTER_S and now - self._phone_scan_at >= PHONE_SCAN_EVERY_S:
+            self._phone_scan_at = now
+            found = find_phone(port, u.hostname)
+            if found:
+                return self._follow_phone(u, found)
+        return False
+
+    def _follow_phone(self, u, ip):
+        """Use VARUNA Cam at `ip` from now on (video and the phone's GPS)."""
+        netloc = f"{ip}:{u.port}" if u.port else ip
+        new = urllib.parse.urlunsplit((u.scheme, netloc, u.path, u.query, u.fragment))
+        log.warning("Camera: VARUNA Cam is now at %s (was %s) — following it", ip, u.hostname)
+        self.cfg.set_runtime("camera_url", new)
+        self._phone_lost_at = None
+        # Start there next time too (phone-link's phone_ip.txt, set by its start script).
+        path = os.environ.get("VARUNA_PHONE_IP_FILE")
+        if path:
+            try:
+                with open(path, "w", encoding="ascii") as f:
+                    f.write(ip + "\n")
+            except OSError:
+                pass
+        return True
 
     def touch(self):
         """A viewer wants pictures: keep the camera on (start it if in standby)."""
@@ -628,7 +906,7 @@ class CameraManager:
 
     def _setting_key(self):
         key = (self.cfg["camera_source"], self.cfg["camera_quality"], self.cfg["camera_codec"],
-               self.cfg["camera_url"])
+               self.cfg["camera_url"], self.cfg.get("video_stabilize", "on"))
         if self.codec == "h264":
             key += (self.cfg["video_bitrate_kbps"], self.cfg["stream_fps"])
         return key
@@ -640,6 +918,8 @@ class CameraManager:
         """Run one capture process until it ends. True if it produced frames."""
         if cmd and cmd[0] == URL_CMD:
             return self._capture_url(name, cmd[1])
+        if cmd and cmd[0] == URL_H264_CMD:
+            return self._capture_url_h264(name, cmd[1])
         log.info("Camera: starting %s at %s", name, res)
         self.pipeline, self.resolution = name, res
         self.status_text = "STARTING"
@@ -698,18 +978,22 @@ class CameraManager:
             resp = urllib.request.urlopen(req, timeout=STALL_S)
         except Exception as exc:
             self.last_error = (f"Cannot open the phone camera at {url}: {exc}. Is the camera app running, "
-                               "and the phone on NetBird?")
+                               "and the phone on the same network?")
             log.warning(self.last_error)
             return False
         ctype = resp.headers.get("Content-Type", "")
         if "multipart" not in ctype.lower() and "jpeg" not in ctype.lower():
             resp.close()
-            self.last_error = (f"{url} sends {ctype or 'something'}, not an MJPEG video stream. In IP Webcam "
-                               "the stream is at /video.")
+            self.last_error = (f"{url} sends {ctype or 'something'}, not an MJPEG video stream. VARUNA Cam "
+                               "serves it at /video.")
             log.warning(self.last_error)
             return False
         self._url_resp = resp
         got = 0
+        # On the MJPEG backup of a phone that also sends H.264: look now and then
+        # whether its H.264 is there again, and go back to it (smoother, less delay).
+        h264_back = self.cfg["camera_codec"] == "h264" and phone_h264_url(url) is not None
+        next_check = time.time() + 8
         try:
             for frame in iter_jpegs(_HttpStream(resp), self._stop):
                 if not got:
@@ -719,6 +1003,15 @@ class CameraManager:
                 got += 1
                 if self._setting_changed() or self._idle():
                     break
+                if h264_back and time.time() >= next_check:
+                    next_check = time.time() + 8
+                    try:
+                        with urllib.request.urlopen(urllib.parse.urljoin(url, "/status"), timeout=2) as r:
+                            if (json.loads(r.read()) or {}).get("h264"):
+                                log.info("Camera: the phone sends H.264 again; switching back to it")
+                                break
+                    except Exception:
+                        pass
         except Exception as exc:          # timeout, connection reset, 4G gone
             self.last_error = f"The phone camera stream stopped: {exc}"
         finally:
@@ -732,6 +1025,104 @@ class CameraManager:
             self.status_text = "RECONNECTING"
         else:
             self.last_error = self.last_error or f"The phone camera at {url} sent no pictures."
+            log.warning(self.last_error)
+        return got > 0
+
+    def _capture_url_h264(self, name, url):
+        """Read VARUNA Cam's H.264 stream until it ends. True if it produced frames.
+        A phone without /h264 (older VARUNA Cam) fails here at once, and _run
+        goes on to its MJPEG stream."""
+        log.info("Camera: opening %s at %s", name, url)
+        self.pipeline, self.resolution = name, None
+        self.status_text = "STARTING"
+        self.started_at = time.time()
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "varuna-drone"})
+            resp = urllib.request.urlopen(req, timeout=STALL_S)
+        except Exception as exc:
+            self.last_error = (f"Cannot open the phone's H.264 video at {url}: {exc}. Is VARUNA Cam 2 "
+                               "running, and the phone on the same network?")
+            log.warning(self.last_error)
+            return False
+        ctype = resp.headers.get("Content-Type", "")
+        if "h264" not in ctype.lower():
+            resp.close()
+            self.last_error = f"{url} sends {ctype or 'something'}, not H.264."
+            log.warning(self.last_error)
+            return False
+        width, height, fps = 1280, 720, 30
+        try:                              # the picture size, for the status and stabilisation
+            st_url = urllib.parse.urljoin(url, "/status")
+            with urllib.request.urlopen(st_url, timeout=3) as r:
+                h = (json.loads(r.read()) or {}).get("h264") or {}
+            if h.get("width"):
+                width, height = int(h["width"]), int(h["height"])
+                fps = int(round(h.get("fps") or 30)) or 30
+                fps = 30 if fps < 20 else fps      # the phone's rate as it starts; it runs at 30
+                self.resolution = f"{width}x{height}"
+        except Exception:
+            pass
+        with self._cond:
+            self._h264.clear()             # frames of an earlier stream can't be mixed in
+        # A frame is complete when the next one starts (one frame later), and the
+        # phone's encoder takes a little after the exposure.
+        self._capture_lag = 1.0 / 30 + PHONE_ENCODE_LAG_S
+        stab = None
+        if self.cfg.get("video_stabilize", "on") == "on":
+            if not stabilize.available():
+                log.warning("Stabilisation is on but OpenCV is missing (pip install opencv-python-headless)")
+            else:
+                try:
+                    stab = stabilize.Stabilizer(self.cfg["ffmpeg_path"], width, height, fps, self.cfg,
+                                                self._publish_h264, H264Splitter)
+                    self.pipeline = "phone camera (H.264, stabilised)"
+                    self._capture_lag += int(self.cfg.get("stabilize_delay_ms", 300)) / 1000 + 0.12
+                except OSError as exc:
+                    log.warning("Stabilisation can't start (%s); the video goes on without it", exc)
+        self._stab = stab
+
+        raw = {"since_key": stab is None}
+
+        def from_phone(data, keyframe, sps):
+            if stab is not None and stab.offer(data, keyframe, sps):
+                return
+            if not raw["since_key"]:
+                # Stabilisation just stopped: the phone's own frames go out from
+                # its next keyframe (the earlier ones need pictures the app never had).
+                if not keyframe:
+                    return
+                raw["since_key"] = True
+                self._capture_lag = 1.0 / 30 + PHONE_ENCODE_LAG_S
+                self.pipeline = "phone camera (H.264)"
+            self._publish_h264(data, keyframe, sps)
+        splitter = H264Splitter(from_phone)
+        self._url_resp = resp
+        stream = _HttpStream(resp)
+        try:
+            while not self._stop.is_set():
+                chunk = stream.read(65536)
+                if not chunk:
+                    break
+                splitter.feed(chunk)
+                if self._setting_changed() or self._idle():
+                    break
+        except Exception as exc:          # timeout, connection reset, Wi-Fi gone
+            self.last_error = f"The phone's H.264 video stopped: {exc}"
+        finally:
+            if stab is not None:
+                stab.close()
+            self._stab = None
+            self._url_resp = None
+            try:
+                resp.close()
+            except Exception:
+                pass
+        got = splitter.frames
+        if got:
+            log.warning("Phone H.264 video ended after %d frames: %s", got, self.last_error or "closed")
+            self.status_text = "RECONNECTING"
+        else:
+            self.last_error = self.last_error or f"The phone at {url} sent no H.264 frames."
             log.warning(self.last_error)
         return got > 0
 
@@ -896,6 +1287,7 @@ class CameraManager:
             "resolution": self.resolution,
             "pipeline": self.pipeline,
             "codec": self.codec,
+            "stabilised": bool(getattr(self, "_stab", None)) and not self._stab.failed,
             "h264_codec": self.h264_codec if self.codec == "h264" else None,
             "stream_kbps": self.stream_kbps() if connected else 0,
             "camera_source": self.cfg["camera_source"],

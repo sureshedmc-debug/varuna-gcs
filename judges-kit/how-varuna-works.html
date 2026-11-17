@@ -1,0 +1,263 @@
+<title>How Varuna Cleans a River</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Rajdhani:wght@600;700&display=swap">
+<style>
+/* Layout: a one-page poster. Big three-word story first, then six numbered steps, then safety and parts. Colours from the boat's logo. */
+:root {
+  --bg: #f3f7fb;
+  --card: #ffffff;
+  --ink: #0b1f3a;
+  --muted: #4d5f78;
+  --line: #d8e1ec;
+  --river: #1f7fc4;
+  --drone: #6d3fd6;
+  --app: #0b8f84;
+  --boat: #1f7fc4;
+  --saffron: #c25e00;
+  --green: #138808;
+  --tint: #e7f1fa;
+  --f-head: "Rajdhani", "Nirmala UI", "Segoe UI", system-ui, sans-serif;
+  --f-body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #07172d; --card: #0d2340; --ink: #eaf2ff; --muted: #a3b6d2; --line: #1f3a5f;
+    --river: #5cb4f0; --drone: #b39dfa; --app: #3fd3c3; --boat: #5cb4f0; --saffron: #ffa94d; --green: #4cc94c; --tint: #12304f;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #07172d; --card: #0d2340; --ink: #eaf2ff; --muted: #a3b6d2; --line: #1f3a5f;
+  --river: #5cb4f0; --drone: #b39dfa; --app: #3fd3c3; --boat: #5cb4f0; --saffron: #ffa94d; --green: #4cc94c; --tint: #12304f;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 16px; line-height: 1.55;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 64px;
+}
+.wrap { max-width: 1120px; margin: 0 auto; display: grid; gap: 56px; }
+h1, h2, h3 { font-family: var(--f-head); margin: 0; text-wrap: balance; line-height: 1.05; }
+h2 { font-size: 30px; font-weight: 700; }
+.sub { color: var(--muted); margin: 0; }
+
+/* header */
+header { display: grid; grid-template-columns: 1fr auto; gap: 32px; align-items: center; }
+.eyebrow { font-family: var(--f-head); font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: var(--river); font-size: 16px; }
+h1 { font-size: clamp(42px, 7vw, 76px); font-weight: 700; letter-spacing: -0.01em; margin-top: 8px; }
+.lede { font-size: clamp(19px, 2.2vw, 24px); margin: 18px 0 0; max-width: 34ch; line-height: 1.4; }
+.lede b { font-weight: 600; }
+.lede .d { color: var(--drone); } .lede .a { color: var(--app); } .lede .b { color: var(--boat); }
+.badge { width: clamp(150px, 22vw, 240px); height: auto; display: block; }
+
+/* the three-word story */
+.story { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; align-items: stretch; gap: 14px; }
+.big { background: var(--card); border: 1px solid var(--line); border-radius: 22px; padding: 26px 24px; display: grid; gap: 10px; justify-items: start; border-top: 6px solid var(--c); }
+.big .ic { width: 64px; height: 64px; color: var(--c); }
+.big .word { font-family: var(--f-head); font-weight: 700; font-size: 40px; letter-spacing: 0.06em; color: var(--c); line-height: 1; }
+.big .who { font-size: 13px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.big p { margin: 0; font-size: 17px; }
+.c-drone { --c: var(--drone); } .c-app { --c: var(--app); } .c-boat { --c: var(--boat); }
+.arrow { align-self: center; width: 40px; height: 40px; color: var(--muted); }
+.loop { display: flex; align-items: center; gap: 10px; justify-content: center; color: var(--muted); font-size: 15px; margin-top: 4px; }
+.loop svg { width: 22px; height: 22px; }
+
+/* steps */
+.steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; counter-reset: s; }
+.steps li { counter-increment: s; background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 22px; display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; align-content: start; }
+.steps .n { grid-row: span 3; width: 52px; height: 52px; border-radius: 14px; background: var(--tint); color: var(--c); display: grid; place-items: center; position: relative; }
+.steps .n svg { width: 30px; height: 30px; }
+.steps .n::after { content: counter(s); position: absolute; top: -8px; left: -8px; width: 24px; height: 24px; border-radius: 50%; background: var(--c); color: var(--card); font-family: var(--f-head); font-weight: 700; font-size: 15px; display: grid; place-items: center; }
+.steps h3 { font-size: 23px; font-weight: 700; }
+.steps p { margin: 0; color: var(--muted); font-size: 15px; }
+.tag { justify-self: start; font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--c); border: 1.5px solid var(--c); border-radius: 999px; padding: 1px 10px; }
+
+/* safety + parts */
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.panel { background: var(--card); border: 1px solid var(--line); border-radius: 20px; padding: 24px; display: grid; gap: 16px; align-content: start; }
+.points { list-style: none; margin: 0; padding: 0; display: grid; gap: 16px; }
+.points li { display: grid; grid-template-columns: 40px 1fr; gap: 14px; align-items: start; }
+.points svg { width: 40px; height: 40px; color: var(--river); }
+.points b { display: block; font-family: var(--f-head); font-size: 20px; font-weight: 700; line-height: 1.2; }
+.points span { color: var(--muted); font-size: 15px; }
+.parts { display: grid; gap: 12px; }
+.part { display: grid; grid-template-columns: 96px 1fr; gap: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.part:last-child { border-bottom: 0; padding-bottom: 0; }
+.part h3 { font-size: 20px; color: var(--c); }
+.part p { margin: 0; font-size: 15px; color: var(--muted); }
+.badge .n { font-family: var(--f-head); font-weight: 700; }
+.ic-s { stroke: currentColor; fill: none; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+
+@media (max-width: 860px) {
+  .story { grid-template-columns: 1fr; }
+  .arrow { justify-self: center; transform: rotate(90deg); }
+  .steps { grid-template-columns: 1fr; }
+  .two { grid-template-columns: 1fr; }
+}
+@media (max-width: 560px) {
+  header { grid-template-columns: 1fr; }
+  .badge { width: 150px; grid-row: 1; }
+  body { padding-block: 24px 48px; }
+}
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-drone" viewBox="0 0 48 48"><g class="ic-s"><path d="M5 14h14M29 14h14M12 14v6M36 14v6M10 20h28M17 20v7h14v-7"/><circle cx="24" cy="32" r="2.5"/><path d="M24 35v3" stroke-dasharray="1 4"/></g></symbol>
+    <symbol id="i-video" viewBox="0 0 48 48"><g class="ic-s"><rect x="5" y="14" width="27" height="20" rx="3"/><path d="M32 21l11-6v18l-11-6"/></g></symbol>
+    <symbol id="i-ai" viewBox="0 0 48 48"><g class="ic-s"><path d="M5 14V7h7M36 7h7v7M43 34v7h-7M12 41H5v-7"/><path d="M15 20h12a3 3 0 0 1 3 3v4a3 3 0 0 1-3 3H15a3 3 0 0 1-3-3v-4a3 3 0 0 1 3-3zM30 23h4v4h-4"/></g></symbol>
+    <symbol id="i-pin" viewBox="0 0 48 48"><g class="ic-s"><path d="M24 43s13-12 13-22a13 13 0 0 0-26 0c0 10 13 22 13 22z"/><circle cx="24" cy="21" r="4.5"/></g></symbol>
+    <symbol id="i-boat" viewBox="0 0 48 48"><g class="ic-s"><path d="M5 25h27v7a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3z"/><path d="M32 26l9 10"/><path d="M10 25v-6h11v6M15 19v-8"/><path d="M3 42c4-3 8-3 12 0s8 3 12 0 8-3 12 0"/></g></symbol>
+    <symbol id="i-bin" viewBox="0 0 48 48"><g class="ic-s"><path d="M9 21h30l-3 20H12z"/><path d="M24 4v12M18.5 11l5.5 5.5 5.5-5.5"/></g></symbol>
+    <symbol id="i-report" viewBox="0 0 48 48"><g class="ic-s"><path d="M11 5h18l8 8v30H11z"/><path d="M29 5v8h8"/><path d="M18 36v-6M24 36v-11M30 36v-4"/></g></symbol>
+    <symbol id="i-pause" viewBox="0 0 48 48"><g class="ic-s"><circle cx="24" cy="24" r="18"/><path d="M19.5 17v14M28.5 17v14"/></g></symbol>
+    <symbol id="i-count" viewBox="0 0 48 48"><g class="ic-s"><rect x="6" y="6" width="36" height="36" rx="8"/><path d="M15 24l6 6 12-13"/></g></symbol>
+    <symbol id="i-home" viewBox="0 0 48 48"><g class="ic-s"><path d="M6 23L24 8l18 15"/><path d="M11 20v20h26V20"/><path d="M20 40V30h8v10"/></g></symbol>
+    <symbol id="i-arrow" viewBox="0 0 40 40"><g class="ic-s"><path d="M6 20h26M24 12l8 8-8 8"/></g></symbol>
+    <symbol id="i-loop" viewBox="0 0 24 24"><g class="ic-s" stroke-width="2"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5"/></g></symbol>
+  </defs>
+</svg>
+
+<div class="wrap">
+  <header>
+    <div>
+      <div class="eyebrow">Varuna AI · river cleanup</div>
+      <h1>How Varuna cleans a river</h1>
+      <p class="lede">A <b class="d">drone</b> finds the plastic. Our <b class="a">AI</b> marks exactly where it is. Our boat, <b class="b">Nirmal Dhara Jalyan</b>, goes there and picks it up.</p>
+    </div>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000" class="badge" role="img" aria-label="Nirmal Dhara Jalyan logo: a boat on a river collecting a bottle that a drone has spotted">
+  <title>Nirmal Dhara Jalyan</title>
+  
+  <defs>
+    <path id="bd-top" d="M 98 500 A 402 402 0 0 1 902 500"/>
+    <path id="bd-bot" d="M 60 500 A 440 440 0 0 0 940 500"/>
+  </defs>
+  <circle cx="500" cy="500" r="496" fill="#081f3b"/>
+  <circle cx="500" cy="500" r="474" fill="none" stroke="#ffffff" stroke-width="5"/>
+  <circle cx="500" cy="500" r="346" fill="none" stroke="#ffffff" stroke-width="6"/>
+  
+  <defs>
+    <clipPath id="bd-in"><circle cx="500" cy="500" r="330"/></clipPath>
+    <clipPath id="bd-hull"><path d="M300 540 L640 540 L640 600 Q640 622 618 622 L322 622 Q300 622 300 600 Z"/></clipPath>
+    <linearGradient id="bd-sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#174d85"/><stop offset="1" stop-color="#0b2c55"/>
+    </linearGradient>
+  </defs>
+  <g clip-path="url(#bd-in)">
+    <rect x="160" y="160" width="680" height="680" fill="url(#bd-sky)"/>
+    <!-- drone and its camera beam onto the bottle -->
+    <polygon points="500,318 718,614 790,614" fill="#ffffff" opacity="0.13"/>
+    <g fill="#ffffff">
+      <rect x="470" y="292" width="60" height="22" rx="10"/>
+      <rect x="428" y="294" width="144" height="7" rx="3.5"/>
+      <rect x="436" y="278" width="10" height="20" rx="3"/>
+      <rect x="554" y="278" width="10" height="20" rx="3"/>
+      <ellipse cx="441" cy="276" rx="38" ry="6"/>
+      <ellipse cx="559" cy="276" rx="38" ry="6"/>
+      <circle cx="500" cy="320" r="7" fill="#ff9933"/>
+    </g>
+    <g transform="translate(-50 0)">
+    <!-- boat: white hull with saffron and green bands, like the real one -->
+    <path d="M300 540 L640 540 L640 600 Q640 622 618 622 L322 622 Q300 622 300 600 Z" fill="#ffffff"/>
+    <g clip-path="url(#bd-hull)">
+      <rect x="300" y="540" width="340" height="18" fill="#ff9933"/>
+      <rect x="300" y="604" width="340" height="18" fill="#138808"/>
+    </g>
+    <rect x="330" y="500" width="130" height="40" rx="9" fill="#d9e6f2"/>
+    <rect x="346" y="510" width="26" height="14" rx="3" fill="#081f3b"/>
+    <rect x="380" y="510" width="26" height="14" rx="3" fill="#081f3b"/>
+    <line x1="430" y1="500" x2="430" y2="430" stroke="#ffffff" stroke-width="7" stroke-linecap="round"/>
+    <ellipse cx="430" cy="424" rx="24" ry="9" fill="#ffffff"/>
+    <line x1="480" y1="540" x2="490" y2="452" stroke="#ffffff" stroke-width="4" stroke-linecap="round"/>
+    <circle cx="490" cy="450" r="6" fill="#ff9933"/>
+    <!-- conveyor ramp at the bow -->
+    <line x1="642" y1="548" x2="735" y2="640" stroke="#ffffff" stroke-width="22" stroke-linecap="round"/>
+    <line x1="655.0" y1="572.1" x2="666.2" y2="560.7" stroke="#081f3b" stroke-width="4" stroke-linecap="round"/><line x1="673.6" y1="590.5" x2="684.8" y2="579.1" stroke="#081f3b" stroke-width="4" stroke-linecap="round"/><line x1="692.2" y1="608.9" x2="703.4" y2="597.5" stroke="#081f3b" stroke-width="4" stroke-linecap="round"/><line x1="710.8" y1="627.3" x2="722.0" y2="615.9" stroke="#081f3b" stroke-width="4" stroke-linecap="round"/>
+    </g>
+    <!-- river -->
+    <path d="M150 622 Q205 602 260 622 T370 622 T480 622 T590 622 T700 622 T810 622 T920 622 L920 900 L150 900 Z" fill="#1f7fc4"/>
+    <path d="M150 680 Q205 662 260 680 T370 680 T480 680 T590 680 T700 680 T810 680 T920 680" fill="none" stroke="#6cc3f0" stroke-width="10" stroke-linecap="round" opacity="0.8"/>
+    <path d="M150 736 Q205 718 260 736 T370 736 T480 736 T590 736 T700 736 T810 736 T920 736" fill="none" stroke="#6cc3f0" stroke-width="10" stroke-linecap="round" opacity="0.5"/>
+    <!-- the plastic bottle it is going for -->
+    <g transform="translate(752 620) rotate(-18)">
+      <rect x="-24" y="-11" width="44" height="22" rx="8" fill="#9be7ff"/>
+      <rect x="18" y="-6" width="14" height="12" rx="3" fill="#9be7ff"/>
+      <rect x="31" y="-7" width="6" height="14" rx="2" fill="#ff9933"/>
+    </g>
+  </g>
+  <text class="n" font-size="78" letter-spacing="7" fill="#ffffff">
+    <textPath href="#bd-top" startOffset="50%" text-anchor="middle">NIRMAL DHARA JALYAN</textPath>
+  </text>
+  <text class="n" font-size="68" fill="#ffffff">
+    <textPath href="#bd-bot" startOffset="50%" text-anchor="middle">निर्मल धारा जलयान</textPath>
+  </text>
+  <path transform="translate(88 508) scale(1.1)" fill="#ff9933" d="M0,-22 C9,-9 15,-1 15,7 A15,15 0 1 1 -15,7 C-15,-1 -9,-9 0,-22Z"/>
+  <path transform="translate(912 508) scale(1.1)" fill="#138808" d="M0,-22 C9,-9 15,-1 15,7 A15,15 0 1 1 -15,7 C-15,-1 -9,-9 0,-22Z"/>
+</svg>
+  </header>
+
+  <section aria-labelledby="h-story">
+    <h2 id="h-story" class="sr" style="position:absolute;left:-9999px">In three words</h2>
+    <div class="story">
+      <div class="big c-drone">
+        <svg class="ic" aria-hidden="true"><use href="#i-drone"/></svg>
+        <div class="word">FIND</div>
+        <div class="who">Drone</div>
+        <p>Flies over the river by itself and films the water.</p>
+      </div>
+      <svg class="arrow" aria-hidden="true"><use href="#i-arrow"/></svg>
+      <div class="big c-app">
+        <svg class="ic" aria-hidden="true"><use href="#i-ai"/></svg>
+        <div class="word">MARK</div>
+        <div class="who">AI app on our laptop</div>
+        <p>Spots plastic in the video and pins its GPS location on the map.</p>
+      </div>
+      <svg class="arrow" aria-hidden="true"><use href="#i-arrow"/></svg>
+      <div class="big c-boat">
+        <svg class="ic" aria-hidden="true"><use href="#i-boat"/></svg>
+        <div class="word">COLLECT</div>
+        <div class="who">Nirmal Dhara Jalyan</div>
+        <p>Drives to each pin by itself and lifts the plastic into its bin.</p>
+      </div>
+    </div>
+    <p class="loop"><svg aria-hidden="true"><use href="#i-loop"/></svg>Repeat until that stretch of river is clean.</p>
+  </section>
+
+  <section style="display:grid;gap:20px" aria-labelledby="h-steps">
+    <div style="display:grid;gap:6px">
+      <h2 id="h-steps">Step by step</h2>
+      <p class="sub">What happens in one cleanup run.</p>
+    </div>
+    <ol class="steps">
+      <li class="c-drone"><span class="n"><svg aria-hidden="true"><use href="#i-pin"/></svg></span><h3>Plan the route</h3><p>We draw the area to search on a map in our app. The drone's autopilot flies it on its own.</p><span class="tag">Drone</span></li>
+      <li class="c-drone"><span class="n"><svg aria-hidden="true"><use href="#i-video"/></svg></span><h3>Send live video</h3><p>The drone's camera streams the river to our app over a secure wireless link.</p><span class="tag">Drone</span></li>
+      <li class="c-app"><span class="n"><svg aria-hidden="true"><use href="#i-ai"/></svg></span><h3>AI spots plastic</h3><p>Our trained AI model checks every video frame for bottles and trash, right on the laptop.</p><span class="tag">AI app</span></li>
+      <li class="c-app"><span class="n"><svg aria-hidden="true"><use href="#i-pin"/></svg></span><h3>Pin it on the map</h3><p>Each piece of plastic gets the drone's GPS position, so we know exactly where it floats.</p><span class="tag">AI app</span></li>
+      <li class="c-boat"><span class="n"><svg aria-hidden="true"><use href="#i-boat"/></svg></span><h3>Boat drives there</h3><p>The app sends the pins to the boat. Its autopilot steers to each one, nearest first.</p><span class="tag">Boat</span></li>
+      <li class="c-boat"><span class="n"><svg aria-hidden="true"><use href="#i-bin"/></svg></span><h3>Scoop and count</h3><p>The boat's camera guides it onto the plastic, a roller ramp lifts it into the bin, and each piece is counted.</p><span class="tag">Boat</span></li>
+    </ol>
+  </section>
+
+  <div class="two">
+    <section class="panel" aria-labelledby="h-safe">
+      <h2 id="h-safe">Smart and safe</h2>
+      <ul class="points">
+        <li><svg aria-hidden="true"><use href="#i-pause"/></svg><div><b>Stops for animals</b><span>If a bird, dog or person is in front of it, the boat holds still until the way is clear.</span></div></li>
+        <li><svg aria-hidden="true"><use href="#i-count"/></svg><div><b>Counts every piece</b><span>A camera above the ramp counts each item going into the bin and warns when it is nearly full.</span></div></li>
+        <li><svg aria-hidden="true"><use href="#i-home"/></svg><div><b>A person is always in charge</b><span>One tap stops, holds or brings either vehicle home. Both return home by themselves when the job is done.</span></div></li>
+        <li><svg aria-hidden="true"><use href="#i-report"/></svg><div><b>Keeps a record</b><span>The app saves what was found and collected, where and when, and turns it into a report.</span></div></li>
+      </ul>
+    </section>
+    <section class="panel" aria-labelledby="h-parts">
+      <h2 id="h-parts">What's inside</h2>
+      <div class="parts">
+        <div class="part c-drone"><h3>Drone</h3><p>Pixhawk autopilot with GPS, a Raspberry Pi and an HD camera.</p></div>
+        <div class="part c-app"><h3>Varuna app</h3><p>Runs on a laptop or phone: live map, video, our plastic-detection AI and mission control.</p></div>
+        <div class="part c-boat"><h3>Boat</h3><p>Nirmal Dhara Jalyan: Pixhawk autopilot with GPS, a roller conveyor ramp, a bin and a camera.</p></div>
+      </div>
+    </section>
+  </div>
+</div>

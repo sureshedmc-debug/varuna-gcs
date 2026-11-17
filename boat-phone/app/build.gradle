@@ -1,0 +1,31 @@
+// VARUNA Boat Link: the phone on the boat. Pixhawk over USB OTG <-> Wi-Fi
+// (TCP 5760, like the old ESP32 bridge), the phone's GPS into the Pixhawk
+// (GPS_INPUT), and the phone's camera as MJPEG on port 8080.
+// Build: gradlew assembleDebug  ->  app/build/outputs/apk/debug/app-debug.apk
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'ai.varuna.boatlink'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'ai.varuna.boatlink'
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName '1.0.0'
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}

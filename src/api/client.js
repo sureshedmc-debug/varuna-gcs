@@ -21,7 +21,43 @@
 export const DEFAULT_API_BASE = ''
 
 function trimSlash(s) {
-  return String(s || '').replace(/\/+$/, '')
+  return String(s || '').trim().replace(/\/+$/, '')
+}
+
+/**
+ * A typed or saved backend address made usable: spaces and trailing slashes
+ * removed, "host:port" given http://. '' means same-origin (the Vite proxy).
+ * null means it can't be an address at all, and is ignored. A stray space in a
+ * saved " http://localhost:8000 " used to break every request, the video too.
+ */
+export function cleanBase(s) {
+  let b = trimSlash(s)
+  if (!b) return ''
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(b)) b = 'http://' + b
+  try {
+    const u = new URL(b)
+    if ((u.protocol !== 'http:' && u.protocol !== 'https:') || !u.hostname) return null
+    return trimSlash(u.origin + u.pathname)
+  } catch {
+    return null
+  }
+}
+
+// Repair a saved address once, on load: cleaned in place, or dropped when it
+// can't be one (then the page's own server, the Vite proxy, is used).
+try {
+  const raw = localStorage.getItem('varuna.apiBase')
+  if (raw !== null) {
+    const c = cleanBase(raw)
+    if (c === null) {
+      localStorage.removeItem('varuna.apiBase')
+      console.warn('[api] the saved backend address was not a valid address; using this page\'s server')
+    } else if (c !== raw) {
+      localStorage.setItem('varuna.apiBase', c)
+    }
+  }
+} catch {
+  /* private mode */
 }
 
 // The link used to be an ngrok tunnel, whose URL was cached in localStorage.
@@ -35,13 +71,50 @@ try {
   /* private mode */
 }
 
+// A saved address can outlive the machine it named (the drone's Pi, before the
+// backend moved to the laptop). When it stops answering but the page's own
+// server reaches a backend (the Vite proxy, the desktop app), use that for the
+// rest of this visit, so the live video doesn't hang on a dead address.
+let savedBaseDead = false
+let sameOriginCheck = null
+
+function pingAnswers(base) {
+  return fetch(`${base}/api/ping`, { cache: 'no-store', signal: AbortSignal.timeout(3000) })
+    .then((r) => r.ok)
+    .catch(() => false)
+}
+
+function sameOriginAnswers() {
+  if (!sameOriginCheck) {
+    sameOriginCheck = fetch('/api/ping', { cache: 'no-store', signal: AbortSignal.timeout(4000) })
+      .then(async (r) => {
+        if (!r.ok) return false
+        const j = JSON.parse(await r.text()) // a web page here is not the API
+        return !!j && typeof j === 'object'
+      })
+      .catch(() => false)
+      .then((ok) => {
+        if (ok) {
+          savedBaseDead = true
+          console.warn('[api] the saved backend address is not answering; using this page\'s server instead')
+        } else {
+          sameOriginCheck = null // try again on a later failure
+        }
+        return ok
+      })
+  }
+  return sameOriginCheck
+}
+
 export function getApiBase() {
   try {
-    const o = localStorage.getItem('varuna.apiBase')
-    if (o !== null) return trimSlash(o) // '' allowed → same-origin
+    const raw = localStorage.getItem('varuna.apiBase')
+    const o = raw === null ? null : cleanBase(raw)
+    if (o !== null && !(savedBaseDead && o)) return o // '' allowed → same-origin
   } catch {
     /* private mode */
   }
+  if (savedBaseDead) return ''
   if (import.meta.env && import.meta.env.VITE_API_BASE !== undefined) {
     return trimSlash(import.meta.env.VITE_API_BASE)
   }
@@ -50,7 +123,9 @@ export function getApiBase() {
 
 export function setApiBase(v) {
   try {
-    localStorage.setItem('varuna.apiBase', trimSlash(v))
+    const c = cleanBase(v)
+    if (c === null) localStorage.removeItem('varuna.apiBase')
+    else localStorage.setItem('varuna.apiBase', c)
   } catch {
     /* private mode */
   }
@@ -66,7 +141,19 @@ function url(path) {
  * failure for mutating calls — callers MUST inspect `success`, not HTTP status.
  */
 async function request(path, opts) {
-  return requestUrl(url(path), opts)
+  const base = getApiBase()
+  try {
+    return await requestUrl(base + path, opts)
+  } catch (e) {
+    // Only a saved cross-origin address that can't be reached falls back; a
+    // caller cancelling its own request does not.
+    if (!/^https?:\/\//i.test(base) || opts?.signal?.aborted) throw e
+    // One slow or failed call doesn't make the address dead: only when its
+    // ping goes unanswered too.
+    if (savedBaseDead === false && (await pingAnswers(base))) throw e
+    if (!(await sameOriginAnswers())) throw e
+    return requestUrl(path, opts)
+  }
 }
 
 /** Same as request(), for a full URL — the boat client (boatClient.js) uses it. */
@@ -149,6 +236,8 @@ export const api = {
   telemetry: () => request('/api/telemetry'),
   telemetryHistory: (limit = 200) =>
     request(`/api/telemetry/history?limit=${limit}`),
+  // The phone on the drone (VARUNA Cam) as its GPS: make where it is now the take-off point.
+  phoneSetHome: () => request('/api/phone/home', { method: 'POST' }),
 
   // --- Flight control (mavlink) ---
   arm: (arm) =>
@@ -224,7 +313,7 @@ export function controlWsUrl() {
  * @returns {Promise<{ok: boolean, ms?: number, title: string, detail: string}>}
  */
 export async function testConnection(base) {
-  const b = base === undefined ? getApiBase() : trimSlash(base)
+  const b = base === undefined ? getApiBase() : (cleanBase(base) ?? trimSlash(base))
   const target = (b || '') + '/api/ping'
   const crossOrigin = /^https?:\/\//i.test(b)
 

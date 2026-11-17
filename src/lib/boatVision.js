@@ -5,9 +5,8 @@
 //
 //   boat camera ──MJPEG (+ capture time)──▶ this engine
 //     • plastic model on the water area      → targets for last-metre homing
-//     • COCO model on the water area         → animals for wildlife-safe mode
 //     • motion check on the ramp band        → catch counter (+ the plastic model names the item)
-//   this engine ──/api/vision/observe (3×/s)──▶ boat: homing, wildlife holds
+//   this engine ──/api/vision/observe (3×/s)──▶ boat: homing
 //   this engine ──/api/catch/item─────────────▶ boat: catch log, bin count
 //
 // Drone-to-boat matching: while the boat homes onto a drone find (the observe
@@ -30,12 +29,10 @@
 import { boatApi, boatUrls } from '../api/boatClient'
 import { readMjpeg } from './mjpegReader'
 import { RampCounter, toGray } from './catchCounter'
-import { inDangerZone } from './boatCamera'
 import { SIG, matchScore, signature } from './targetMatch'
 import { getDroneCrop } from './droneTargets'
 
 const PLASTIC_HZ = 3 // detection passes per second; each pass is sent to the boat
-const WILDLIFE_HZ = 2
 const STALL_MS = 6000 // no frame for this long: drop the connection and reconnect
 const GRID_W = 64
 const GRID_H = 24
@@ -43,6 +40,12 @@ const GRID_H = 24
 const listeners = new Set()
 let state = initialState()
 let run = null // the current run's private data
+let matchTarget = null // { id, cls }: the drone find (with a picture) the Boat tab shows
+
+/** The Boat tab's drone find to match the camera against when the boat isn't homing. */
+export function setMatchTarget(t) {
+  matchTarget = t?.id ? { id: String(t.id), cls: t.cls || null } : null
+}
 
 function initialState() {
   return {
@@ -152,24 +155,15 @@ export function stopBoatVision() {
 }
 
 async function loadModels(r) {
-  set({ models: { plastic: 'loading', wildlife: 'loading' } })
-  const [{ createPlasticDetector }, { createWildlifeDetector }] = await Promise.all([
-    import('./detector'),
-    import('./wildlifeDetector'),
-  ])
+  // Plastic only: wildlife-safe mode was removed from the app (2026-11-16).
+  set({ models: { plastic: 'loading', wildlife: 'off' } })
+  const { createPlasticDetector } = await import('./detector')
   try {
     r.plastic = await createPlasticDetector()
     if (run !== r) return r.plastic.dispose()
     set({ models: { ...state.models, plastic: 'ready' } })
   } catch (e) {
     set({ models: { ...state.models, plastic: 'error' }, message: `Plastic model failed: ${e?.message || e}` })
-  }
-  try {
-    r.wildlife = await createWildlifeDetector()
-    if (run !== r) return r.wildlife.dispose()
-    set({ models: { ...state.models, wildlife: 'ready' } })
-  } catch (e) {
-    set({ models: { ...state.models, wildlife: 'error' }, message: `Animal model failed: ${e?.message || e}` })
   }
 }
 
@@ -243,7 +237,7 @@ async function processLoop(r) {
       if (run === r) set({ message: `Vision: ${e?.message || e}` })
     }
     if (run !== r) return
-    const ready = r.sim || (state.models.plastic === 'ready' && state.models.wildlife === 'ready')
+    const ready = r.sim || (state.models.plastic === 'ready')
     set({
       status: ready ? 'running' : 'loading',
       message: ready ? '' : state.message || 'Loading the AI models…',
@@ -280,11 +274,9 @@ async function analyse(r, bmp, f, w, h) {
     if (!det || det._httpError) return
     r.simRamp = det.ramp || []
     targets = (det.targets || []).map((b) => ({ ...b, sim: true }))
-    hazards = (det.hazards || []).map((b) => ({ ...b, sim: true, in_zone: inDangerZone(cfg, b, w, h) }))
+    hazards = []
   } else {
-    // Only with BOTH models working: an observation without the animal model
-    // would tell the boat "no animals" when nobody is actually looking.
-    if (!r.plastic || !r.wildlife) {
+    if (!r.plastic) {
       set({ tracks: trackView(r) })
       return
     }
@@ -294,24 +286,27 @@ async function analyse(r, bmp, f, w, h) {
       .filter((b) => (b.y1 + b.y2) / 2 < rampY)
       .map((b) => ({ x1: b.x1, y1: b.y1, x2: b.x2, y2: b.y2, score: b.score, label: b.label }))
     if (run !== r) return
-    if (now - r.lastWildlife >= 1000 / WILDLIFE_HZ) {
-      r.lastWildlife = now
-      hazards = (await exclusive(r, () => r.wildlife.detect(bmp, { confThr: 0.4, frame: `boat:${f.seq}` })))
-        .filter((b) => (b.y1 + b.y2) / 2 < rampY)
-        .map((b) => ({ ...b, in_zone: inDangerZone(cfg, b, w, h) }))
-      if (run !== r) return
-    }
+    hazards = []
   }
   // 2b. Homing onto a drone find: how well does each box match the drone's crop?
-  const homing = r.homing
+  // Not homing (e.g. Pixhawk skipped): still match against the drone find the
+  // Boat tab shows, so "same waste" appears on screen. Those scores stay in the
+  // app — only the boat's own homing target's scores are sent to it.
+  const homing = r.homing || matchTarget
   if (homing && targets.length) {
     const ref = await referenceFor(r, homing.id)
     if (run !== r) return
+    // Smoothed per box over frames (a box that overlaps last frame's is the same
+    // item), so one blurry or glinting frame doesn't flip the verdict.
+    const prev = r.prevMatch?.id === homing.id ? r.prevMatch.boxes : []
     targets = targets.map((b) => {
       const sig = ref?.sig ? signature(cropSig(r, bmp, b, w, h)) : null
       const m = matchScore(ref?.sig || null, homing.cls, sig, b.label, Number(b.score))
-      return { ...b, match: m.score, matchParts: m.parts }
+      const p = prev.find((q) => iou(q, b) > 0.3)
+      const sm = p ? 0.55 * m.score + 0.45 * p.match : m.score
+      return { ...b, match: Math.round(sm * 1000) / 1000, matchParts: m.parts }
     })
+    r.prevMatch = { id: homing.id, boxes: targets }
   }
   const aiMs = Math.round(performance.now() - t0)
   set({ targets, hazards, tracks: trackView(r), aiMs: aiMs > 2 ? aiMs : state.aiMs })
@@ -321,9 +316,9 @@ async function analyse(r, bmp, f, w, h) {
   const inZone = hazards.some((x) => x.in_zone)
   const body = {
     frame_time: f.frameTime, frame_w: w, frame_h: h,
-    targets: targets.map(({ x1, y1, x2, y2, score, label, match }) => ({ x1, y1, x2, y2, score, label, ...(match != null ? { match } : {}) })),
+    targets: targets.map(({ x1, y1, x2, y2, score, label, match }) => ({ x1, y1, x2, y2, score, label, ...(match != null && r.homing ? { match } : {}) })),
     matcher: 'app-cv', // this app compares the boxes with the drone's crop (the boat waits for its scores)
-    ...(homing ? { match_for: homing.id } : {}),
+    ...(r.homing ? { match_for: r.homing.id } : {}),
     hazards: hazards.map(({ x1, y1, x2, y2, score, label, in_zone }) => ({ x1, y1, x2, y2, score, label, in_zone })),
   }
   if (inZone && !r.hadHazard) body.hazard_photo = snapshot(r, bmp, 0, 0, w, h, 480)
@@ -344,10 +339,19 @@ async function analyse(r, bmp, f, w, h) {
     .finally(() => { r.observing = false })
 }
 
+function iou(a, b) {
+  const ix = Math.max(0, Math.min(a.x2, b.x2) - Math.max(a.x1, b.x1))
+  const iy = Math.max(0, Math.min(a.y2, b.y2) - Math.max(a.y1, b.y1))
+  const i = ix * iy
+  const u = (a.x2 - a.x1) * (a.y2 - a.y1) + (b.x2 - b.x1) * (b.y2 - b.y1) - i
+  return u > 0 ? i / u : 0
+}
+
 /** The drone's crop of a find, as a matcher signature (cached per find). */
 async function referenceFor(r, id) {
-  if (r.ref?.id === id) return r.ref
-  r.ref = { id, sig: null } // one attempt per find; a failed load means class + score only
+  // Cached per find; no picture yet (still arriving) → try again every 3 s.
+  if (r.ref?.id === id && (r.ref.sig || Date.now() - r.ref.t < 3000)) return r.ref
+  r.ref = { id, sig: null, t: Date.now() }
   let url = await getDroneCrop(id)
   if (!url) {
     try {

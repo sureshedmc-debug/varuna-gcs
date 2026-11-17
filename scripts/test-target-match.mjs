@@ -71,6 +71,30 @@ for (const [label, ref] of Object.entries(fx.refs)) {
   if (!ok) failed++
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${label.padEnd(18)} ${scored.map((s) => `${s.label.split(' ').pop().slice(0, 9)}=${s.score.toFixed(2)}`).join('  ')}`)
 }
+// Harder, like the real cameras: the drone's picture is darker and warmer
+// (a different camera / light), and the AI only says "plastic" for every item,
+// so the look alone has to pick the right one.
+const SAME_COLOUR = { 'plastic bottle': 'plastic bag', 'plastic bag': 'plastic bottle' }
+const shift = ({ w, h, rgb }, gain, tint) => ({
+  w, h, rgb: rgb.map((v, i) => Math.max(0, Math.min(255, Math.round(v * gain * tint[i % 3])))),
+})
+for (const [name, gain, tint] of [['darker + warmer', 0.65, [1.15, 1, 0.8]], ['brighter + cooler', 1.3, [0.85, 1, 1.2]]]) {
+  let worst = Infinity
+  for (const [label, ref] of Object.entries(fx.refs)) {
+    const rs = signature(toImg(shift(ref, gain, tint)))
+    const scored = cands.map((c) => ({ label: c.label, ...matchScore(rs, 'plastic', c.sig, 'plastic', c.score) }))
+    const own = scored.find((s) => s.label === label)
+    // The simulator's bottle and bag are the same white: with no class name
+    // and different viewpoints, colour can't separate them (the class can).
+    const twin = SAME_COLOUR[label]
+    const best = Math.max(...scored.filter((s) => s.label !== label && s.label !== twin).map((s) => s.score))
+    const ok = own.score >= best + 0.15 && best < THRESHOLD
+    worst = Math.min(worst, own.score - best)
+    if (!ok) failed++
+    console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}, class unknown: ${label.padEnd(18)} own=${own.score.toFixed(2)} best different-colour item=${best.toFixed(2)}`)
+  }
+  console.log(`      worst margin (${name}): ${worst.toFixed(2)}`)
+}
 // Edge cases: no reference image (class + detector only), unknown class, no images at all.
 const c0 = cands[0]
 const noRef = matchScore(null, c0.label, c0.sig, c0.label, 0.8)

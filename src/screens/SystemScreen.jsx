@@ -131,16 +131,22 @@ function BoatConnectionPanel({ shell }) {
   const [result,  setResult]  = useState(null)
   const changed = val.trim().replace(/\/+$/, '') !== saved.replace(/\/+$/, '')
 
-  async function apply() {
+  async function applyValue(v) {
     if (desktop) {
       setSaving(true)
-      const r = await window.varuna.setBoatAddress(val)
+      const r = await window.varuna.setBoatAddress(v)
       setSaving(false)
       if (!r?.ok) return setResult({ ok: false, title: 'Invalid address', detail: r?.error || '' })
       setBoatBase('')
-    } else { setBoatBase(val) }
+    } else { setBoatBase(v) }
     window.location.reload()
   }
+  const apply = () => applyValue(val)
+  // One tap for the common setup: the boat backend ("Start VARUNA Boat") runs on
+  // this same laptop on port 8001. Both the desktop app (via its own proxy) and
+  // the browser (direct — the backend sends CORS) talk straight to loopback, so
+  // this bypasses any stale Netbird address in settings or .env.local.
+  const useLocal = () => applyValue('http://127.0.0.1:8001')
   async function test() {
     setTesting(true); setResult(null)
     try { setResult(desktop ? await window.varuna.testBoatAddress(val) : await testBoatConnection(val)) }
@@ -151,8 +157,8 @@ function BoatConnectionPanel({ shell }) {
     <div>
       <p className="mb-3 text-xs text-muted">
         {desktop
-          ? "Enter the boat Pi's Netbird address — a separate device from the drone's Pi. The desktop app forwards to it, so no CORS is needed. Saved on this PC."
-          : <>Leave <strong className="text-ink">blank</strong> to go through the Vite proxy (VITE_DEV_BOAT_TARGET), or enter the boat Pi's Netbird address to call it directly.</>}
+          ? <>Tap <strong className="text-ink">Boat on this computer</strong> when "Start VARUNA Boat" runs on this laptop (it listens on 127.0.0.1:8001). For a remote boat, enter its Netbird/LAN address. Saved on this PC.</>
+          : <>Tap <strong className="text-ink">Boat on this computer</strong> to talk straight to 127.0.0.1:8001, leave <strong className="text-ink">blank</strong> for the Vite proxy, or enter the boat's Netbird/LAN address.</>}
       </p>
       <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted">
         {desktop ? 'Boat Pi address (Netbird)' : 'Boat base URL'}
@@ -167,6 +173,7 @@ function BoatConnectionPanel({ shell }) {
         <Btn disabled={!changed || saving} onClick={apply}>
           {saving ? <Spinner /> : desktop ? 'Save & reconnect' : 'Apply & reconnect'}
         </Btn>
+        <Btn variant="secondary" onClick={useLocal} disabled={saving}>Boat on this computer</Btn>
         <Btn variant="secondary" onClick={test} disabled={testing}>
           {testing ? <Spinner /> : 'Test connection'}
         </Btn>

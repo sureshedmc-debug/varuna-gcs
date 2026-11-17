@@ -1,21 +1,20 @@
 """
 VARUNA phone relay: passes the drone's MAVLink between the ESP32 and the VARUNA
-backend reached over NetBird. The ESP32 is either plugged into the phone's USB-C
+backend on the laptop (same Wi-Fi, or NetBird). The ESP32 is either plugged into the phone's USB-C
 port (esp32_usb_bridge sketch) or on the phone's hotspot (DroneBridge).
 
     USB:   Pixhawk TELEM2 --UART--> ESP32 --USB-C cable--> phone (relay.py --usb-fd, via termux-usb)
     Wi-Fi: Pixhawk TELEM2 --UART--> ESP32 (DroneBridge) --hotspot Wi-Fi, UDP--> phone:14550
-    then:  phone:14551 <--NetBird, UDP-- laptop backend (--connection udpout:<phone NetBird IP>:14551)
+    then:  phone:14551 <--Wi-Fi (or NetBird), UDP-- laptop backend (--connection udpout:<phone IP>:14551)
 
 USB mode is started by relay.sh, through termux-usb, which opens the USB device
 and passes its file descriptor:  termux-usb -r -e "python relay.py --usb-fd" <device>
 The USB serial chips of ESP32 boards are driven here directly (CDC-ACM for
 ESP32-S3/C3 native USB and CH9102, CH340/CH341, CP210x), with no extra packages.
 
-Why it is needed: NetBird gives only the phone itself an address on the private
-network. The ESP32 sits behind the phone's hotspot, which Android does not route
-to NetBird, so the laptop can't reach it directly. This script, running on the
-phone (Termux), is the bridge.
+Why it is needed: the ESP32 hangs off the phone (USB, or the phone's hotspot,
+which Android does not route onward), so the laptop can't reach it directly.
+This script, running on the phone (Termux), is the bridge.
 
 Plain Python 3 standard library, nothing to install:
 
@@ -409,7 +408,7 @@ class UsbBridge:
 
 
 def main():
-    ap = argparse.ArgumentParser(description="VARUNA phone relay: ESP32 MAVLink <-> NetBird")
+    ap = argparse.ArgumentParser(description="VARUNA phone relay: ESP32 MAVLink <-> laptop backend")
     ap.add_argument("--fc-port", type=int, default=14550, help="UDP port the ESP32 sends to (default 14550)")
     ap.add_argument("--gcs-port", type=int, default=14551, help="UDP port the backend connects to (default 14551)")
     ap.add_argument("--esp", default="", help="the ESP32's fixed address, e.g. 192.168.43.50 "

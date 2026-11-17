@@ -32,8 +32,8 @@ DEFAULTS = {
     "http_port": 8000,
     # ---- Camera: 1280x720 at 30 fps
     "camera_source": "auto",          # auto | usb | csi | url | test | off
-    # A phone (or IP camera) on the drone sending MJPEG, e.g. the IP Webcam app:
-    # "http://<phone NetBird IP>:8080/video". Used by camera_source "url", and by
+    # A phone (or IP camera) on the drone sending MJPEG, e.g. the VARUNA Cam app:
+    # "http://<phone IP>:8080/video". Used by camera_source "url", and by
     # "auto" whenever it is set.
     "camera_url": "",
     "camera_device": "auto",          # auto = first USB camera, or e.g. /dev/video0
@@ -44,6 +44,18 @@ DEFAULTS = {
     "camera_codec": "h264",           # h264 (Pi hardware encoder: camera module, and USB webcams at 640x480) | mjpeg
     "video_bitrate_kbps": 3000,       # H.264 bitrate; 3 Mbit/s is clear 720p at 15 fps and keeps the delay low on 4G
     "ffmpeg_path": "ffmpeg",
+    # Phone camera (H.264): steadied on this computer (stabilize.py) before the app
+    # gets it. It waits stabilize_delay_ms for later frames to smooth against.
+    "video_stabilize": "off",         # on | off (on adds ~0.3 s of delay and needs a free CPU)
+    "stabilize_delay_ms": 160,       # look-ahead: 160 ms takes out vibration and shake without much delay
+    "stabilize_crop_pct": 12,         # zoom in this much to hide the moving edges; the most it can correct
+    # ---- Position: where the drone is
+    # auto = the Pixhawk's GPS when it has a fix, else the phone's (VARUNA Cam on
+    # the drone streams its GPS and camera attitude); phone = always the phone's;
+    # pixhawk = never the phone's.
+    "position_source": "auto",
+    "phone_gps_url": "",              # empty = the camera phone's /location/stream
+    "phone_fixed_alt_m": 0,           # > 0: this height is used instead of the phone's (no barometer: GPS height is rough)
     # ---- Flight safety (live-tunable)
     "stream_fps": 15,                 # 15 x ~33 KB fits ordinary Wi-Fi; more piles up delay
     "takeoff_alt_m": 10,
@@ -81,6 +93,21 @@ TUNABLE = {
     "video_bitrate_kbps": {"type": "int", "min": 300, "max": 15000,
                            "description": "H.264 video bitrate in kbit/s. Lower = smoother on weak Wi-Fi, "
                                           "higher = sharper."},
+    "video_stabilize": {"type": "str", "options": ["on", "off"],
+                        "description": "Steady the phone camera's video and take out vibration (on this computer, "
+                                       "before the app gets it). Adds stabilize_delay_ms plus about 0.1 s of delay."},
+    "stabilize_delay_ms": {"type": "int", "min": 0, "max": 1000,
+                           "description": "How far ahead stabilisation looks, in ms. More = smoother, but the "
+                                          "video arrives that much later. 0 = live, follows shake less well."},
+    "stabilize_crop_pct": {"type": "int", "min": 0, "max": 25,
+                           "description": "Stabilisation zooms in this many percent to hide the moving edges; "
+                                          "it is also the most shake it can correct."},
+    "position_source": {"type": "str", "options": ["auto", "phone", "pixhawk"],
+                        "description": "Where the drone's position comes from: auto (the Pixhawk's GPS when it has a "
+                                       "fix, else the phone's), phone (the VARUNA Cam phone's GPS) or pixhawk."},
+    "phone_fixed_alt_m": {"type": "float", "min": 0, "max": 150,
+                          "description": "Phone GPS: height above the take-off point to place detections with, in m. "
+                                         "0 = the phone's own (barometer if it has one, else GPS height, several m rough)."},
     "stream_fps": {"type": "int", "min": 1, "max": 30,
                    "description": "Video frames per second sent to the app (lower it on a weak link)."},
     "takeoff_alt_m": {"type": "float", "min": 2, "max": 50,
@@ -114,13 +141,15 @@ TUNABLE = {
 }
 
 _INT = {"usb_baud", "telem2_baud", "http_port", "camera_width", "camera_height", "camera_fps",
-        "camera_quality", "video_bitrate_kbps", "stream_fps", "loiter_time_s", "max_waypoints", "operator_lost_s",
+        "camera_quality", "video_bitrate_kbps", "stream_fps", "stabilize_delay_ms", "stabilize_crop_pct", "loiter_time_s", "max_waypoints", "operator_lost_s",
         "kb_yaw_dps", "kb_lost_s"}
-_FLOAT = {"takeoff_alt_m", "max_altitude_m", "max_distance_m", "mission_fence_m", "kb_speed_mps", "kb_climb_mps", "kb_min_alt_m"}
+_FLOAT = {"phone_fixed_alt_m", "takeoff_alt_m", "max_altitude_m", "max_distance_m", "mission_fence_m", "kb_speed_mps", "kb_climb_mps", "kb_min_alt_m"}
 _CHOICES = {
     "link_prefer": ("auto", "usb", "telem2"),
     "camera_source": ("auto", "usb", "csi", "url", "test", "off"),
     "camera_codec": ("h264", "mjpeg"),
+    "video_stabilize": ("on", "off"),
+    "position_source": ("auto", "phone", "pixhawk"),
     "operator_lost_action": ("none", "rtl", "land"),
     "kb_lost_action": ("rtl", "land", "hover"),
 }

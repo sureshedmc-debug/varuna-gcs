@@ -16,8 +16,8 @@ Every mutating call answers HTTP 200 with {"success": bool, "message": str}.
 Run on the Pi:      python main.py
 Test on a laptop:   python main.py --connection tcp:127.0.0.1:5760 --camera test
 On the laptop, with the phone on the drone (phone-link/README.md):
-                    python main.py --connection udpout:<phone NetBird IP>:14551 \
-                                   --camera-url http://<phone NetBird IP>:8080/video
+                    python main.py --connection udpout:<phone IP>:14551 \
+                                   --camera-url http://<phone IP>:8080/video
 """
 
 import argparse
@@ -42,6 +42,8 @@ from config import DATA_DIR, HERE, ConfigStore
 from control import KeyboardControl
 from mav_link import DroneLink, LinkError
 from mission import ACTIVE, MissionManager
+from phone_gps import PhoneGPS
+from stabilize import SEI_MARK
 from system_info import pi_metrics
 
 log = logging.getLogger("drone")
@@ -57,6 +59,7 @@ for _key, _env in (("mav_connection", "DRONE_CLI_CONNECTION"), ("camera_source",
 
 link = DroneLink(cfg)
 camera = CameraManager(cfg)
+phone = PhoneGPS(cfg)
 missions = MissionManager(link, cfg, DATA_DIR)
 keyboard = KeyboardControl(link, cfg)
 operator = {"last": time.time(), "ws": 0, "acted": False}
@@ -130,11 +133,50 @@ def run(fn, success_message=None):
         return fail(f"Unexpected error: {exc}")
 
 
+def use_phone(s=None):
+    """Whether the phone's GPS is the drone's position now (position_source)."""
+    src = cfg.get("position_source", "auto")
+    if src == "pixhawk":
+        return False
+    if src == "phone":
+        return True
+    if s is None:
+        s = link.snapshot()
+    fc_gps = s["fc_connected"] and s["lat"] is not None and (s["gps_fix"] or 0) >= 3
+    return phone.connected and not fc_gps
+
+
+def _phone_position(d, s):
+    """The phone's GPS in place of the Pixhawk's, when it is the source."""
+    p = phone.snapshot()
+    d["phone_gps"] = p
+    if not use_phone(s):
+        d["position_source"] = "pixhawk" if s["lat"] is not None else None
+        return d
+    d["position_source"] = "phone"
+    has = p["lat"] is not None
+    rel = p["rel_alt"]
+    d.update({
+        "lat": p["lat"], "lng": p["lng"],
+        "altitude": round(rel or 0.0, 2), "relative_alt": round(rel or 0.0, 2),
+        "alt_msl": p["alt_msl"],
+        "speed": round(p["speed"] or 0.0, 2), "groundspeed": round(p["speed"] or 0.0, 2),
+        "heading": p["heading"], "yaw": p["heading"], "roll": p["roll"], "pitch": p["pitch"],
+        "satellites": p["satellites"],
+        "gps_fix": (3 if p["fix"] == "gps" and (p["accuracy"] or 999) <= 30 else 1) if has else 0,
+        "hdop": None, "gps_accuracy": p["accuracy"],
+    })
+    if p["home_lat"] is not None:
+        d.update(home_lat=p["home_lat"], home_lng=p["home_lng"],
+                 home={"lat": p["home_lat"], "lng": p["home_lng"]})
+    return d
+
+
 def telemetry():
     s = link.snapshot()
     m = missions.status()
     home = None if s["home_lat"] is None else {"lat": s["home_lat"], "lng": s["home_lng"]}
-    return {
+    d = {
         "vehicle": "drone",
         "lat": s["lat"],
         "lng": s["lng"],
@@ -172,6 +214,7 @@ def telemetry():
         "keyboard": keyboard.status(),
         "t": round(time.time(), 2),
     }
+    return _phone_position(d, s)
 
 
 def web_root():
@@ -225,6 +268,7 @@ async def operator_watchdog():
 async def lifespan(app):
     link.start()
     camera.start()
+    phone.start()
     keyboard.start()
     tasks = [asyncio.create_task(broadcast_loop()), asyncio.create_task(operator_watchdog())]
     log.info("VARUNA drone backend %s ready on port %s", VERSION, cfg["http_port"])
@@ -232,6 +276,7 @@ async def lifespan(app):
     for t in tasks:
         t.cancel()
     keyboard.stop()
+    phone.stop()
     camera.stop()
     link.stop()
 
@@ -261,6 +306,7 @@ def health():
         "pixhawk_connected": s["fc_connected"], "camera_connected": bool(camera.connected),
         "link": s["link"], "link_error": s["link_error"],
         "gps_fix": s["gps_fix"], "satellites": s["satellites"],
+        "phone_gps": phone.connected, "position_source": "phone" if use_phone(s) else "pixhawk",
         "uptime_s": round(time.time() - STARTED),
     }
 
@@ -334,8 +380,25 @@ H264_RECORD = struct.Struct(">IBQ")
 POSE_LEN = struct.Struct(">H")
 
 
-def _frame_pose(ts_us):
-    """The drone's pose when a frame was taken, as JSON, if the Pixhawk is there."""
+def _stab_zoom():
+    """How far stabilisation zooms the picture in (it narrows the view)."""
+    st = getattr(camera, "_stab", None)
+    if st is None or st.failed:
+        return 1.0
+    return 1.0 + max(0, int(cfg.get("stabilize_crop_pct", 12) or 0)) / 100.0
+
+
+def _frame_pose(ts_us, data=b"", from_phone=False):
+    """The drone's pose when a frame was taken, as JSON: from the phone's GPS
+    (by the frame's own capture stamp) or the Pixhawk."""
+    if from_phone:
+        m = SEI_MARK.search(data, 0, 1024) if data else None
+        zoom = _stab_zoom()
+        smooth = int(cfg.get("stabilize_delay_ms", 300) or 0) / 1000.0 if zoom > 1.0 else 0.0
+        pose = phone.pose_at_phone(int(m.group(1)) / 1000.0, zoom, smooth) if m             else phone.pose_at(ts_us / 1e6, zoom, smooth)
+        if pose["lat"] is None and pose["hdg"] is None:
+            return b""
+        return json.dumps(pose, separators=(",", ":")).encode()
     if not link.fc_connected:
         return b""
     pose = link.pose_at(ts_us / 1e6)
@@ -352,7 +415,9 @@ def h264_frames(with_pose=False):
     max_lag = max(2, int(cfg["stream_fps"]) // 2)
     seq, need_key = -1, True
     last_frame = time.time()
-    while camera.codec == "h264":
+    # None: the camera hasn't started yet (the phone not found): wait for it here
+    # rather than send the app to MJPEG for good.
+    while camera.codec in ("h264", None):
         camera.touch()
         frames = camera.wait_h264(seq, timeout=2.0)
         if not frames:
@@ -367,9 +432,10 @@ def h264_frames(with_pose=False):
                 need_key = True                    # wait for the next keyframe
                 continue
             frames, need_key = frames[keys[-1]:], False
+        from_phone = with_pose and use_phone()
         for fseq, key, ts_us, data in frames:
             flags = 1 if key else 0
-            pose = _frame_pose(ts_us) if with_pose else b""
+            pose = _frame_pose(ts_us, data, from_phone) if with_pose else b""
             if pose:
                 flags |= 2
                 data = POSE_LEN.pack(len(pose)) + pose + data
@@ -382,7 +448,7 @@ def h264_frames(with_pose=False):
 @app.get("/api/camera/h264")
 def camera_h264(pose: bool = Query(default=False)):
     camera.touch()
-    if camera.codec != "h264":
+    if camera.codec not in ("h264", None):
         return JSONResponse({"success": False, "codec": camera.codec,
                              "message": "The camera is not sending H.264 now — use /video_feed."}, status_code=409)
     return StreamingResponse(h264_frames(pose), media_type="application/octet-stream",
@@ -416,7 +482,7 @@ def ai_classes():
 
 @app.post("/api/ai/report")
 def ai_report(body: AIReportRequest):
-    s = link.snapshot()
+    s = telemetry()
     ai_state["detections"].append({
         "class": body.debrisType, "confidence": body.confidence, "t": round(time.time(), 1),
         "lat": body.lat if body.lat is not None else s["lat"],
@@ -435,7 +501,23 @@ def get_telemetry():
 
 @app.get("/api/telemetry/history")
 def telemetry_history(limit: int = Query(default=200, ge=1, le=900)):
-    return link.recent_track(limit)
+    return phone.recent_track(limit) if use_phone() else link.recent_track(limit)
+
+
+# ---------------------------------------------------------------------------- phone GPS
+@app.get("/api/phone/gps")
+def phone_gps():
+    return {**phone.snapshot(), "in_use": use_phone(), "position_source": cfg.get("position_source", "auto")}
+
+
+@app.post("/api/phone/home")
+def phone_home():
+    """Makes where the phone is now the take-off point (height 0)."""
+    try:
+        phone.set_home()
+        return ok("Take-off point set where the drone is now.")
+    except Exception as exc:
+        return fail(f"Couldn't reach the phone: {exc}")
 
 
 @app.websocket("/api/ws")
@@ -681,7 +763,7 @@ def main():
     ap.add_argument("--connection", default=None, help="force the Pixhawk link, e.g. tcp:127.0.0.1:5760 or /dev/ttyACM0")
     ap.add_argument("--camera", default=None, help="camera source: auto | usb | csi | url | test | off")
     ap.add_argument("--camera-url", default=None,
-                    help="phone camera MJPEG stream, e.g. http://100.x.x.x:8080/video (IP Webcam)")
+                    help="phone camera MJPEG stream, e.g. http://100.x.x.x:8080/video (VARUNA Cam)")
     args = ap.parse_args()
     if args.connection:
         os.environ["DRONE_CLI_CONNECTION"] = args.connection

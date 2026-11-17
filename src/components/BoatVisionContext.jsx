@@ -39,6 +39,13 @@ export function BoatVisionProvider({ children }) {
 
   useEffect(() => subscribeVision(setEngine), [])
 
+  // Wildlife-safe mode was removed from the app: make sure the boat never
+  // holds for animals (the engine no longer looks for them).
+  const wildOn = cfg?.wildlife_enabled === true
+  useEffect(() => {
+    if (wildOn) boatApi.setVisionConfig({ wildlife_enabled: false }).catch(() => {})
+  }, [wildOn])
+
   // Start / stop the engine.
   useEffect(() => {
     const want = enabled && cameraUp && !!cfg

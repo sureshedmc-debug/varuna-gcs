@@ -2,7 +2,7 @@
 End-to-end test of the phone link, all on this computer:
 
     simulated vehicle (stands in for the ESP32) <--UDP--> relay.py <--UDP--> backend (udpout)
-    fake "IP Webcam" MJPEG server ------------HTTP-------------> backend (camera_url)
+    fake phone-camera MJPEG server ------------HTTP-------------> backend (camera_url)
 
 Checks that telemetry arrives through the relay, a command goes back to the
 vehicle, the relay's DroneBridge poke is valid MAVLink, and the phone's video

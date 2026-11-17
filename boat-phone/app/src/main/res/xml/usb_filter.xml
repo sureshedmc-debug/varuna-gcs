@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Pixhawk-family boards (3DR / ArduPilot / CubePilot / Holybro) and any
+         USB serial device (CDC ACM): Android offers to open the app when one is plugged in. -->
+    <usb-device vendor-id="9900" />
+    <usb-device vendor-id="4617" />
+    <usb-device vendor-id="11694" />
+    <usb-device vendor-id="12642" />
+    <usb-device class="2" />
+    <usb-device class="239" subclass="2" protocol="1" />
+</resources>

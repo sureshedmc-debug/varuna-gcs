@@ -1,17 +1,20 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# VARUNA: open the phone camera (IP Webcam) and start the drone telemetry relay together.
+# VARUNA: start the phone camera (VARUNA Cam) and the drone telemetry relay together.
 # Home-screen shortcut: copy to ~/.shortcuts/VARUNA-Start (see README.md).
 #
-# IP Webcam lets other apps open only its main screen, not start its server, so
-# tap "Start server" there once. With "Allow streaming in background" on, it keeps
-# streaming when you leave it. The relay starts here at the same time.
+# VARUNA Cam streams the camera on port 8080 (http://<phone>:8080/video). Opened
+# with "background", it starts streaming and steps aside so this window comes back.
+# Keep NetBird connected so the laptop can reach the phone.
 
-if am start -n com.pas.webcam/.Configuration >/dev/null 2>&1; then
-  echo "IP Webcam is open: tap Start server (skip it if the camera is already running)."
+if am start -n ai.varuna.cam/.MainActivity --ez background true >/dev/null 2>&1; then
+  echo "VARUNA Cam is streaming on port 8080 (stop it from its notification)."
 else
-  echo "Couldn't open IP Webcam: open it yourself and tap Start server."
+  echo "Couldn't open VARUNA Cam. Is it installed? Open it yourself to start the camera."
 fi
 
+sleep 3
+# vivo goes to the home screen when VARUNA Cam steps aside: bring this window back.
+am start -n com.termux/.app.TermuxActivity >/dev/null 2>&1
 echo "Starting the relay..."
 cd ~ || exit 1
 ./relay.sh

@@ -76,6 +76,10 @@ export const boatApi = {
   // Live collect: the boat goes after the drone's finds as they come, in GUIDED,
   // with no planned mission (boat-pi/live_collect.py).
   liveStatus: () => req('/api/live/status', { timeout: 10000 }),
+  // Boat Ops (boat_extras.py): phone GPS + Pixhawk, banners, automatic scoop, event log
+  opsStatus: () => req('/api/ops/status', { timeout: 5000 }),
+  opsSettings: (patch) => post('/api/ops/settings', patch, 10000),
+  opsScoop: (action) => post('/api/ops/scoop', { action }, 10000),
   liveTargets: (targets) => post('/api/live/targets', { targets }, 15000),
   liveStart: ({ whenEmpty = 'wait', speedMps } = {}) => post('/api/live/start', { when_empty: whenEmpty, speed_mps: speedMps }, 30000),
   livePause: () => post('/api/live/pause', undefined, 15000),

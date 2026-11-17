@@ -12,6 +12,7 @@ import { registerNavigator } from './lib/planDraftStore'
 import { startDataRecorders } from './lib/liveMissionPlan'
 import { lockData } from './lib/dataLock'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import OpsAlert from './components/OpsAlert'
 
 import { wakeWordEnabled } from './lib/assistant/wakeWord'
 
@@ -23,15 +24,13 @@ import SystemScreen from './screens/SystemScreen'
 
 // Lazy load heavy screens with AI models
 const LiveScreen = lazy(() => import('./screens/LiveScreen'))
-const ControlScreen = lazy(() => import('./screens/ControlScreen'))
 const MissionScreen = lazy(() => import('./screens/MissionScreen'))
 const DetectionsScreen = lazy(() => import('./screens/DetectionsScreen'))
 const ReplayScreen = lazy(() => import('./screens/ReplayScreen'))
-const BoatScreen = lazy(() => import('./screens/BoatScreen'))
-const CollectScreen = lazy(() => import('./screens/CollectScreen'))
 const BoatVisionScreen = lazy(() => import('./screens/BoatVisionScreen'))
-const WaterLabScreen = lazy(() => import('./screens/WaterLabScreen'))
 const DataScreen = lazy(() => import('./screens/DataScreen'))
+// The Boat tab (drone -> boat collection: live camera, matching, messages).
+const BoatOpsScreen = lazy(() => import('./screens/BoatOpsScreen'))
 
 // The public website (Vercel, `vite build --mode site`) wraps the app in a
 // landing page, Explore Varuna and a sign-in gate. Other builds never load it.
@@ -41,17 +40,18 @@ const SiteApp = SITE ? lazy(() => import('./site/SiteApp')) : null
 const SCREENS = {
   home: MissionControlScreen,
   live: LiveScreen,
-  control: ControlScreen,
   mission: MissionScreen,
-  boat: BoatScreen,
-  collect: CollectScreen,
+  boat: BoatOpsScreen,
   vision: BoatVisionScreen,
-  water: WaterLabScreen,
   detections: DetectionsScreen,
   replay: ReplayScreen,
   data: DataScreen,
   system: SystemScreen,
 }
+// Old tab names (the former Boat, Collect, Boat Ops and Water Lab tabs) still
+// arrive from links and the assistant: send them somewhere that exists.
+const TAB_ALIAS = { collect: 'boat', ops: 'boat', water: 'home' }
+const tabFor = (t) => TAB_ALIAS[t] || (SCREENS[t] ? t : 'home')
 
 // Only this small component listens to the live system state for the banner,
 // so telemetry updates don't re-render the whole shell (rail, top bar, screen).
@@ -65,7 +65,9 @@ function SystemWarnings() {
 function LiveCollectDetect({ tab, onOpen }) {
   const boat = useBoat()
   const state = boat.reachable === true ? boat.live?.state : null
-  if (tab === 'live' || (state !== 'running' && state !== 'returning')) return null
+  // Also whenever the Boat tab is open, so its "Drone saw this" box fills as soon
+  // as the drone camera sees plastic (even before START).
+  if (tab === 'live' || (tab !== 'boat' && state !== 'running' && state !== 'returning')) return null
   return (
     <Suspense fallback={null}>
       <BackgroundDetect onOpen={onOpen} />
@@ -74,7 +76,8 @@ function LiveCollectDetect({ tab, onOpen }) {
 }
 
 function Shell({ onLock }) {
-  const [tab, setTab] = useState('home')
+  const [tab, setTabRaw] = useState('home')
+  const setTab = (t) => setTabRaw(tabFor(t))
   // Sidebar auto-hides on desktop unless pinned; on phones it's a drawer from the hamburger.
   const [navPinned, setNavPinned] = useState(() => {
     try {
@@ -105,11 +108,11 @@ function Shell({ onLock }) {
     }
   }
   // Lets the AI assistant switch tabs (e.g. open Missions after planning).
-  useEffect(() => registerNavigator(setTab), [])
+  useEffect(() => registerNavigator((t) => setTabRaw(tabFor(t))), [])
   // Missions, coordinates and detections → the local CSV store.
   useEffect(() => startDataRecorders(), [])
   const Screen = SCREENS[tab]
-  const fullBleed = tab === 'live' || tab === 'control' || tab === 'mission' || tab === 'boat' || tab === 'collect' || tab === 'vision' || tab === 'water'
+  const fullBleed = tab === 'live' || tab === 'mission' || tab === 'boat' || tab === 'vision'
 
   return (
     <div className="relative min-h-screen">
@@ -158,6 +161,7 @@ function Shell({ onLock }) {
         </AnimatePresence>
       </main>
       <LiveCollectDetect tab={tab} onOpen={() => setTab('live')} />
+      <OpsAlert hidden={tab === 'boat'} onOpen={() => setTab('boat')} />
       <Suspense fallback={null}>
         <VoiceAssistant tab={tab} wakeSignal={wakeSignal} wakeWordOn={wakeWordOn} onWakeState={setWakeState} />
       </Suspense>

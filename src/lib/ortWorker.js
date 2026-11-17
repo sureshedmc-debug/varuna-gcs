@@ -41,19 +41,24 @@ async function webgpuUsable() {
   return adapterOk
 }
 
-// Session creates must not overlap (onnxruntime's lazy WASM init races).
-let chain = Promise.resolve()
-function serialized(fn) {
-  const run = chain.then(fn, fn)
-  chain = run.then(() => {}, () => {})
+const sessions = new Map() // id -> session
+// One model run (or session create: onnxruntime's lazy WASM init races too)
+// at a time in this worker, across ALL models: on WebGPU,
+// onnxruntime can't start a run while another is going, even of a different
+// model. Overlapping runs (the plastic model while the face/person model, or
+// a second Live view, is still running) fail with "Session already started",
+// "Session mismatch" or "memory access out of bounds" — and the Live view
+// showed "0 found" on a picture full of plastic.
+let runChain = Promise.resolve()
+function queued(fn) {
+  const run = runChain.then(fn, fn)
+  runChain = run.then(() => {}, () => {})
   return run
 }
 
-const sessions = new Map() // id -> session
-
 async function create(url) {
   const ort = await loadOrt()
-  return serialized(async () => {
+  return queued(async () => {
     const opts = { graphOptimizationLevel: 'all' }
     if (await webgpuUsable()) {
       try {
@@ -83,7 +88,7 @@ self.onmessage = async ({ data: msg }) => {
       if (!session) throw new Error('model released')
       const feeds = {}
       for (const [name, t] of Object.entries(msg.feeds)) feeds[name] = new ort.Tensor(t.type, t.data, t.dims)
-      const result = await session.run(feeds)
+      const result = await queued(() => session.run(feeds))
       const outputs = {}
       const transfer = []
       for (const [name, t] of Object.entries(result)) {
@@ -98,6 +103,7 @@ self.onmessage = async ({ data: msg }) => {
   } else if (msg.op === 'release') {
     const s = sessions.get(msg.id)
     sessions.delete(msg.id)
-    try { await s?.release?.() } catch { /* already gone */ }
+    // Not in the middle of a run (of this model or another).
+    await queued(async () => { try { await s?.release?.() } catch { /* already gone */ } })
   }
 }

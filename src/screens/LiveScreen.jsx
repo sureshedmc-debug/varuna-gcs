@@ -4,7 +4,7 @@ import { api } from '../api/client'
 import { useSystem } from '../components/SystemContext'
 import { usePolling } from '../hooks/usePolling'
 import { useToast } from '../components/Toast'
-import { Btn, StaleBadge, StatusOrb, CommandButton, CommandPanel } from '../components/ui'
+import { StaleBadge, StatusOrb, CommandButton, CommandPanel } from '../components/ui'
 import { ViewToggle, EYE, EYE_OFF, SWAP } from '../components/ViewToggle'
 import VideoHUD from '../components/VideoHUD'
 import MapCanvas from '../components/MapCanvas'
@@ -13,9 +13,10 @@ import LiveBoatMarkers from '../components/LiveBoatMarkers'
 import WasteLocationsPanel from '../components/WasteLocationsPanel'
 import LatestDetectionBanner from '../components/LatestDetectionBanner'
 import { BoatLiveCollectCard } from '../components/BoatLiveCollectCard'
+import DroneMiniMap, { DroneGpsLayer, readDroneGps, useDroneTrail } from '../components/DroneMiniMap'
 import { useBoat } from '../components/BoatContext'
 import { useRecommendedConf } from '../components/BackgroundDetect'
-import { pick, num, bool, fmtCoord, DASH } from '../lib/format'
+import { pick, bool } from '../lib/format'
 import { cmd } from '../lib/commands'
 
 const WebcamDetect = lazy(() => import('../components/WebcamDetect'))
@@ -43,31 +44,6 @@ function readTelemetry(t) {
   }
 }
 
-// Styled metric block used in the telemetry panel.
-function Metric({ label, value, unit, level, bar, barPct }) {
-  const c = level
-    ? { ok: '#32D74B', warn: '#FF9F0A', bad: '#FF453A', idle: '#616875' }[level]
-    : 'rgb(var(--ink))'
-  return (
-    <div className="flex flex-col gap-0.5">
-      <span className="text-[10px] uppercase tracking-wider text-muted">{label}</span>
-      <span className="flex items-center gap-1.5 font-mono text-lg font-semibold tnum" style={{ color: c }}>
-        {level && <StatusOrb level={level} size={7} />}
-        {value}
-        {unit && <span className="text-xs font-normal text-muted">{unit}</span>}
-      </span>
-      {bar && (
-        <div className="mt-0.5 h-[3px] overflow-hidden rounded-full bg-chip2">
-          <div
-            className="h-full rounded-full transition-all duration-500"
-            style={{ width: `${Math.max(0, Math.min(100, barPct || 0))}%`, background: c }}
-          />
-        </div>
-      )}
-    </div>
-  )
-}
-
 export default function LiveScreen() {
   const { telemetry, simulated } = useSystem()
   const toast   = useToast()
@@ -91,12 +67,11 @@ export default function LiveScreen() {
   const connected = telemetry.status === 'live' || telemetry.status === 'polling'
   const aiOn      = bool(pick(ai.data, ['ai_enabled', 'enabled', 'live_boxes'])) ?? false
 
-  const satN      = Number(t.sats)
-  const gpsLevel  = t.lat != null && satN >= 6 ? 'ok' : satN >= 4 ? 'warn' : 'bad'
-  const voltN     = Number(t.volt)
-  const battLevel = Number.isNaN(voltN) ? 'idle' : voltN >= 11.1 ? 'ok' : voltN >= 10.5 ? 'warn' : 'bad'
-  // Battery % estimate: 12.6V = 100%, 10.5V = 0%
-  const battPct   = Number.isNaN(voltN) ? 0 : Math.max(0, Math.min(100, ((voltN - 10.5) / (12.6 - 10.5)) * 100))
+  // The drone's live position (its Pixhawk's GPS, or the VARUNA Cam phone's on it).
+  const gps       = readDroneGps(telemetry.data)
+  const trail     = useDroneTrail(gps.pos)
+  // Arm / take-off / land only mean something with a flight controller on the link.
+  const fcUp      = telemetry.data?.fc_connected !== false
 
   const hasFix = t.lat != null && t.lng != null && Number(t.lat) !== 0
   const cLat   = hasFix ? Number(t.lat) : null
@@ -154,7 +129,8 @@ export default function LiveScreen() {
             </Suspense>
             {mainView === 'map' && (
               <div className="absolute inset-0 z-10">
-                <MapCanvas center={center} hasFix={hasFix}>
+                <MapCanvas center={center} hasFix={hasFix}
+                  droneMarker={<DroneGpsLayer pos={gps.pos} heading={gps.heading} acc={gps.acc} trail={trail} home={gps.home} />}>
                   <LiveDetectionMarkers />
                   <LiveBoatMarkers />
                 </MapCanvas>
@@ -250,9 +226,9 @@ export default function LiveScreen() {
       {/* ── Waste locations (bottom-right): GPS of every detection, own Show/Hide button ── */}
       <WasteLocationsPanel show={showWaste} />
 
-      {/* ── Telemetry panel (top-right, animated) ── */}
+      {/* ── The boat collecting what the drone finds, live (top-right) ── */}
       <AnimatePresence>
-        {!hideWidgets && mainView !== 'webcam' && (
+        {!hideWidgets && mainView !== 'webcam' && boatLive && (
           <motion.div
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
@@ -261,7 +237,7 @@ export default function LiveScreen() {
             className={`absolute right-3 ${mainView === 'video' ? 'top-[14rem] lg:top-14' : 'top-3'} z-20 max-h-[calc(100%-6rem)] w-[240px] overflow-y-auto`}
           >
             <div
-              className="rounded-2xl p-4"
+              className="rounded-2xl p-2 [&>div]:mb-0"
               style={{
                 background: 'rgba(13,17,26,0.88)',
                 border: '1px solid rgba(255,255,255,0.08)',
@@ -269,77 +245,29 @@ export default function LiveScreen() {
                 boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
               }}
             >
-              {/* Header */}
-              <div className="mb-3 flex items-center justify-between">
-                <span className="eyebrow">Telemetry</span>
-                <span
-                  className="rounded-md px-2 py-0.5 text-[10px] font-bold"
-                  style={{
-                    background: t.armed ? 'rgba(255,69,58,0.16)' : 'rgba(50,215,75,0.14)',
-                    color:      t.armed ? '#FF8A80' : '#7BE495',
-                    border:     `1px solid ${t.armed ? 'rgba(255,69,58,0.3)' : 'rgba(50,215,75,0.25)'}`,
-                  }}
-                >
-                  {t.armed === undefined ? 'UNKNOWN' : t.armed ? '● ARMED' : '○ DISARMED'}
-                </span>
-              </div>
-
-              {/* Metrics grid */}
-              <div className="grid grid-cols-2 gap-x-4 gap-y-3">
-                <Metric label="Mode"    value={t.mode || DASH} />
-                <Metric label="Alt"     value={num(t.alt, 1)}    unit="m" />
-                <Metric
-                  label="Battery" value={num(t.volt, 1)} unit="V"
-                  level={battLevel} bar barPct={battPct}
-                />
-                <Metric label="Speed"   value={num(t.speed, 1)} unit="m/s" />
-                <Metric
-                  label="GPS"     value={num(t.sats, 0)}  unit="sats"
-                  level={gpsLevel}
-                />
-                <Metric label="Heading" value={num(t.heading, 0)} unit="°" />
-              </div>
-
-              {/* GPS coords footer */}
-              <div
-                className="mt-3 rounded-lg px-2.5 py-2"
-                style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)' }}
-              >
-                <div className="mb-0.5 text-[10px] font-bold uppercase tracking-wider text-muted">Drone position</div>
-                {t.lat != null && t.lng != null ? (
-                  <div className="font-mono text-[15px] font-bold leading-tight tnum text-ink">
-                    {fmtCoord(t.lat)}
-                    <br />
-                    {fmtCoord(t.lng)}
-                  </div>
-                ) : (
-                  <div className="text-[13px] font-semibold text-muted">No GPS position</div>
-                )}
-              </div>
+              <BoatLiveCollectCard />
             </div>
-
-            {/* The boat collecting what the drone finds, live */}
-            {boatLive && (
-              <div
-                className="mt-2 rounded-2xl p-2 [&>div]:mb-0"
-                style={{
-                  background: 'rgba(13,17,26,0.88)',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  backdropFilter: 'blur(16px)',
-                  boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
-                }}
-              >
-                <BoatLiveCollectCard />
-              </div>
-            )}
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* ── PIP thumbnail (bottom-left, animated) ── */}
+      {/* ── Bottom-left: the drone's live position on a small map (video view),
+            or the video in a thumbnail (map view) ── */}
       <AnimatePresence>
-        {!hideWidgets && mainView !== 'webcam' && (
+        {!hideWidgets && mainView === 'video' && (
+          <motion.div
+            key="minimap"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="absolute bottom-20 left-3 z-20"
+          >
+            <DroneMiniMap g={gps} trail={trail} onOpenMap={swap} />
+          </motion.div>
+        )}
+        {!hideWidgets && mainView === 'map' && (
           <motion.button
+            key="videopip"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
@@ -348,10 +276,7 @@ export default function LiveScreen() {
             style={{ border: '1px solid rgba(255,255,255,0.14)', boxShadow: '0 4px 20px rgba(0,0,0,0.5)' }}
             title="Tap to swap main view"
           >
-            {mainView === 'video'
-              ? <MapCanvas center={center} hasFix={hasFix} zoom={15}><LiveDetectionMarkers small /><LiveBoatMarkers small /></MapCanvas>
-              : <VideoHUD speed={t.speed} altitude={t.alt} heading={t.heading} aiOn={aiOn} fill />
-            }
+            <VideoHUD speed={t.speed} altitude={t.alt} heading={t.heading} aiOn={aiOn} fill />
             <span
               className="absolute inset-x-0 bottom-0 py-1 text-center text-[9px] font-bold tracking-widest text-white"
               style={{ background: 'rgba(0,0,0,0.65)' }}
@@ -362,9 +287,10 @@ export default function LiveScreen() {
         )}
       </AnimatePresence>
 
-      {/* ── Flight command ring (bottom-center above view controls) ── */}
+      {/* ── Flight command ring (bottom-center above view controls): only with a
+            flight controller to command (none when the phone is the drone's link) ── */}
       <AnimatePresence>
-        {!hideWidgets && mainView !== 'webcam' && (
+        {!hideWidgets && mainView !== 'webcam' && fcUp && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}

@@ -19,6 +19,14 @@ import { localCall, saveRecords } from './localData'
 const mem = new Map() // boat id → { crop, conf, w, h }
 const rows = new Map() // boat id → last row written (so only changes are re-sent)
 const PREFIX = 'crop:'
+let latest = null // the newest drone sighting's crop: { id, crop, cls, at }
+
+/** The drone's newest plastic picture in this app (GPS or not), or null. */
+export const latestDroneCrop = () => latest
+/** Forget the newest picture (the Boat tab's Reset). */
+export function clearLatestDroneCrop() {
+  latest = null
+}
 
 const iso = (ms) => (ms ? new Date(ms).toISOString() : '')
 const num = (v) => (Number.isFinite(Number(v)) && v !== null && v !== '' ? String(Math.round(Number(v) * 1e7) / 1e7) : '')
@@ -38,8 +46,13 @@ export function rememberDroneCrop(entry, crop, { confidence = null, w = null, h 
   if (!entry?.id || !entry.firstSeen || !crop || !crop.startsWith('data:image/jpeg')) return
   const id = boatItemId(entry)
   const prev = mem.get(id)
-  if (prev && (prev.conf ?? 0) >= (confidence ?? 0)) return
+  const cls = entry.class && entry.class !== 'trash' ? entry.class : null
+  if (prev && (prev.conf ?? 0) >= (confidence ?? 0)) {
+    latest = { id, crop: prev.crop, cls, at: Date.now() }
+    return
+  }
   mem.set(id, { crop, conf: confidence, w, h })
+  latest = { id, crop, cls, at: Date.now() }
   missing.delete(id)
   savePhotos(PREFIX + id, { boxed: crop }).catch(() => {})
   localCall('/local/drone-image', { id, data: crop }).catch(() => {}) // not in the desktop app: browser copy only

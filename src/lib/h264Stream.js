@@ -13,6 +13,39 @@
 
 const HEADER = 13
 const MAX_QUEUE = 3           // frames waiting in the decoder before skipping to the next keyframe
+// Smooth playback: pictures are shown on the camera's own rhythm (the capture
+// times VARUNA Cam stamps on them), a little behind the quickest arrival, so the
+// Wi-Fi's uneven delivery doesn't show as stutter. A picture that comes later
+// than that is shown at once. How far behind follows the Wi-Fi: enough to cover
+// 97% of the last 10 s of pictures (measured on the drone phone's hotspot: a
+// fixed 80 ms left 9% of pictures late, i.e. a hitch every couple of seconds),
+// between SMOOTH_MIN_MS and SMOOTH_MAX_MS, changing gradually.
+// localStorage 'varuna.videoBufferMs' fixes it instead (0 = show at once).
+const SMOOTH_FIXED_MS = (() => {
+  try { const v = Number(localStorage.getItem('varuna.videoBufferMs')); if (v >= 0 && v <= 1000 && localStorage.getItem('varuna.videoBufferMs') !== null) return v } catch { /* private mode */ }
+  return null
+})()
+const SMOOTH_START_MS = 150
+const SMOOTH_MIN_MS = 60
+const SMOOTH_MAX_MS = 250
+const SMOOTH_WINDOW_MS = 10000
+const SMOOTH_COVER = 0.97
+const LEAD_WINDOW_MS = 3000   // the quickest arrival is looked for over this long
+const MAX_WAITING = 30        // pictures decoded but not yet shown, at most
+const STAMP = [0x56, 0x41, 0x52, 0x55, 0x4e, 0x41, 0x2d, 0x43, 0x41, 0x4d, 0x2d, 0x54, 0x49, 0x4d, 0x45, 0x21, 0x74, 0x3d]  // "VARUNA-CAM-TIME!t="
+
+/** VARUNA Cam's capture time (ms, phone clock) from a frame's SEI, or null. */
+export function captureStamp(data) {
+  const end = Math.min(data.length - STAMP.length, 160)
+  outer: for (let i = 0; i < end; i++) {
+    for (let j = 0; j < STAMP.length; j++) if (data[i + j] !== STAMP[j]) continue outer
+    let ms = 0
+    let k = i + STAMP.length
+    for (; k < data.length && data[k] >= 0x30 && data[k] <= 0x39; k++) ms = ms * 10 + (data[k] - 0x30)
+    return k > i + STAMP.length ? ms : null
+  }
+  return null
+}
 const BEHIND_MS = 1000        // further behind than this…
 const BEHIND_FOR_MS = 2000    // …for this long: reconnect, dropping whatever is queued on the way
 
@@ -146,8 +179,90 @@ export function playH264({ url, canvas, onFirstFrame, onFatal }) {
   let frames = 0
   let decodeErrors = 0
   const poses = new Map()     // capture time → pose, for frames in the decoder
+  const stamps = new Map()    // decoder timestamp → VARUNA Cam capture time (ms)
   let shown = null            // { tsUs, pose } of the picture on the canvas
   let unsubscribe = null
+  const waiting = []          // decoded pictures not shown yet: { frame, showAt, tsUs, pose }
+  const leads = []            // [arrived (performance.now), arrived − capture time]
+  const lates = []            // [arrived, how much later than the quickest picture]
+  let smooth = SMOOTH_FIXED_MS ?? SMOOTH_START_MS   // ms behind the quickest that pictures are shown
+  let timer = 0
+
+  function draw(item) {
+    const f = item.frame
+    if (canvas.width !== f.width || canvas.height !== f.height) {
+      canvas.width = f.width
+      canvas.height = f.height
+    }
+    ctx.drawImage(f, 0, 0)
+    shown = { tsUs: item.tsUs, pose: item.pose }
+    f.close()
+  }
+
+  // A timer to each picture's moment, not requestAnimationFrame: that one stops
+  // in a window that's covered or minimised, and the detector reads this canvas.
+  function render() {
+    timer = 0
+    if (closed) return
+    const now = performance.now()
+    let pick = -1
+    for (let i = 0; i < waiting.length && waiting[i].showAt <= now + 2; i++) pick = i
+    if (pick >= 0) {
+      for (let i = 0; i < pick; i++) waiting[i].frame.close()   // missed their moment: skip
+      draw(waiting[pick])
+      waiting.splice(0, pick + 1)
+    }
+    wake()
+  }
+
+  function wake() {
+    if (timer || closed || !waiting.length) return
+    timer = setTimeout(render, Math.max(0, waiting[0].showAt - performance.now()))
+  }
+
+  /** A decoded picture: when to show it, on the camera's rhythm. */
+  function schedule(frame) {
+    const now = performance.now()
+    const cap = stamps.get(frame.timestamp) ?? frame.timestamp / 1000
+    stamps.delete(frame.timestamp)
+    for (const ts of stamps.keys()) { if (ts > frame.timestamp) break; stamps.delete(ts) }
+    leads.push([now, now - cap])
+    while (leads.length && leads[0][0] < now - LEAD_WINDOW_MS) leads.shift()
+    let lead = Infinity
+    for (const l of leads) if (l[1] < lead) lead = l[1]
+    // How late this picture came against the quickest: the Wi-Fi's unevenness.
+    lates.push([now, now - cap - lead])
+    while (lates.length && lates[0][0] < now - SMOOTH_WINDOW_MS) lates.shift()
+    if (SMOOTH_FIXED_MS === null && lates.length >= 40) {
+      const sorted = lates.map((l) => l[1]).sort((a, b) => a - b)
+      const need = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * SMOOTH_COVER))] + 15
+      const target = Math.min(SMOOTH_MAX_MS, Math.max(SMOOTH_MIN_MS, need))
+      // Gradually: up a little quicker than down, so a bad patch is covered soon
+      // and a good one doesn't make pictures skip.
+      smooth += Math.max(-1, Math.min(3, target - smooth))
+    }
+    const tsUs = frame.timestamp
+    const item = { frame: null, showAt: cap + lead + smooth, tsUs, pose: poses.get(tsUs) ?? null }
+    for (const ts of poses.keys()) { if (ts > tsUs) break; poses.delete(ts) }
+    const first = frames === 0 || smooth === 0
+    // Hardware decoders have only a few picture buffers: copy the picture out
+    // (a GPU bitmap) and give the buffer back at once, rather than holding it
+    // while it waits its turn.
+    createImageBitmap(frame).then((bmp) => {
+      if (closed) { bmp.close(); return }
+      item.frame = bmp
+      if (first) { draw(item); return }   // the first picture straight away
+      waiting.push(item)
+      while (waiting.length > MAX_WAITING) waiting.shift().frame.close()
+      wake()
+    }, () => { /* the picture is gone: skip it */ }).finally(() => frame.close())
+  }
+
+  function dropWaiting() {
+    while (waiting.length) waiting.shift().frame.close()
+    leads.length = 0
+    stamps.clear()
+  }
 
   function fatal(reason) {
     if (closed) return
@@ -160,14 +275,7 @@ export function playH264({ url, canvas, onFirstFrame, onFatal }) {
     decoder = new VideoDecoder({
       output: (frame) => {
         if (closed) { frame.close(); return }
-        if (canvas.width !== frame.displayWidth || canvas.height !== frame.displayHeight) {
-          canvas.width = frame.displayWidth
-          canvas.height = frame.displayHeight
-        }
-        ctx.drawImage(frame, 0, 0)
-        shown = { tsUs: frame.timestamp, pose: poses.get(frame.timestamp) ?? null }
-        for (const ts of poses.keys()) { if (ts > frame.timestamp) break; poses.delete(ts) }
-        frame.close()
+        schedule(frame)   // closes it
         decodeErrors = 0
         if (++frames === 1) onFirstFrame?.()
       },
@@ -199,6 +307,8 @@ export function playH264({ url, canvas, onFirstFrame, onFatal }) {
     if (needKey || !decoder || decoder.state !== 'configured') return
     if (!key && decoder.decodeQueueSize > MAX_QUEUE) { needKey = true; return } // can't keep up: skip ahead
     if (pose) poses.set(tsUs, pose)
+    const cap = captureStamp(data)
+    if (cap !== null) stamps.set(tsUs, cap)
     decoder.decode(new EncodedVideoChunk({ type: key ? 'key' : 'delta', timestamp: tsUs, data }))  // copies data
   }
 
@@ -206,13 +316,16 @@ export function playH264({ url, canvas, onFirstFrame, onFatal }) {
     if (closed) return
     closed = true
     unsubscribe?.()
+    if (timer) clearTimeout(timer)
+    timer = 0
+    dropWaiting()
     try { if (decoder && decoder.state !== 'closed') decoder.close() } catch { /* done */ }
   }
 
   unsubscribe = subscribe(url, {
     frame,
-    reset: () => { needKey = true },
+    reset: () => { needKey = true; dropWaiting() },
     fatal,
   })
-  return { close, frame: () => shown }
+  return { close, frame: () => shown, bufferMs: () => Math.round(smooth) }
 }

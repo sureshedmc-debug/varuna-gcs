@@ -9,7 +9,7 @@ import { boxDistance } from '../lib/boatCamera'
 import { estimateWeightG, fmtWeight } from '../lib/sizeEstimate'
 import { isOk } from '../lib/commands'
 import { relTime } from '../lib/format'
-import { Chip, HOMING_LABEL, NlBoatOffline, Switch, Tile, WILDLIFE_LABEL } from '../components/BoatLabParts'
+import { Chip, HOMING_LABEL, NlBoatOffline, Switch, Tile } from '../components/BoatLabParts'
 
 // Overlay colours on the camera picture (drawn on video, so fixed, not themed).
 const GREEN = '#32D74B'
@@ -60,16 +60,6 @@ function CameraCanvas({ engine, cfg, vision }) {
       ctx.setLineDash([])
       label(ctx, 'COUNTING LINE', X(fw * 0.12), Y(lineY) - 10 * dpr, CYAN, font * 0.8)
 
-      // Danger zone
-      const hazard = (e.hazards || []).some((h) => h.in_zone)
-      const zx1 = X((c.zone_x1 ?? 0.25) * fw), zx2 = X((c.zone_x2 ?? 0.75) * fw), zy1 = Y((c.zone_y1 ?? 0.3) * fh)
-      ctx.fillStyle = hazard ? 'rgba(255,69,58,0.16)' : 'rgba(255,159,10,0.05)'
-      ctx.strokeStyle = hazard ? RED : 'rgba(255,159,10,0.7)'
-      ctx.setLineDash([7 * dpr, 5 * dpr])
-      ctx.beginPath(); ctx.rect(zx1, zy1, zx2 - zx1, Y(rampY) - zy1); ctx.fill(); ctx.stroke()
-      ctx.setLineDash([])
-      label(ctx, hazard ? 'ANIMAL IN ZONE' : 'WILDLIFE ZONE', zx1 + 6 * dpr, zy1 + 11 * dpr, hazard ? RED : AMBER, font * 0.8)
-
       // Ramp motion (catch counter)
       for (const t of e.tracks || []) {
         ctx.strokeStyle = t.counted ? GREEN : CYAN
@@ -83,11 +73,6 @@ function CameraCanvas({ engine, cfg, vision }) {
         const d = boxDistance(c, b, fw, fh)
         drawBox(ctx, X(b.x1), Y(b.y1), (b.x2 - b.x1) * k, (b.y2 - b.y1) * k, GREEN, homing ? 3 * dpr : 2 * dpr,
           `${b.label} ${Math.round((b.score || 0) * 100)}%${d != null ? ` · ${d.toFixed(1)} m` : ''}`, font)
-      }
-      // Animals
-      for (const b of e.hazards || []) {
-        drawBox(ctx, X(b.x1), Y(b.y1), (b.x2 - b.x1) * k, (b.y2 - b.y1) * k, b.in_zone ? RED : AMBER, 2.5 * dpr,
-          `${b.label} ${Math.round((b.score || 0) * 100)}%`, font)
       }
     }
     draw()
@@ -129,8 +114,6 @@ const SETTINGS = [
   { key: 'homing_start_m', label: 'Homing starts within', unit: 'm', min: 3, max: 20, step: 0.5 },
   { key: 'homing_speed_mps', label: 'Homing speed', unit: 'm/s', min: 0.2, max: 1.5, step: 0.1 },
   { key: 'homing_search_s', label: 'Give up searching after', unit: 's', min: 5, max: 120, step: 5 },
-  { key: 'wildlife_clear_s', label: 'Zone must stay clear for', unit: 's', min: 2, max: 60, step: 1 },
-  { key: 'wildlife_alert_s', label: 'Ask me after waiting', unit: 's', min: 10, max: 600, step: 10 },
   { key: 'bin_capacity_items', label: 'Bin holds about', unit: 'items', min: 5, max: 2000, step: 5 },
   { key: 'motion_sensitivity', label: 'Ramp motion sensitivity', unit: '', min: 0.05, max: 1, step: 0.05 },
   { key: 'camera_height_m', label: 'Camera height above water', unit: 'm', min: 0.1, max: 3, step: 0.05 },
@@ -198,9 +181,7 @@ export default function BoatVisionScreen({ onNavigate }) {
   const cfg = bv.cfg
 
   const catchPoll = usePolling(() => (online ? boatApi.catchSummary(12) : Promise.resolve(null)), 3000, [online])
-  const wildPoll = usePolling(() => (online ? boatApi.wildlife(8) : Promise.resolve(null)), 5000, [online])
   const catchData = catchPoll.data && !catchPoll.data._httpError ? catchPoll.data : null
-  const wild = wildPoll.data && !wildPoll.data._httpError ? wildPoll.data : null
 
   const weightG = useMemo(() => {
     const by = catchData?.today?.by_label || {}
@@ -213,7 +194,6 @@ export default function BoatVisionScreen({ onNavigate }) {
       const res = await fn()
       toast.fromResult(isOk(res) ? res : { ...res, success: false, message: res?.message || 'Failed' }, okMsg)
       catchPoll.refresh()
-      wildPoll.refresh()
     } catch (err) {
       toast.push({ level: 'bad', title: `Command failed: ${err?.message || err}` })
     } finally {
@@ -222,9 +202,7 @@ export default function BoatVisionScreen({ onNavigate }) {
   }
 
   const homing = v?.homing
-  const wl = v?.wildlife
   const hm = HOMING_LABEL[homing?.state] || HOMING_LABEL.idle
-  const wlm = WILDLIFE_LABEL[wl?.state] || WILDLIFE_LABEL.clear
   const linkAlive = v?.link?.alive
   const bin = catchData?.bin || v?.catch?.bin
   const binPct = Math.min(100, bin?.pct || 0)
@@ -292,8 +270,6 @@ export default function BoatVisionScreen({ onNavigate }) {
                 <Switch on={bv.enabled} onChange={bv.setEnabled} label="Run the vision AI in this app" />
                 <Switch on={!!cfg?.homing_enabled} disabled={!cfg} label="Last-metre homing"
                   onChange={(on) => bv.updateConfig({ homing_enabled: on })} />
-                <Switch on={!!cfg?.wildlife_enabled} disabled={!cfg} label="Wildlife-safe mode"
-                  onChange={(on) => bv.updateConfig({ wildlife_enabled: on })} />
               </div>
               <SettingsPanel cfg={cfg} updateConfig={bv.updateConfig} toast={toast} />
             </div>
@@ -321,45 +297,6 @@ export default function BoatVisionScreen({ onNavigate }) {
                     ? 'The boat is steering onto the item with the camera.'
                     : `Takes over within ${cfg?.homing_start_m ?? 8} m of each plastic point during a collection.`}
                 </div>
-              </div>
-
-              {/* Wildlife */}
-              <div className={`nl-card${wl?.state === 'alert' ? ' alert' : ''}`}>
-                <div className="mb-2 flex items-center justify-between">
-                  <span className="nl-title">Wildlife-safe mode</span>
-                  <Chip tone={cfg?.wildlife_enabled === false ? 'off' : wlm.tone} dot pulse={wl?.state && wl.state !== 'clear'}>
-                    {cfg?.wildlife_enabled === false ? 'OFF' : wlm.label.toUpperCase()}
-                  </Chip>
-                </div>
-                {wl?.state && wl.state !== 'clear' ? (
-                  <>
-                    <div className="nl-text">
-                      <b className="capitalize">{wl.label}</b> ahead — holding for {Math.round(wl.waiting_s || 0)} s
-                      {wl.clear_in_s != null ? `, moving on in ${Math.ceil(wl.clear_in_s)} s` : ''}.
-                    </div>
-                    <div className="mt-2 grid grid-cols-3 gap-2">
-                      <button className="nl-btn soft" disabled={!!busy} onClick={() => run('w', () => boatApi.wildlifeAction('wait'), 'Waiting')}>Wait</button>
-                      <button className="nl-btn" disabled={!!busy} onClick={() => run('w', () => boatApi.wildlifeAction('resume'), 'Resuming')}>Resume</button>
-                      <button className="nl-btn ghost" disabled={!!busy} onClick={() => run('w', () => boatApi.wildlifeAction('skip'), 'Item skipped')}>Skip item</button>
-                    </div>
-                  </>
-                ) : (
-                  <div className="nl-text nl-muted">
-                    {wl?.pauses_today ? `${wl.pauses_today} pause${wl.pauses_today === 1 ? '' : 's'} today · ${Math.round(wl.paused_s_today || 0)} s waited. ` : 'No animals in the way today. '}
-                    Birds, people, dogs and other animals in the zone ahead make the boat wait.
-                  </div>
-                )}
-                {wild?.sightings?.length > 0 && (
-                  <div className="mt-2 flex gap-1.5 overflow-x-auto pb-1">
-                    {wild.sightings.slice(0, 6).map((s) => (
-                      <div key={s.id} className="shrink-0" title={`${s.label} · ${relTime(s.t * 1000)}`}>
-                        {s.photo
-                          ? <img src={boatUrls.wildlifePhoto(s.id)} alt={s.label} className="h-11 w-16 rounded-lg object-cover" style={{ border: '1.5px solid #f0ecff' }} />
-                          : <div className="nl-tile flex h-11 w-16 items-center justify-center text-[10px] font-semibold capitalize">{s.label}</div>}
-                      </div>
-                    ))}
-                  </div>
-                )}
               </div>
 
               {/* Catch */}

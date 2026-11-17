@@ -323,6 +323,8 @@ export async function createDetector(onProgress, modelUrl = '/models/plastic.onn
     return { ratio, padX, padY, cx1, cy1, cw, ch }
   }
 
+  const naming = { names: classNames, colors: CLASS_PALETTE }
+
   function postprocess(data, dims, meta, confThr, iouThr) {
     const { ratio, padX, padY, cx1, cy1, cw, ch } = meta
     const boxes = []
@@ -368,9 +370,16 @@ export async function createDetector(onProgress, modelUrl = '/models/plastic.onn
       y2 = Math.max(cy1, Math.min(cy1 + ch, y2))
 
       if (x2 <= x1 || y2 <= y1) continue
-      boxes.push({ x1, y1, x2, y2, score, cls, label: classNames[cls] ?? `Class ${cls}`, color: CLASS_PALETTE[cls % CLASS_PALETTE.length] })
+      // Every class's score, not just the best: overlapping guesses and later
+      // frames vote on what the item is (bottle, bag, …) — see classVote().
+      let probs = null
+      if (nc > 1) {
+        probs = new Float32Array(nc)
+        for (let c = 0; c < nc; c++) probs[c] = isTransposed ? data[(4 + c) * n + i] : data[i * rows + 4 + c]
+      }
+      boxes.push({ x1, y1, x2, y2, score, cls, label: classNames[cls] ?? `Class ${cls}`, color: CLASS_PALETTE[cls % CLASS_PALETTE.length], probs, naming })
     }
-    return nms(boxes, iouThr)
+    return nms(boxes, iouThr).map(relabel)
   }
 
   /**
@@ -465,18 +474,39 @@ function nms(boxes, iouThr) {
   const removed = new Array(boxes.length).fill(false)
   for (let i = 0; i < boxes.length; i++) {
     if (removed[i]) continue
-    keep.push(boxes[i])
+    let b = boxes[i]
     for (let j = i + 1; j < boxes.length; j++) {
       // Standard NMS: use the provided IOU threshold
-      if (!removed[j] && iou(boxes[i], boxes[j]) > iouThr) removed[j] = true
+      if (removed[j]) continue
+      const v = iou(b, boxes[j])
+      if (v > iouThr) {
+        removed[j] = true
+        // The overlapping guesses about the same item also vote on its class.
+        const pj = boxes[j].probs
+        if (b.probs && pj && pj.length === b.probs.length) {
+          if (b === boxes[i]) b = { ...b, probs: Float32Array.from(b.probs) }
+          for (let c = 0; c < pj.length; c++) b.probs[c] += pj[c] * v
+        }
+      }
     }
+    keep.push(b)
   }
   return keep
 }
 
+/** The class with the most evidence in b.probs (label and colour to match). */
+export function relabel(b) {
+  if (!b.probs || !b.naming) return b
+  let cls = 0
+  for (let c = 1; c < b.probs.length; c++) if (b.probs[c] > b.probs[cls]) cls = c
+  if (cls === b.cls) return b
+  const { names, colors } = b.naming
+  return { ...b, cls, label: names[cls] ?? `Class ${cls}`, color: colors[cls % colors.length] }
+}
+
 /** Merge box lists from multiple passes (full-frame + tiles) and dedupe by NMS. */
 export function mergeBoxes(lists, iouThr = 0.4) {
-  return nms(lists.flat(), iouThr)
+  return nms(lists.flat(), iouThr).map(relabel)
 }
 
 /**

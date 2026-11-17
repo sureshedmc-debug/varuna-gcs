@@ -27,7 +27,7 @@
 
 export const SIG = 40 // crops are compared at 40 x 40
 const H_BINS = 12, S_BINS = 3, V_BINS = 3, G_BINS = 8
-const W_LOOK = 0.6, W_CLASS = 0.3, W_CONF = 0.1
+const W_LOOK = 0.75, W_CLASS = 0.2, W_CONF = 0.05
 
 const KINDS = [
   ['bottle', 'bottle'], ['pet', 'bottle'],
@@ -48,7 +48,7 @@ export function kind(label) {
 
 export function classAgreement(a, b) {
   const ka = kind(a), kb = kind(b)
-  if (ka == null || kb == null) return 0.6
+  if (ka == null || kb == null) return 0.5
   return ka === kb ? 1 : 0.15
 }
 
@@ -81,10 +81,40 @@ function hsv(r, g, b) {
 
 const median = (a) => { const s = [...a].sort((x, y) => x - y); return s[s.length >> 1] }
 
-/** The appearance signature of an image (any size); null for no image. */
-export function signature(img) {
+/**
+ * The drone's and the boat's cameras see the same item in different light and
+ * colour tint. Both crops have water all round the item, so the water (the
+ * crop's border) is the white reference: scaling it to the same neutral grey
+ * cancels the camera's tint and exposure while the item keeps its own colour
+ * relative to the water.
+ */
+function normalise(im) {
+  const src = im.data, n = im.width
+  const border = []
+  for (let i = 0; i < n; i++) border.push(i, (n - 1) * n + i, i * n, i * n + n - 1)
+  const med = (k) => median(border.map((p) => src[p * 4 + k]))
+  const r = med(0), g = med(1), b = med(2)
+  const grey = Math.max(8, (r + g + b) / 3)
+  const lim = (v) => Math.min(2.5, Math.max(0.4, v))
+  const bright = Math.min(3, Math.max(0.33, 118 / grey))
+  const k = [lim(grey / Math.max(1, r)) * bright, lim(grey / Math.max(1, g)) * bright, lim(grey / Math.max(1, b)) * bright]
+  // Float, not clipped at 255: dark teal water needs big gains, and clipping
+  // would turn every light item plain white (losing its colour).
+  const out = new Float32Array(src.length)
+  for (let i = 0; i < src.length; i += 4) {
+    out[i] = src[i] * k[0]; out[i + 1] = src[i + 1] * k[1]; out[i + 2] = src[i + 2] * k[2]; out[i + 3] = 255
+  }
+  return { data: out, width: im.width, height: im.height }
+}
+
+/**
+ * The appearance signature of an image (any size); null for no image.
+ * `raw: true` = the earlier signature (no lighting correction, hard hue bins),
+ * kept for imageSearch.js, which compares against its own pixel bins.
+ */
+export function signature(img, { raw = false } = {}) {
   if (!img || !img.width || !img.height) return null
-  const im = toSig(img)
+  const im = raw ? toSig(img) : normalise(toSig(img))
   const n = SIG, px = im.data
   const at = (x, y) => (y * n + x) * 4
   const border = []
@@ -114,9 +144,19 @@ export function signature(img) {
       const i = at(x, y)
       const [h, s, v] = hsv(px[i], px[i + 1], px[i + 2])
       const sb = Math.min(S_BINS - 1, Math.floor(s * S_BINS))
-      const hb = sb === 0 ? 0 : Math.min(H_BINS - 1, Math.floor(h * H_BINS)) // greys / whites: hue means nothing
       const vb = Math.min(V_BINS - 1, Math.floor(v * V_BINS))
-      hist[(hb * S_BINS + sb) * V_BINS + vb]++
+      if (sb === 0) {
+        hist[sb * V_BINS + vb]++ // greys / whites: hue means nothing
+      } else if (raw) {
+        hist[(Math.min(H_BINS - 1, Math.floor(h * H_BINS)) * S_BINS + sb) * V_BINS + vb]++
+      } else {
+        // Soft hue bins: a colour on a bin edge counts half in each, so a small
+        // tint left over doesn't flip it into the neighbouring bin.
+        const hf = h * H_BINS - 0.5
+        const h0 = (Math.floor(hf) + H_BINS) % H_BINS, h1 = (h0 + 1) % H_BINS, fr = hf - Math.floor(hf)
+        hist[(h0 * S_BINS + sb) * V_BINS + vb] += 1 - fr
+        hist[(h1 * S_BINS + sb) * V_BINS + vb] += fr
+      }
       mean[0] += px[i]; mean[1] += px[i + 1]; mean[2] += px[i + 2]
       if (x < x0) x0 = x
       if (x > x1) x1 = x
@@ -146,8 +186,8 @@ export function signature(img) {
   return { hist, mean, grad: gsum ? g : null, fill }
 }
 
-/** 0..1: how alike two signatures look. */
-export function similarity(a, b) {
+/** The earlier comparison, unchanged, for imageSearch.js (its own, un-normalised signatures). */
+export function legacySimilarity(a, b) {
   if (!a || !b) return null
   let inter = 0
   for (let k = 0; k < a.hist.length; k++) inter += Math.min(a.hist[k], b.hist[k])
@@ -159,8 +199,30 @@ export function similarity(a, b) {
     shape = 0.7 * gi + 0.3 * (1 - Math.min(1, Math.abs(a.fill - b.fill) * 2))
   }
   const colour = 0.6 * inter + 0.4 * meanSim
-  const s = shape == null ? colour : 0.8 * colour + 0.2 * shape
-  return Math.max(0, Math.min(1, s))
+  return Math.max(0, Math.min(1, shape == null ? colour : 0.8 * colour + 0.2 * shape))
+}
+
+/** 0..1: how alike two signatures look. */
+export function similarity(a, b) {
+  if (!a || !b) return null
+  // Bhattacharyya coefficient: smoother and more telling than plain overlap.
+  let bc = 0
+  for (let k = 0; k < a.hist.length; k++) bc += Math.sqrt(a.hist[k] * b.hist[k])
+  // Mean colour as chromaticity (r, g, b shares), so brightness doesn't count twice.
+  const chroma = (m) => { const t = m[0] + m[1] + m[2] || 1; return [m[0] / t, m[1] / t, m[2] / t] }
+  const ca = chroma(a.mean), cb = chroma(b.mean)
+  const meanSim = Math.max(0, 1 - Math.hypot(ca[0] - cb[0], ca[1] - cb[1], ca[2] - cb[2]) / 0.15)
+  let shape = null
+  if (a.grad && b.grad) {
+    let gi = 0
+    for (let k = 0; k < G_BINS; k++) gi += Math.sqrt(a.grad[k] * b.grad[k])
+    shape = 0.7 * gi + 0.3 * (1 - Math.min(1, Math.abs(a.fill - b.fill) * 2))
+  }
+  const colour = 0.6 * bc + 0.4 * meanSim
+  const s = shape == null ? colour : 0.85 * colour + 0.15 * shape
+  // Spread the scale: unrelated items rarely score below ~0.42 on raw look,
+  // so map 0.42..1 onto 0..1 to keep them clear of the threshold.
+  return Math.max(0, Math.min(1, (s - 0.42) / 0.58))
 }
 
 /**

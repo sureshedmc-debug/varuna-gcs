@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useRef } from 'react'
 import { boatApi, boatWsUrl, isBoatReply } from '../api/boatClient'
-import { usePolling } from '../hooks/usePolling'
+import { usePolling, useNow } from '../hooks/usePolling'
 import { useVarunaWS } from '../hooks/useVarunaWS'
 import { markCollected } from '../lib/boatStore'
 import { useLiveCollectFeed } from '../lib/liveCollectFeed'
@@ -17,11 +17,31 @@ export const useBoat = () => useContext(Ctx)
  * answer from something that is not the boat (e.g. the drone's Pi);
  * undefined = still checking.
  */
+// Once the boat has answered, keep the link "up" through this long a gap with
+// no good reply, so one slow Wi-Fi ping or a 1–2 s backend hiccup doesn't tear
+// the whole live view (and its video) down and make it reconnect from scratch.
+const LINK_GRACE_MS = 15000
+
 export function BoatProvider({ children }) {
-  const ping = usePolling(boatApi.ping, 4000)
+  const ping = usePolling(boatApi.ping, 2500)
   const isBoat = isBoatReply(ping.data)
-  const reachable = ping.error || (ping.data && !isBoat) ? false : isBoat ? true : undefined
   const wrongTarget = !!ping.data && !ping.data._httpError && !isBoat
+  // Sticky reachability: true the moment the boat answers, and held true for a
+  // grace window after the last good answer. Only a reply from the wrong device
+  // (wrongTarget), or no good answer for the whole window, counts as offline.
+  const lastGoodRef = useRef(0)
+  if (isBoat) lastGoodRef.current = Date.now()
+  const now = useNow(2000)
+  const recentlyGood = lastGoodRef.current > 0 && now - lastGoodRef.current < LINK_GRACE_MS
+  const reachable = isBoat
+    ? true
+    : wrongTarget
+      ? false
+      : recentlyGood
+        ? true
+        : ping.error || ping.data
+          ? false
+          : undefined
   // Why it's offline, in the proxy's own words (e.g. "Boat address not set").
   const linkHint = reachable === false
     ? (typeof ping.data?._raw === 'string' && ping.data._raw.length < 160 ? ping.data._raw : ping.data?.message || (ping.error ? 'No answer from the boat' : ''))

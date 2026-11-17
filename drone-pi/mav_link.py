@@ -312,7 +312,7 @@ class DroneLink:
             # Through the phone relay (phone-link/): the wiring hints below are for a Pi.
             return (f"No drone data from the phone relay at {forced[7:]}. Check that relay.py is running on the "
                     "phone and shows 'drone link from …' (the ESP32 is on the phone's hotspot and wired to "
-                    "TELEM2), and that the phone and this laptop are both connected in NetBird.")
+                    "TELEM2), and that the phone and this laptop are on the same network.")
         hint = ""
         seen = set(self._tried.values())
         if any(v.startswith("data") for v in seen):
@@ -376,7 +376,7 @@ class DroneLink:
                     # keep the socket and wait, as on Linux.
                     if not self.fc_connected:
                         self.link_error = (f"Waiting for the phone relay at {self.connection[7:]} — is relay.py "
-                                           "running on the phone, and the phone on NetBird?")
+                                           "running on the phone, and the phone on the same network?")
                     self._stop.wait(0.5)
                     continue
                 self._tried[self._cand_key] = f"error ({exc})"

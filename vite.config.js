@@ -22,7 +22,9 @@ export default defineConfig(({ mode }) => {
   // The boat's own Pi (second vehicle). The app calls it under /boat/*; the
   // prefix is stripped here. Default = the boat backend's simulator running on
   // this laptop:  cd boat-pi && python main.py --sim --port 8001
-  const boatTarget = env.VITE_DEV_BOAT_TARGET || 'http://localhost:8001'
+  // 127.0.0.1, not "localhost": on Windows localhost resolves to IPv6 ::1 first,
+  // but the boat backend listens on IPv4, so "localhost" would fail to connect.
+  const boatTarget = env.VITE_DEV_BOAT_TARGET || 'http://127.0.0.1:8001'
 
   // Everything the frontend calls at runtime lives under these prefixes.
   const proxyPaths = ['/api', '/video_feed', '/stream', '/tune']
@@ -113,7 +115,7 @@ export default defineConfig(({ mode }) => {
   }
 
   return {
-    plugins: [react(), watcherResilience(), localDataStore(env), siteOnlyAssets(mode), siteSeo(mode)],
+    plugins: [react(), watcherResilience(), droneDirect(target), localDataStore(env), siteOnlyAssets(mode), siteSeo(mode)],
     // `preview` gets the same proxy as `server`: without it, npm run preview
     // serves the built bundle with no route to the Pi, so a production-shaped
     // smoke test would look broken for the wrong reason.
@@ -207,6 +209,80 @@ function localDataStore(env) {
     },
     configurePreviewServer(server) {
       server.middlewares.use(middleware)
+    },
+  }
+}
+
+// The drone straight from its phone (electron/droneDirect.cjs), so nothing but
+// `npm run dev` has to run: when the drone backend is meant to be on this laptop
+// (VITE_DEV_API_TARGET is localhost) and nothing listens there, this server
+// finds VARUNA Cam on the network itself and answers the drone API from it.
+// If the Python backend (start_laptop_backend.bat) is running, it is used as before.
+function droneDirect(target) {
+  const name = 'varuna:drone-direct'
+  let t
+  try {
+    t = new URL(target)
+  } catch {
+    return { name }
+  }
+  if (!['localhost', '127.0.0.1', '[::1]'].includes(t.hostname)) return { name } // a Pi: not ours to replace
+  const port = Number(t.port) || 80
+  return {
+    name,
+    apply: 'serve',
+    async configureServer(server) {
+      const net = await import('node:net')
+      const log = server.config.logger
+      let backendUp = null
+      let link = null
+      const getLink = () =>
+        (link ||= createRequire(import.meta.url)('./electron/droneDirect.cjs').createDroneDirect({
+          ipFile: path.resolve('drone-pi/phone-link/phone_ip.txt'),
+          log: { info: (m) => log.info(m), warn: (m) => log.warn(m) },
+        }))
+      const setUp = (up) => {
+        if (up === backendUp) return
+        backendUp = up
+        if (up) {
+          log.info(`  [drone] drone backend running on port ${port}: the app uses it`)
+          link?.stop()
+        } else {
+          log.info('  [drone] no drone backend running: the app talks to the drone phone (VARUNA Cam) directly')
+        }
+      }
+      const probe = () => {
+        const s = net.connect({ host: '127.0.0.1', port })
+        s.setTimeout(800)
+        s.once('connect', () => {
+          setUp(true)
+          s.destroy()
+        })
+        s.once('error', () => setUp(false))
+        s.once('timeout', () => {
+          setUp(false)
+          s.destroy()
+        })
+      }
+      probe()
+      const iv = setInterval(probe, 2000)
+      server.httpServer?.once('close', () => {
+        clearInterval(iv)
+        link?.stop()
+      })
+
+      server.middlewares.use((req, res, next) => {
+        if (backendUp !== false) return next()
+        const url = req.url || ''
+        if (!url.startsWith('/api/') && !url.startsWith('/video_feed')) return next()
+        if (!getLink().handle(req, res)) next()
+      })
+      // Registered before Vite's proxy (plugins come first): a socket answered
+      // here gets a URL no proxy matches, so the proxy leaves it alone.
+      server.httpServer?.on('upgrade', (req, socket) => {
+        if (backendUp !== false) return
+        if (getLink().handleUpgrade(req, socket)) req.url = '/__varuna-drone-direct'
+      })
     },
   }
 }
