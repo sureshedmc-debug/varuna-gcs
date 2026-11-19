@@ -415,6 +415,7 @@ class CameraManager:
             if not chunk:
                 break
             buf += chunk
+            latest_frame = None
             while True:
                 start = buf.find(SOI)
                 if start == -1:
@@ -427,10 +428,11 @@ class CameraManager:
                     if len(buf) > 8_000_000:   # garbage; resync
                         buf.clear()
                     break
-                frame = bytes(buf[start:end + 2])
+                latest_frame = bytes(buf[start:end + 2])
                 del buf[:end + 2]
-                self._publish(ensure_dht(frame))
                 got += 1
+            if latest_frame is not None:
+                self._publish(ensure_dht(latest_frame))
         self._kill()
         if errlines:
             self.last_error = " ".join(errlines)[-300:]

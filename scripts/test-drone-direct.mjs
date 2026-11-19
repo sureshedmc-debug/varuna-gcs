@@ -11,7 +11,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 const require = createRequire(import.meta.url)
-const { createDroneDirect, createSplitter, captureStamp } = require('../electron/droneDirect.cjs')
+const { createDroneDirect, createSplitter, captureStamp, isLocalAddress, isNetbirdAddress } = require('../electron/droneDirect.cjs')
 
 let failed = 0
 const ok = (cond, what) => {
@@ -227,6 +227,40 @@ try {
     fs.unlinkSync(ipFile)
   } catch {
     /* gone */
+  }
+}
+
+// ---- same network beats NetBird -------------------------------------------
+// The drone's phone is on this computer's Wi-Fi. If it is ALSO on NetBird it
+// answers on both, and taking the NetBird address would send the video the long
+// way round. The local address has to win.
+{
+  const lan = []
+  for (const list of Object.values(os.networkInterfaces())) {
+    for (const a of list || []) {
+      if ((a.family === 'IPv4' || a.family === 4) && !a.internal
+          && !a.address.startsWith('169.254.') && !isNetbirdAddress(a.address)) lan.push(a.address)
+    }
+  }
+  for (const ip of ['100.64.0.1', '100.99.45.205', '100.127.255.254']) {
+    ok(isNetbirdAddress(ip) && !isLocalAddress(ip), `${ip} is a NetBird peer, not the same network`)
+  }
+  for (const ip of ['100.63.0.1', '100.128.0.1', '192.168.1.5']) {
+    ok(!isNetbirdAddress(ip), `${ip} is outside NetBird's range`)
+  }
+  if (lan.length) {
+    const sameNet = lan[0].split('.').slice(0, 3).join('.') + '.123'
+    ok(isLocalAddress(sameNet), `${sameNet} counts as this computer's own network (${lan[0]})`)
+  } else {
+    console.log('SKIP  no ordinary network on this computer to check against')
+  }
+  for (const list of Object.values(os.networkInterfaces())) {
+    for (const a of list || []) {
+      if ((a.family === 'IPv4' || a.family === 4) && isNetbirdAddress(a.address)) {
+        const peer = a.address.split('.').slice(0, 3).join('.') + '.200'
+        ok(!isLocalAddress(peer), `a NetBird peer next to our own ${a.address} still counts as NetBird`)
+      }
+    }
   }
 }
 

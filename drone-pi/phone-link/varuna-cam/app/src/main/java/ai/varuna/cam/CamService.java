@@ -223,6 +223,7 @@ public class CamService extends Service {
         jpegHandler = new Handler(jpegThread.getLooper());
         startServer();
         startDiscovery();
+        startAnnounce();
         camHandler.post(new Runnable() {
             @Override
             public void run() {
@@ -290,6 +291,66 @@ public class CamService extends Service {
         java.net.DatagramSocket s = discoSock;
         if (s != null) s.close();
         if (multicastLock != null && multicastLock.isHeld()) multicastLock.release();
+    }
+
+    // ---- "I'm over here" (NetBird) ---------------------------------------
+
+    /** Seconds between announces to the laptop. */
+    private static final int ANNOUNCE_EVERY_MS = 3000;
+
+    /**
+     * Tells the laptop where this phone is, over NetBird. A WireGuard tunnel
+     * carries no broadcast, so the laptop can't find the phone the same-Wi-Fi
+     * way; instead the phone sends a small "I'm here at 100.x" packet to the
+     * laptop address set in the app, every few seconds. The laptop's listener
+     * writes that address down and the VARUNA backend connects to it — nothing
+     * to type, and it follows the phone if its NetBird address changes.
+     *
+     * Harmless when no laptop address is set (it sends nothing), and it never
+     * replaces answering the laptop's direct question — both run together.
+     */
+    private void startAnnounce() {
+        Thread t = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                while (!stopping) {
+                    try (java.net.DatagramSocket s = new java.net.DatagramSocket()) {
+                        while (!stopping) {
+                            List<String> laptops = LaptopLink.addresses(CamService.this);
+                            if (!laptops.isEmpty()) {
+                                byte[] msg = announceJson().getBytes(StandardCharsets.UTF_8);
+                                for (String ip : laptops) {
+                                    try {
+                                        InetAddress a = InetAddress.getByName(ip);
+                                        s.send(new java.net.DatagramPacket(msg, msg.length, a, DISCOVERY_PORT));
+                                    } catch (IOException | RuntimeException ignored) {
+                                        // a bad address or a moment with no route: the next round tries again
+                                    }
+                                }
+                            }
+                            SystemClock.sleep(ANNOUNCE_EVERY_MS);
+                        }
+                    } catch (IOException | RuntimeException e) {
+                        if (!stopping) SystemClock.sleep(2000);   // couldn't open a socket: try again
+                    }
+                }
+            }
+        }, "announce");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    /**
+     * The same answer the laptop's direct question gets, plus this phone's own
+     * NetBird address (100.x first) and announce:1 so the listener knows it came
+     * unasked. The laptop also sees the real source address, so both agree.
+     */
+    private String announceJson() {
+        List<String> ips = addresses();
+        String ip = ips.isEmpty() ? "" : ips.get(0);
+        return String.format(Locale.US,
+                "{\"varuna_cam\":1,\"announce\":1,\"port\":%d,\"ip\":\"%s\",\"state\":\"%s\",\"h264\":%b}",
+                PORT, ip, state.replace("\"", "'"), h264 != null);
     }
 
     @Override
@@ -435,7 +496,7 @@ public class CamService extends Service {
         Notification n = new Notification.Builder(this, CHANNEL)
                 .setSmallIcon(android.R.drawable.ic_menu_camera)
                 .setContentTitle("VARUNA Cam is streaming")
-                .setContentText("Video on port " + PORT + " for the VARUNA app on this Wi-Fi")
+                .setContentText("Video + GPS on port " + PORT + " for the VARUNA app (NetBird or Wi-Fi)")
                 .setContentIntent(open)
                 .addAction(new Notification.Action.Builder(null, "Stop", stop).build())
                 .setOngoing(true)

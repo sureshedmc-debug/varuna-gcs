@@ -68,7 +68,8 @@ export async function readMjpeg(url, onFrame, { signal } = {}) {
       buf = concat(buf, value)
       const { frames, rest } = parseParts(buf)
       buf = rest.length > MAX_BUFFER ? new Uint8Array(0) : rest
-      for (const f of frames) onFrame(f)
+      // Deliver only the newest complete frame in a TCP burst so buffered old frames never lag the live view.
+      if (frames.length) onFrame(frames[frames.length - 1])
     }
   } finally {
     try {

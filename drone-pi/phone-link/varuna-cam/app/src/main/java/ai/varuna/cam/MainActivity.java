@@ -12,13 +12,16 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
+import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -39,6 +42,8 @@ public class MainActivity extends Activity {
     private Button homeBtn;
     private Button locBtn;
     private Button shutterBtn;
+    private TextView netbirdLine;
+    private EditText laptopInput;
     private boolean background;
     private boolean locationAsked;
 
@@ -69,11 +74,56 @@ public class MainActivity extends Activity {
         root.addView(title);
 
         TextView sub = new TextView(this);
-        sub.setText("Sends this phone's camera to the VARUNA app on the same Wi-Fi.");
+        sub.setText("Sends this phone's camera and GPS to the VARUNA app over NetBird (or the same Wi-Fi).");
         sub.setTextColor(Color.rgb(150, 175, 200));
         sub.setTextSize(14);
-        sub.setPadding(0, dp(4), 0, dp(20));
+        sub.setPadding(0, dp(4), 0, dp(14));
         root.addView(sub);
+
+        // This phone's NetBird address, so it's easy to read off / copy.
+        netbirdLine = new TextView(this);
+        netbirdLine.setTextColor(Color.rgb(120, 220, 160));
+        netbirdLine.setTextSize(14);
+        netbirdLine.setTypeface(Typeface.MONOSPACE);
+        netbirdLine.setPadding(0, 0, 0, dp(12));
+        root.addView(netbirdLine);
+
+        // The laptop's NetBird address: where this phone announces itself, so the
+        // VARUNA backend finds it over NetBird without anyone typing an IP.
+        TextView nbTitle = new TextView(this);
+        nbTitle.setText("Laptop NetBird address (where the VARUNA app runs)");
+        nbTitle.setTextColor(Color.rgb(150, 175, 200));
+        nbTitle.setTextSize(13);
+        root.addView(nbTitle);
+
+        LinearLayout nbRow = new LinearLayout(this);
+        nbRow.setOrientation(LinearLayout.HORIZONTAL);
+        laptopInput = new EditText(this);
+        laptopInput.setHint("e.g. 100.99.71.176");
+        laptopInput.setHintTextColor(Color.rgb(110, 130, 150));
+        laptopInput.setTextColor(Color.WHITE);
+        laptopInput.setTextSize(16);
+        laptopInput.setSingleLine(true);
+        laptopInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        laptopInput.setText(LaptopLink.raw(this));
+        nbRow.addView(laptopInput, new LinearLayout.LayoutParams(0, dp(52), 1f));
+        Button nbSave = new Button(this);
+        nbSave.setText("Save");
+        nbSave.setAllCaps(false);
+        nbSave.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                LaptopLink.set(MainActivity.this, laptopInput.getText().toString());
+                Toast.makeText(MainActivity.this, "Saved. Announcing to the laptop over NetBird.",
+                        Toast.LENGTH_SHORT).show();
+                refresh();
+            }
+        });
+        nbRow.addView(nbSave, new LinearLayout.LayoutParams(dp(84), dp(52)));
+        LinearLayout.LayoutParams nbLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        nbLp.bottomMargin = dp(18);
+        root.addView(nbRow, nbLp);
 
         toggle = new Button(this);
         toggle.setTextSize(18);
@@ -295,6 +345,22 @@ public class MainActivity extends Activity {
     }
 
     private void refresh() {
+        List<String> ips = CamService.addresses();
+        String nb = "";
+        for (String ip : ips) {
+            if (ip.startsWith("100.")) {    // NetBird
+                nb = ip;
+                break;
+            }
+        }
+        if (nb.isEmpty() && !ips.isEmpty()) nb = ips.get(0);
+        if (nb.isEmpty()) {
+            netbirdLine.setText("This phone: no network yet — turn on NetBird (or Wi-Fi)");
+        } else {
+            netbirdLine.setText("This phone: http://" + nb + ":8080"
+                    + (nb.startsWith("100.") ? "   ✓ NetBird" : "   (not on NetBird 100.x yet)"));
+        }
+
         Quality cur = Quality.get(this);
         for (int i = 0; i < qButtons.length; i++) {
             boolean on = Quality.ALL[i] == cur;

@@ -80,6 +80,8 @@ export const boatApi = {
   opsStatus: () => req('/api/ops/status', { timeout: 5000 }),
   opsSettings: (patch) => post('/api/ops/settings', patch, 10000),
   opsScoop: (action) => post('/api/ops/scoop', { action }, 10000),
+  opsMotor: (action) => post('/api/ops/motor', { action }, 10000),
+  opsAlert: (action) => post('/api/ops/alert', { action }, 10000),
   liveTargets: (targets) => post('/api/live/targets', { targets }, 15000),
   liveStart: ({ whenEmpty = 'wait', speedMps } = {}) => post('/api/live/start', { when_empty: whenEmpty, speed_mps: speedMps }, 30000),
   livePause: () => post('/api/live/pause', undefined, 15000),

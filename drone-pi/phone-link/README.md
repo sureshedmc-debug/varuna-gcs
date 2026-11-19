@@ -29,9 +29,20 @@ The ESP32 reaches the phone in one of two ways. Set up one of them:
 - **Wi-Fi hotspot, section 1B:** the ESP32 runs DroneBridge and joins the phone's
   hotspot.
 
-**Same network:** the phone and the laptop must be on the same Wi-Fi, or the
-laptop joins the phone's hotspot. The laptop reaches the phone at its Wi-Fi IP,
-which VARUNA Cam shows (for example 192.168.1.3). No NetBird or internet is needed.
+**Same network (how the drone flies):** the phone and the laptop on the same
+Wi-Fi, or the laptop joined to the phone's hotspot. The laptop finds VARUNA Cam
+by itself and follows it if its address changes; VARUNA Cam shows the address it
+is using (for example 192.168.1.3). Nothing to type in, and the video crosses
+the Wi-Fi directly, which is what keeps the picture close to live.
+
+**NetBird (only when the drone is somewhere else):** if the phone is also on
+your NetBird network, the laptop asks its peers too and can reach the drone
+over mobile data from anywhere. A local address always wins when there is one,
+so having NetBird on the phone never slows the normal case down. To pin one
+address, set `VARUNA_NETBIRD_PHONES`, or put the phone's 100.x address in
+`drone-pi/phone-link/phone_ip.txt`. Check what NetBird can see with
+`py boat-pi/netbird.py`. (The BOAT's phone is the other way round — it is
+normally reached over NetBird; see `boat-pi/README.md`.)
 
 **Without the telemetry link (phone GPS):** the ESP32 and `relay.py` can be left
 out. VARUNA Cam 2.2 or newer then gives the drone's position from the phone's own

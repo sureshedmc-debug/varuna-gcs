@@ -21,3 +21,7 @@ release/
 
 # CC0 scanned plants used only to render the Home video (not shipped)
 rec-assets/
+
+# Video clips kept for reviewing runs, and throwaway working files
+raw_videos/
+scratch/

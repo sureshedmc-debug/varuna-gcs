@@ -19,6 +19,8 @@
 //      on with a short blink every second = Pixhawk data flowing (all good)
 
 #include <WiFi.h>
+#include <WebServer.h>
+#include <ESPmDNS.h>
 #include <lwip/sockets.h>
 #include <esp_task_wdt.h>
 #include "driver/gpio.h"
@@ -32,6 +34,8 @@ const int PIX_RX = 19;            // D19: ESP32 receives here (Pixhawk TX, pin 2
 const int PIX_TX = 21;            // D21: ESP32 sends here (Pixhawk RX, pin 3)
 const long PIX_BAUD = 57600;      // must match SERIAL2_BAUD 57 on the Pixhawk
 const int LED = 2;
+const int RELAY_PIN = 23;         // D23: 5V Relay Signal (IN)
+const bool RELAY_ACTIVE_LOW = true;
 const uint16_t TCP_PORT = 5760;   // the laptop launcher looks for this port
 const int MAX_CLIENTS = 3;
 const uint32_t WDT_TIMEOUT_S = 8;
@@ -39,7 +43,28 @@ const unsigned long WIFI_RESTART_MS = 60000;   // offline this long -> restart t
 const unsigned long SEND_STALL_MS = 10000;     // laptop not taking data this long -> drop it
 
 WiFiServer server(TCP_PORT);
+WebServer relayHttp(80);
 WiFiClient clients[MAX_CLIENTS];
+
+bool relayAlerting = false;
+unsigned long alertUntil = 0;
+unsigned long nextPulseTime = 0;
+int pulseStep = 0;
+const int CADENCE_STEPS = 8;
+const int CADENCE_DURS[CADENCE_STEPS] = {250, 200, 250, 200, 250, 200, 250, 200};
+const bool CADENCE_STATES[CADENCE_STEPS] = {true, false, true, false, true, false, true, false};
+
+void setRelay(bool on) {
+  if (on) {
+    pinMode(RELAY_PIN, OUTPUT);
+    digitalWrite(RELAY_PIN, RELAY_ACTIVE_LOW ? LOW : HIGH);
+  } else {
+    // Open-drain trick: when OFF on Active-LOW relay, set pin to INPUT (floating).
+    // Green LED is 100% OFF guaranteed!
+    if (RELAY_ACTIVE_LOW) pinMode(RELAY_PIN, INPUT);
+    else { pinMode(RELAY_PIN, OUTPUT); digitalWrite(RELAY_PIN, LOW); }
+  }
+}
 unsigned long lastSendOk[MAX_CLIENTS];
 unsigned long lastRecv[MAX_CLIENTS];
 uint8_t buf[1024];                 // laptop -> Pixhawk
@@ -125,6 +150,10 @@ void sendTo(int i, const uint8_t *data, int n, unsigned long now) {
 void setup() {
   pinMode(LED, OUTPUT);
   digitalWrite(LED, LOW);
+
+  // Initialize Relay to OFF (Green LED will be completely OFF)
+  setRelay(false);
+
   Serial.begin(115200);           // USB: status messages only
   delay(200);
   Serial.println();
@@ -147,6 +176,40 @@ void setup() {
   offlineSince = millis();
   Serial.print("Joining Wi-Fi: ");
   Serial.println(WIFI_SSID);
+
+  // Relay HTTP endpoints
+  relayHttp.on("/alert", []() {
+    int duration = relayHttp.hasArg("duration") ? relayHttp.arg("duration").toInt() : 8;
+    if (duration <= 0) duration = 8;
+    relayAlerting = true;
+    alertUntil = millis() + (unsigned long)duration * 1000;
+    pulseStep = 0;
+    nextPulseTime = millis();
+    relayHttp.sendHeader("Access-Control-Allow-Origin", "*");
+    relayHttp.send(200, "application/json", "{\"success\":true,\"alert\":true}");
+  });
+  relayHttp.on("/stop", []() {
+    relayAlerting = false;
+    setRelay(false);
+    relayHttp.sendHeader("Access-Control-Allow-Origin", "*");
+    relayHttp.send(200, "application/json", "{\"success\":true,\"alert\":false}");
+  });
+  relayHttp.on("/on", []() {
+    relayAlerting = false;
+    setRelay(true);
+    relayHttp.sendHeader("Access-Control-Allow-Origin", "*");
+    relayHttp.send(200, "application/json", "{\"success\":true,\"state\":1}");
+  });
+  relayHttp.on("/off", []() {
+    relayAlerting = false;
+    setRelay(false);
+    relayHttp.sendHeader("Access-Control-Allow-Origin", "*");
+    relayHttp.send(200, "application/json", "{\"success\":true,\"state\":0}");
+  });
+  relayHttp.on("/status", []() {
+    relayHttp.sendHeader("Access-Control-Allow-Origin", "*");
+    relayHttp.send(200, "application/json", "{\"alerting\":" + String(relayAlerting ? "true" : "false") + "}");
+  });
 }
 
 void loop() {
@@ -163,9 +226,28 @@ void loop() {
     if (!serverStarted) {
       server.begin();
       server.setNoDelay(true);
+      relayHttp.begin();
+      MDNS.begin("varuna-boat");
       serverStarted = true;
     }
   }
+  if (serverStarted) {
+    relayHttp.handleClient();
+  }
+
+  // Relay alert rhythm handler (exactly 4 beeps)
+  if (relayAlerting) {
+    if (pulseStep >= CADENCE_STEPS || now >= alertUntil) {
+      relayAlerting = false;
+      setRelay(false);
+    } else if (now >= nextPulseTime) {
+      bool state = CADENCE_STATES[pulseStep];
+      setRelay(state);
+      nextPulseTime = now + CADENCE_DURS[pulseStep];
+      pulseStep++;
+    }
+  }
+
   if (!online && wasOnline) {
     Serial.println("Wi-Fi lost, reconnecting...");
     lastWifiTry = now;

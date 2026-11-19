@@ -147,7 +147,7 @@ export class BoxTracker {
     // is attached to it); `cls`, `feat` and `rl` carry the self-learning data.
     return this.tracks
       .filter((t) => t.shown)
-      .map(({ id, x1, y1, x2, y2, score, label, color, cls, classConf, feat, fp, rl, why }) => ({ id, x1, y1, x2, y2, score, label, color, cls, classConf, feat, fp, rl, why }))
+      .map(({ id, x1, y1, x2, y2, score, label, color, cls, classConf, feat, fp, rl, why, hits }) => ({ id, x1, y1, x2, y2, score, label, color, cls, classConf, feat, fp, rl, why, hits }))
   }
 
   /**

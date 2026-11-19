@@ -111,6 +111,16 @@ DEFAULTS = {
     "zone_x1": 0.25, "zone_x2": 0.75, # wildlife danger zone: centre strip…
     "zone_y1": 0.30,                  # …from this height (~5 m ahead) down to the ramp
 
+    # ---- Plastic the BOAT'S OWN camera finds (the app judges the boxes with
+    # these, src/lib/boatTarget.js; the boat checks them again before it moves).
+    # Together they decide how sure the boat must be before the motor runs:
+    # a box must be a plastic class, score at least camera_plastic_conf, and be
+    # seen camera_plastic_hits passes running (about a third of a second).
+    "camera_plastic_conf": 0.45,      # a box must score this to count as plastic
+    "camera_plastic_hits": 2,         # …and be seen in this many passes in a row
+    "camera_lock_lost_s": 1.2,        # the locked item out of sight this long → let it go
+    "camera_target_max_m": 15.0,      # farther ahead than this: too rough to act on
+
     # ---- Last-metre homing
     "homing_enabled": True,
     "homing_start_m": 8.0,            # take over this close to a plastic point
@@ -174,10 +184,12 @@ _INT_KEYS = {"mav_baud", "http_port", "max_waypoints", "collector_servo", "colle
              "bin_capacity_items", "turb_i2c_bus", "turb_i2c_addr", "turb_channel",
              "phone_width", "phone_height", "phone_fps", "phone_app_port",
              "servo1_output", "servo1_channel", "servo1_pwm_off", "servo1_pwm_on",
-             "servo2_output", "servo2_channel", "servo2_pwm_off", "servo2_pwm_on"}
+             "servo2_output", "servo2_channel", "servo2_pwm_off", "servo2_pwm_on",
+             "camera_plastic_hits"}
 _FLOAT_KEYS = {"default_hold_s", "default_speed_mps", "max_distance_m", "sim_home_lat", "sim_home_lng",
                "camera_height_m", "camera_tilt_deg", "camera_hfov_deg", "ramp_top", "count_line",
                "zone_x1", "zone_x2", "zone_y1",
+               "camera_plastic_conf", "camera_lock_lost_s", "camera_target_max_m",
                "homing_start_m", "homing_speed_mps", "homing_accept_m", "homing_search_s", "homing_lost_s",
                "homing_capture_m", "homing_drive_through_m", "homing_confirm_s",
                "live_arrive_m", "live_roller_on_m", "live_dwell_s", "live_merge_m", "live_return_after_s",
@@ -215,6 +227,8 @@ TUNABLE = {
     "camera_height_m": ("float", 0.1, 3), "camera_tilt_deg": ("float", 5, 85), "camera_hfov_deg": ("float", 30, 130),
     "ramp_top": ("float", 0.5, 1), "count_line": ("float", 0.1, 0.9),
     "zone_x1": ("float", 0, 0.5), "zone_x2": ("float", 0.5, 1), "zone_y1": ("float", 0, 0.95),
+    "camera_plastic_conf": ("float", 0.1, 0.95), "camera_plastic_hits": ("int", 1, 10),
+    "camera_lock_lost_s": ("float", 0.2, 10), "camera_target_max_m": ("float", 2, 40),
     "measure_s": ("float", 5, 120), "turb_divider": ("float", 1, 3),
     "gamepad_max_throttle": ("float", 0.1, 1),
     "gamepad_throttle_expo": ("float", 0, 0.9),

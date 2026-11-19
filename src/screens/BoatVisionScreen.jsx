@@ -384,6 +384,18 @@ export default function BoatVisionScreen({ onNavigate }) {
             {bv.enabled ? '● Vision AI on' : '○ Vision AI off'}
           </button>
           <button onClick={() => window.open(boatUrls.snapshot(), '_blank')} disabled={!bv.cameraUp} className="nl-btn soft">📸 Snapshot</button>
+          <button onClick={() => run('alert', () => boatApi.opsAlert('test'), 'Relay alert rhythm started')} disabled={!online || !!busy} className="nl-btn" style={{ background: '#32D74B', color: '#000', fontWeight: 800 }}>
+            🔔 Test Alert (LED+Buzzer)
+          </button>
+          <button onClick={() => run('alert-stop', () => boatApi.opsAlert('stop'), 'Alert stopped')} disabled={!online || !!busy} className="nl-btn" style={{ background: '#FF453A', color: '#fff', fontWeight: 800 }}>
+            Stop Alert
+          </button>
+          <button onClick={() => run('motor-test', () => boatApi.opsMotor('test'), 'Motor test started (10-20%)')} disabled={!online || !!busy} className="nl-btn" style={{ background: '#0A84FF', color: '#fff', fontWeight: 800 }}>
+            🚀 Test Motor
+          </button>
+          <button onClick={() => run('motor-stop', () => boatApi.opsMotor('stop'), 'Motor stopped')} disabled={!online || !!busy} className="nl-btn" style={{ background: '#64748B', color: '#fff', fontWeight: 800 }}>
+            Stop Motor
+          </button>
           {boat.simulated && (
             <button onClick={() => run('duck', () => boatApi.simDuck(9), 'A duck appeared ahead')} disabled={!!busy} className="nl-btn amber">🦆 Sim: duck ahead</button>
           )}

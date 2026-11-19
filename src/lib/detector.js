@@ -241,8 +241,9 @@ export async function createSession(ort, modelUrl, onProgress) {
 export const DETECT_MODELS = [
   { key: 'plastic', label: 'TACO groups', test: false }, // default: trained on TACO in Colab
   { key: 'plastic_detection', label: 'Plastic v2', test: true }, // single-class model, under test
+  { key: 'plastic_v3', label: 'Plastic v3', test: true }, // new Ultralytics model
 ]
-export const DEFAULT_DETECT_MODEL = 'plastic'
+export const DEFAULT_DETECT_MODEL = 'plastic_v3'
 const MODEL_PREF_KEY = 'varuna.detectModel'
 
 export function getDetectModel() {
@@ -278,6 +279,9 @@ export async function createPlasticDetector(onProgress, key = getDetectModel()) 
     },
     meta: {
       key, names, targetIds: ids, recommendedConf: Number(meta.recommended_conf) || 0.5,
+      // Which classes may make the BOAT act (start its motor, use its scoop).
+      // Without it the names decide — see plasticClassIds() in boatTarget.js.
+      motorClassIds: Array.isArray(meta.motor_class_ids) ? meta.motor_class_ids.map(Number) : null,
       test: !!DETECT_MODELS.find((m) => m.key === key)?.test,
     },
   }

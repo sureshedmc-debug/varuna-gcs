@@ -255,10 +255,8 @@ function LiveCamera({ ops }) {
   return (
     <div className="relative aspect-video max-h-[62vh] overflow-hidden rounded-2xl bg-black" style={PANEL}>
       <canvas ref={canvas} className={`absolute inset-0 h-full w-full object-contain ${hasFrame ? '' : 'hidden'}`} />
-      {/* The plain stream keeps running (and reconnecting by itself) whenever the
-          AI boxes aren't being drawn, so there is always a live picture when the
-          backend serves one — even if telemetry briefly says the camera is down. */}
-      {!hasFrame && <MjpegImg className={`absolute inset-0 h-full w-full object-contain ${streamOk ? '' : 'opacity-0'}`} onState={setStreamOk} />}
+      {/* Only open the fallback <img> stream when Vision AI is off or errored, so we never run two simultaneous video connections over Wi-Fi. */}
+      {!hasFrame && (!bv?.enabled || bv?.engine?.status === 'error') && <MjpegImg className={`absolute inset-0 h-full w-full object-contain ${streamOk ? '' : 'opacity-0'}`} onState={setStreamOk} />}
       {!hasFrame && !streamOk && (
         <div className="absolute inset-0 flex items-center justify-center text-center text-[16px] font-bold" style={{ color: camOk ? AMBER : RED }}>
           {camOk ? 'Connecting to the camera…' : 'Waiting for the boat camera…'}
@@ -384,23 +382,81 @@ function Controls({ ops }) {
   const { busy, run } = useRun()
   const live = ops.live?.state
   const auto = ops.auto?.settings?.auto_collect
+  const motor = ops.motor || {}
+  const autoMotor = ops.auto?.settings?.motor_on_signal ?? motor.enabled ?? true
+  const alt = ops.alert || {}
   const going = live === 'running' || live === 'returning'
   return (
-    <div className="grid grid-cols-3 gap-2">
-      <Big busy={busy} k="stop" color={RED} solid onClick={() => run('stop', boatApi.hold, 'Boat stopped')}>■ STOP</Big>
-      {going
-        ? <Big busy={busy} k="pause" color={AMBER} onClick={() => run('pause', boatApi.livePause, 'Boat paused')}>❚❚ PAUSE</Big>
-        : <Big busy={busy} k="start" color={GREEN} onClick={() => run('start', () => boatApi.liveStart({ whenEmpty: 'wait' }), 'Started — the boat will go to each waste the drone finds')}>▶ START</Big>}
-      <Big busy={busy} k="auto" color={auto ? GREEN : GREY} onClick={() => run('auto', () => boatApi.opsSettings({ auto_collect: !auto }), auto ? 'Auto scoop OFF' : 'Auto scoop ON')}>
-        Auto scoop {auto ? 'ON' : 'OFF'}
-      </Big>
+    <div className="flex flex-col gap-2">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <Big busy={busy} k="stop" color={RED} solid onClick={() => run('stop', boatApi.hold, 'Boat stopped')}>■ STOP</Big>
+        {going
+          ? <Big busy={busy} k="pause" color={AMBER} onClick={() => run('pause', boatApi.livePause, 'Boat paused')}>❚❚ PAUSE</Big>
+          : <Big busy={busy} k="start" color={GREEN} onClick={() => run('start', () => boatApi.liveStart({ whenEmpty: 'wait' }), 'Started — the boat will go to each waste the drone finds')}>▶ START</Big>}
+        <Big busy={busy} k="auto" color={auto ? GREEN : GREY} onClick={() => run('auto', () => boatApi.opsSettings({ auto_collect: !auto }), auto ? 'Auto scoop OFF' : 'Auto scoop ON')}>
+          Auto scoop {auto ? 'ON' : 'OFF'}
+        </Big>
+        <Big busy={busy} k="motor" color={autoMotor ? (motor.on ? BLUE : GREEN) : GREY} onClick={() => run('motor', () => boatApi.opsSettings({ motor_on_signal: !autoMotor }), autoMotor ? 'Auto motor OFF' : 'Auto motor ON')}>
+          Auto motor {autoMotor ? (motor.on ? `${motor.power_pct}%` : 'ON') : 'OFF'}
+        </Big>
+      </div>
+
+      {/* Visual Alert Relay & Buzzer Quick Controls — Always Visible */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl p-3" style={{ ...PANEL, border: alt.on ? `2px solid ${RED}` : `2px solid rgba(255,255,255,0.15)` }}>
+        <div className="flex items-center gap-3">
+          <span className="inline-block h-4 w-4 animate-pulse rounded-full" style={{ background: alt.on ? RED : (alt.enabled ? GREEN : GREY) }} />
+          <div>
+            <div className="text-[15px] font-black leading-tight text-ink">
+              RELAY & BUZZER ALERT: <span style={{ color: alt.on ? RED : (alt.enabled ? GREEN : GREY) }}>{alt.on ? `PULSING RHYTHM (${alt.left_s}s left)` : (alt.enabled ? 'STANDBY (AUX 1 / Pin 50)' : 'DISABLED')}</span>
+            </div>
+            <div className="text-[12px] text-muted">5V Relay pulses E-minus LED strip & big buzzer together when drone finds plastic</div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button type="button" disabled={busy === 'alt-test'} onClick={() => run('alt-test', () => boatApi.opsAlert('test'), 'Visual alert test started')}
+            className="flex items-center gap-1.5 rounded-xl px-4 py-2.5 text-[14px] font-black text-black shadow-lg transition active:scale-95 disabled:opacity-50"
+            style={{ background: GREEN }}>
+            🔔 TEST BUZZER + LED
+          </button>
+          <button type="button" disabled={busy === 'alt-stop'} onClick={() => run('alt-stop', () => boatApi.opsAlert('stop'), 'Alert stopped')}
+            className="rounded-xl px-4 py-2.5 text-[14px] font-black text-white transition active:scale-95 disabled:opacity-50"
+            style={{ background: RED }}>
+            STOP ALERT
+          </button>
+        </div>
+      </div>
     </div>
+  )
+}
+
+/**
+ * What the boat's own camera is doing right now. The operator should be able to
+ * see at a glance why the motor is running — or why it is not.
+ */
+function CameraChip({ cc }) {
+  if (!cc) return null
+  const d = cc.distance_m
+  const words = {
+    idle: cc.enabled ? 'watching for plastic' : 'off',
+    approach: d != null ? `going for plastic — ${d.toFixed(1)} m` : 'going for plastic',
+    collecting: 'scooping',
+    cooldown: 'collected — ready for the next',
+  }
+  const colour = { approach: BLUE, collecting: GREEN, cooldown: GREEN }[cc.state] || (cc.enabled ? undefined : GREY)
+  const busy = cc.state === 'approach' || cc.state === 'collecting'
+  return (
+    <span className="rounded-full px-3 py-1 font-bold" title={cc.why || ''}
+      style={{ background: busy ? `${colour}26` : PANEL.background, color: colour || 'inherit' }}>
+      Boat camera: {words[cc.state] || cc.state}
+      {cc.collected ? ` · ${cc.collected} collected` : ''}
+    </span>
   )
 }
 
 function Health({ ops }) {
   const px = ops.pixhawk || {}
   const ph = ops.phone || {}
+  const mot = ops.motor || {}
   const chips = [
     ['Pixhawk', px.connected, px.connected ? (px.armed ? 'armed' : 'ready') : 'lost'],
     ['Phone GPS', ph.gps_ok, ph.gps_ok ? `±${n1(ph.accuracy_m, 0)} m` : 'no fix'],
@@ -415,6 +471,10 @@ function Health({ ops }) {
       ))}
       <span className="rounded-full px-3 py-1 font-bold text-ink" style={PANEL}>Mode: {px.mode || '—'}</span>
       <span className="rounded-full px-3 py-1 font-bold text-ink" style={PANEL}>Speed: {n1(px.speed_mps)} m/s</span>
+      <span className="rounded-full px-3 py-1 font-bold" style={{ background: mot.on ? `${BLUE}26` : PANEL.background, color: mot.on ? BLUE : 'inherit' }}>
+        Motor: {mot.on ? `${mot.power_pct}% (${mot.left_s}s)` : mot.enabled ? 'ready' : 'off'}
+      </span>
+      <CameraChip cc={ops.camera_collect} />
       <span className="ml-auto text-[11.5px] text-muted">Hand control: flip <b className="text-ink">SwD</b> on the FS-i6</span>
     </div>
   )
@@ -496,6 +556,7 @@ function ScoopPanel({ ops }) {
   const sc = ops.scoop || {}
   const ms = ops.manual_servo || {}
   const s = ops.auto?.settings || {}
+  const alt = ops.alert || {}
   const save = (patch) => run('set', () => boatApi.opsSettings(patch), 'Saved')
   const pct = Number.isFinite(sc.pos_us) ? Math.max(0, Math.min(100, ((sc.pos_us - sc.zero_us) / ((sc.extreme_us - sc.zero_us) || 1)) * 100)) : 0
   const lc = ops.auto?.last_check
@@ -534,6 +595,59 @@ function ScoopPanel({ ops }) {
           <div className="text-[12px] text-muted">{ms.receiver ? 'Receiver connected' : 'No receiver signal'}</div>
         </div>
         <div className="mt-2 text-[12px] text-muted">Only the switch moves this servo. The app never moves it.</div>
+      </Card>
+      <Card title="Automatic Plastic Detection Motor (10% - 20% Throttle)">
+        <div className="mb-2 flex items-center justify-between text-[13px]">
+          <span className="text-muted">Status:</span>
+          <span className="font-bold" style={{ color: (ops.motor?.on) ? BLUE : ((ops.motor?.ready) ? GREEN : AMBER) }}>
+            {ops.motor?.on ? `RUNNING at ${ops.motor?.power_pct}% (${ops.motor?.left_s}s left)` : (ops.motor?.ready ? 'READY (armed in MANUAL)' : (ops.motor?.not_ready || 'Not ready'))}
+          </span>
+        </div>
+        <div className="mb-2 grid grid-cols-2 gap-1.5">
+          <SmallBtn busy={busy} k="mot-test" color={GREEN} onClick={() => run('mot-test', () => boatApi.opsMotor('test'), 'Motor test signal sent')}>
+            Test Motor (20%)
+          </SmallBtn>
+          <SmallBtn busy={busy} k="mot-stop" color={RED} onClick={() => run('mot-stop', () => boatApi.opsMotor('stop'), 'Motor stopped')}>
+            Stop Motor
+          </SmallBtn>
+        </div>
+        <label className="flex items-center justify-between gap-2 py-1 text-[13px]">
+          <span className="text-muted">Run duration per find</span>
+          <select value={s.motor_run_s ?? 10} onChange={(e) => save({ motor_run_s: Number(e.target.value) })} className="rounded bg-black/30 px-2 py-1 text-ink">
+            {[3, 5, 10, 15, 20, 30].map((v) => <option key={v} value={v}>{v} seconds</option>)}
+          </select>
+        </label>
+        <div className="mt-2 text-[11.5px] text-muted">
+          When plastic is detected by drone (20% power) or boat camera (10% power), motor runs automatically. Buzzer and LED relay pulse simultaneously. Flip SwD or press STOP to cancel anytime.
+        </div>
+      </Card>
+      <Card title="Visual Alert Beacon (5V Relay: LED + Buzzer)">
+        <div className="mb-2 flex items-center justify-between text-[13px]">
+          <span className="text-muted">Status:</span>
+          <span className="font-bold" style={{ color: alt.on ? RED : (alt.enabled ? GREEN : GREY) }}>
+            {alt.on ? `PULSING ALERT RHYTHM (${alt.left_s}s left)` : (alt.enabled ? 'READY (AUX 1 / Pin 50)' : 'DISABLED')}
+          </span>
+        </div>
+        <div className="mb-2 grid grid-cols-2 gap-1.5">
+          <SmallBtn busy={busy} k="alt-test" color={GREEN} onClick={() => run('alt-test', () => boatApi.opsAlert('test'), 'Visual alert test started')}>
+            Test Alert (LED+Buzzer)
+          </SmallBtn>
+          <SmallBtn busy={busy} k="alt-stop" color={RED} onClick={() => run('alt-stop', () => boatApi.opsAlert('stop'), 'Alert stopped')}>
+            Stop Alert
+          </SmallBtn>
+        </div>
+        <label className="flex items-center gap-2 py-1 text-[13px]">
+          <input type="checkbox" checked={s.alert_on_signal ?? true} onChange={(e) => save({ alert_on_signal: e.target.checked })} /> Blink LED strip & sound buzzer on drone find
+        </label>
+        <label className="flex items-center justify-between gap-2 py-1 text-[13px]">
+          <span className="text-muted">Alert pulse duration</span>
+          <select value={s.alert_duration_s ?? 8} onChange={(e) => save({ alert_duration_s: Number(e.target.value) })} className="rounded bg-black/30 px-2 py-1 text-ink">
+            {[3, 5, 8, 10, 15, 20].map((v) => <option key={v} value={v}>{v} seconds</option>)}
+          </select>
+        </label>
+        <div className="mt-2 text-[11.5px] text-muted">
+          5V Relay on Pixhawk AUX 1 (Pin 50) switches the E-minus LED strip and buzzer together in an alert rhythm whenever plastic is detected.
+        </div>
       </Card>
     </div>
   )

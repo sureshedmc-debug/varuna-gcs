@@ -24,6 +24,12 @@ CH4 rudder, SwD on CH8 = MANUAL / ACRO); boat_config.json has rc_source
 "transmitter", so this program never sends stick values. Flipping SwD takes
 over from any automatic mode.
 
+Motor on drone signal: a NEW plastic find from the drone (POST
+/api/live/targets) runs the motor at motor_power_pct (50 % = 1500 µs at the
+ESC) for motor_run_s, by overriding CH3 only — no steering, no GUIDED, no
+correction; the rudder stays on the transmitter. Only when the boat is ARMED
+in MANUAL. STOP / SwD / disarm hand the throttle straight back (MotorPush).
+
 Also here: the phone's own GPS (VARUNA Boat Link /status.json) next to the
 Pixhawk's telemetry, live distance / bearing to the drone target, the operator
 banners and alerts, and one timestamped event log (data/ops_events.log), all
@@ -56,6 +62,7 @@ os.chdir(HERE)
 import camera  # noqa: E402
 import collector  # noqa: E402
 import mav_link  # noqa: E402
+import vision  # noqa: E402
 from mav_link import LinkError  # noqa: E402
 
 log = logging.getLogger("boat.extras")
@@ -71,7 +78,7 @@ def _cam_attempts_url(self):
     # curl hands the phone's JPEGs straight over (no re-encoding on the laptop).
     return "phone", url, [
         ("Boat phone camera over Wi-Fi", "phone",
-         ["curl", "-sSN", "--max-time", "0", "--connect-timeout", "5", url]),
+         ["curl", "-sSN", "--tcp-nodelay", "--max-time", "0", "--connect-timeout", "5", url]),
     ]
 
 
@@ -89,10 +96,27 @@ OPS_DEFAULTS = {
     "collect_max_speed_mps": 0.8,    # faster than this: no scoop
     "collect_max_gps_m": 10.0,       # farther than this from the drone's GPS point: no scoop
     "require_match": True,           # the camera's item must match the drone's picture
+    "motor_on_signal": True,         # a new drone find runs the motor (boat ARMED in MANUAL only)
+    "motor_power_pct": 20,           # motor power for it, % of the ESC's range (20 % default)
+    "motor_run_s": 10,               # how long each signal runs it (a new find restarts the time)
+    "alert_on_signal": True,         # a new drone find pulses the alert relay (LED strip + buzzer)
+    "alert_duration_s": 8,           # duration of alert pulsing rhythm in seconds
+    # ---- The boat's OWN camera (CameraCollect): verified plastic -> motor -> scoop
+    "camera_motor": True,            # plastic the boat's camera verifies runs the motor
+    "camera_motor_pct": 10,          # motor power while going for it, % of the ESC's range
+    "camera_scoop": True,            # …and the scoop closes when it reaches the collection zone
+    "camera_scoop_m": 1.5,           # the collection zone: scoop when the plastic is this close
+    "camera_cooldown_s": 6.0,        # after a collection, ignore new plastic this long
+    "camera_stale_s": 1.5,           # nothing seen from the app this long -> motor OFF (watchdog)
+    "camera_alert": False,           # pulse the LED strip + buzzer for camera finds too
 }
 OPS_LIMITS = {"scoop_speed_pct": (5, 100), "scoop_servo_s_per_60": (0.05, 1.0),
               "scoop_deg_per_1000us": (30, 270), "scoop_hold_s": (0, 30), "scoop_delay_s": (-1, 15),
-              "collect_max_speed_mps": (0.1, 3.0), "collect_max_gps_m": (2.0, 30.0)}
+              "collect_max_speed_mps": (0.1, 3.0), "collect_max_gps_m": (2.0, 30.0),
+              "motor_power_pct": (0, 100), "motor_run_s": (1, 120),
+              "alert_duration_s": (1, 60),
+              "camera_motor_pct": (0, 100), "camera_scoop_m": (0.3, 10.0),
+              "camera_cooldown_s": (0, 60), "camera_stale_s": (0.3, 10)}
 _ops_lock = threading.Lock()
 
 
@@ -498,7 +522,12 @@ class Ops:
             self._fc_lost_since = None
         # Live collect stopped / paused (the operator, a mode change on SwD, a failsafe)
         # during a scoop cycle: abort it, the scoop glides back to 0.
-        if self.cycle["state"] in ("checking", "waiting", "to_extreme", "holding") and live.state != "running":
+        # Not for a cycle the boat's OWN CAMERA started: that one has nothing to
+        # do with the drone's queue — the boat is in MANUAL, going for something
+        # only its camera found, and CameraCollect watches that one instead.
+        if self.cycle.get("source", "drone") != "camera" \
+                and self.cycle["state"] in ("checking", "waiting", "to_extreme", "holding") \
+                and live.state != "running":
             self.abort(f"live collect {live.state}")
         # distance history of the current target (is the boat getting closer?)
         tid = live.current
@@ -510,6 +539,43 @@ class Ops:
                 dq.append((now, _dist_m(lat, lng, t["lat"], t["lng"])))
 
     # ------------------------------------------------------------ automatic scoop
+    def camera_checks(self, vm, target):
+        """Every condition for scooping plastic the BOAT'S OWN camera found.
+
+        The drone path (checks() below) asks for GUIDED and a GPS point; this
+        one can't, because the boat is being pushed in MANUAL towards something
+        only the camera knows about. What it does ask for is that the item is
+        verified plastic, in the collection zone, in front of the boat, and that
+        the boat is slow, armed and holding its scoop open at 0."""
+        M, st = _main(), OPS_SETTINGS
+        s = vm.link.snapshot()
+        live = vm.live
+        col = live.collector if live else None
+        mover = col.__dict__.get("_mover") if col else None
+        gs = float(s.get("groundspeed") or 0.0)
+        crit = [m for m in list(s.get("messages") or [])
+                if m.get("severity", 6) <= 2 and time.time() - m.get("t", 0) < 15]
+        cam = getattr(M, "camera", None)
+        d = target.get("distance_m")
+        zone = float(st["camera_scoop_m"])
+        age = float(target.get("age_ms") or 0) / 1000.0
+        out = [
+            ("Automatic collection is ON", bool(st["auto_collect"])),
+            ("Camera collection is ON", bool(st["camera_scoop"])),
+            ("Boat camera connected", bool(cam is not None and cam.connected)),
+            ("The item is verified plastic", bool(target.get("confirmed"))),
+            (f"In the collection zone ({zone:g} m)" + (f" (now {d:.2f} m)" if d is not None else " (no distance)"),
+             d is not None and d <= zone),
+            ("In front of the boat", bool(target.get("centred"))),
+            (f"Seen just now (last seen {age:.1f} s ago)", age <= 1.0),
+            (f"Speed at most {st['collect_max_speed_mps']:g} m/s (now {gs:.1f})", gs <= st["collect_max_speed_mps"]),
+            ("Pixhawk connected and armed", bool(s["fc_connected"] and s["armed"])),
+            ("No critical Pixhawk error", not crit),
+            ("Scoop ready at 0 and not moving", bool(col and col.scoop and col.output and not col.on
+                                                     and not (mover and mover.moving))),
+        ]
+        return all(ok for _, ok in out), out
+
     def checks(self, vm, tid, match):
         M, st = _main(), OPS_SETTINGS
         s = vm.link.snapshot()
@@ -543,17 +609,22 @@ class Ops:
         ]
         return all(ok for _, ok in out), out
 
-    def request_collect(self, vm, tid, match):
+    def request_collect(self, vm, tid, match, source="drone", target=None, on_refused=None):
+        """Start a scoop cycle for a drone target, or for one the boat's own
+        camera verified (source "camera"). One cycle at a time."""
         with self.lock:
             busy = self.cycle["state"] in ("checking", "waiting", "to_extreme", "holding", "to_zero")
             if not busy:
                 self.gen += 1
                 gen = self.gen
-                self.cycle = {"state": "checking", "t": time.time(), "tid": tid, "match": match}
+                self.cycle = {"state": "checking", "t": time.time(), "tid": tid, "match": match, "source": source}
         if busy:
             self.event(f"Collection request for {tid} ignored: the scoop is already in a cycle", "warn")
+            if on_refused:
+                on_refused()
             return
-        threading.Thread(target=self._cycle, args=(gen, vm, tid, match), name="scoop-cycle", daemon=True).start()
+        threading.Thread(target=self._cycle, args=(gen, vm, tid, match, source, target, on_refused),
+                         name="scoop-cycle", daemon=True).start()
 
     def _set_cycle(self, gen, state, **kw):
         with self.lock:
@@ -562,19 +633,30 @@ class Ops:
                 return True
             return False
 
-    def _cycle(self, gen, vm, tid, match):
-        ok, checks = self.checks(vm, tid, match)
-        self.last_check = {"t": round(time.time(), 1), "tid": tid, "ok": ok,
+    def _cycle(self, gen, vm, tid, match, source="drone", target=None, on_refused=None):
+        camera = source == "camera"
+        if camera:
+            ok, checks = self.camera_checks(vm, target or {})
+        else:
+            ok, checks = self.checks(vm, tid, match)
+        self.last_check = {"t": round(time.time(), 1), "tid": tid, "ok": ok, "source": source,
                            "checks": [{"text": c, "ok": bool(v)} for c, v in checks]}
         if not ok:
             failed = "; ".join(c for c, v in checks if not v)
             self.event(f"Scoop NOT activated for {tid}: {failed}", "warn")
             self._set_cycle(gen, "refused", why=failed)
+            if on_refused:
+                on_refused()
             return
         col = vm.live.collector
         st, cfg = OPS_SETTINGS, vm.cfg
-        self.event(f"Scoop collection initiated — target {tid}" + (f", match {match * 100:.0f}%" if match is not None else ""))
-        delay = st["scoop_delay_s"]
+        if camera:
+            d = (target or {}).get("distance_m")
+            self.event(f"Scoop collection initiated — the camera's plastic {tid}"
+                       + (f" at {d:.2f} m" if d is not None else ""))
+        else:
+            self.event(f"Scoop collection initiated — target {tid}" + (f", match {match * 100:.0f}%" if match is not None else ""))
+        delay = 0.0 if camera else st["scoop_delay_s"]   # the camera path is already at the item
         if delay is None or delay < 0:
             delay = float(cfg.get("homing_capture_m", 1.5)) / max(0.2, float(cfg.get("homing_speed_mps", 0.4)))
             delay = max(0.0, delay - scoop_travel_s(1000) / 2)
@@ -740,10 +822,743 @@ class Ops:
                              "position": None if sw is None else ("extreme" if sw > 1500 else "0"),
                              "receiver": rc_ok},
             "events": events,
+            "motor": MOTOR.view(s),
+            "alert": ALERT.view(),
+            "camera_collect": CAMERA.view(),
         }
 
 
 OPS = Ops()
+
+# ---------------------------------------------------------------- drone signal -> motor at 50 %
+# When a NEW drone find reaches the boat (the live_collect patch further down),
+# the motor (MAIN OUT 3, SERVO3_FUNCTION 70) runs at motor_power_pct for
+# motor_run_s -- and nothing else: no GUIDED, no goto, no steering, no heading
+# correction.
+#
+# How: RC override on the THROTTLE channel only (RCMAP_THROTTLE 3). Every other
+# channel is sent as "ignore", so the rudder (CH4), SwA and SwD stay on the
+# FS-i6. ArduRover passes the throttle stick straight to the motor only in
+# MANUAL, so the boat must be ARMED in MANUAL (SwD); otherwise the signal is
+# logged and nothing moves. Arming later never starts the motor by surprise.
+#
+# 50 % stick -> SERVO3_TRIM + 50 % of (SERVO3_MAX - SERVO3_TRIM) = 1500 µs at
+# the ESC, the same as the MOT_THR_MAX 50 cap. The µs sent on CH3 comes from the
+# Pixhawk's own RC3_MIN / TRIM / MAX / DZ (read when it connects).
+#
+# Stops (throttle back on the transmitter at once): motor_run_s over, STOP /
+# brake / emergency stop / arm / mode / Pause in the app, SwD flipped out of
+# MANUAL, disarmed, Pixhawk link lost, Auto motor switched OFF. If the laptop
+# itself dies, the Pixhawk drops the override after RC_OVERRIDE_TIME (3 s).
+#
+# While it runs the Pixhawk reads CH3 from here, not from the receiver: the
+# throttle stick, stick-disarm and the radio-loss failsafe don't act -- flip SwD
+# to take over. That is why every run is time-limited.
+MOTOR_SEND_HZ = 10
+RC_THROTTLE_CH = 3          # RCMAP_THROTTLE 3
+MOTOR_OUTPUT = 3            # MAIN OUT 3 = the ESC (SERVO3_FUNCTION 70)
+MOTOR_PARAMS_RETRY_S = 30.0
+# Used until the Pixhawk's own values are read (= what pixhawk_setup.py writes).
+MOTOR_PARAM_DEFAULTS = {"RC3_MIN": 1000.0, "RC3_TRIM": 1000.0, "RC3_MAX": 2000.0, "RC3_DZ": 50.0,
+                        "RC3_REVERSED": 0.0, "SERVO3_TRIM": 1000.0, "SERVO3_MAX": 2000.0, "MOT_THR_MAX": 50.0}
+
+
+def throttle_pwm(pct, p):
+    """CH3 µs that ArduPilot (RC_Channel::pwm_to_angle_dz_trim, throttle = 0..100)
+    reads as `pct` % throttle. Rounded away from the trim so its integer maths
+    never lands below pct."""
+    pct = max(0.0, min(100.0, float(pct)))
+    mn, tr, mx = p["RC3_MIN"], p["RC3_TRIM"], p["RC3_MAX"]
+    dz = max(0.0, p["RC3_DZ"])
+    if pct <= 0:
+        return int(round(tr))
+    if p.get("RC3_REVERSED"):
+        us = math.floor(tr - dz - pct / 100.0 * ((tr - dz) - mn))
+    else:
+        us = math.ceil(tr + dz + pct / 100.0 * (mx - (tr + dz)))
+    return int(max(mn, min(mx, us)))
+
+
+class MotorPush:
+    """A drone signal runs the motor at motor_power_pct for motor_run_s (CH3 override only)."""
+
+    def __init__(self, get_link=None, event=None, settings=None, get_cfg=None):
+        self._get_link = get_link or (lambda: getattr(_main(), "link", None))
+        self._get_cfg = get_cfg or (lambda: getattr(_main(), "cfg", None) or {})
+        self._event = event or (lambda text, level="info": OPS.event(text, level))
+        self.settings = OPS_SETTINGS if settings is None else settings
+        self.lock = threading.RLock()
+        self.on = False
+        self.until = 0.0
+        self.started_at = None
+        self.run_s = None
+        self.pct = None
+        self.pwm = None
+        self.reason = None                    # why it last started / stopped / did not start
+        self.last_signal = None               # {"t", "ids", "source", "started"}
+        self.params = dict(MOTOR_PARAM_DEFAULTS)
+        self.params_from = "defaults"         # "pixhawk" once its own values are read
+        self._params_sys = None
+        self._params_try = 0.0
+        self._reading = False
+        self._wake = threading.Event()
+        self._started = False
+
+    # ------------------------------------------------------------ thread
+    def start(self):
+        if self._started:
+            return
+        self._started = True
+        threading.Thread(target=self._run, name="motor-push", daemon=True).start()
+
+    def _run(self):
+        while True:
+            self._wake.wait(1.0 / MOTOR_SEND_HZ)
+            self._wake.clear()
+            try:
+                self.step()
+            except Exception:                                        # noqa: BLE001
+                log.exception("motor push")
+
+    def step(self):
+        """One 10 Hz tick: keep the override alive, or end the run."""
+        link = self._get_link()
+        self._maybe_read_params(link)
+        with self.lock:
+            if not self.on:
+                return
+            run_s = self.run_s
+        if link is None or not link.fc_connected:
+            self.stop("the Pixhawk is not connected")
+            return
+        # Checked on EVERY tick, however the run was started: flipping SwD out
+        # of MANUAL or disarming stops the motor at once. `force` only ever
+        # decides whether a run may START, never whether it may continue.
+        why = self.not_ready(link, force=False)
+        if why:
+            self.stop(why.split(" (")[0])
+            return
+        with self.lock:
+            if not self.on:
+                return
+            if time.time() >= self.until:
+                pass                                                 # stop() below, outside this block
+            else:
+                self._send(link, self.pwm)                           # under the lock: never after a stop
+                return
+        self.stop(f"{run_s:g} s run finished")
+
+    # ------------------------------------------------------------ checks
+    def not_ready(self, link=None, force=False):
+        """None if the motor may run now, else why not (for the operator).
+
+        `force` is the operator pressing Test Motor: only then may this arm the
+        boat or put it in MANUAL. Nothing the cameras see ever does — a drone
+        find or a plastic the boat sees can only run a motor the operator has
+        already armed in MANUAL."""
+        link = link if link is not None else self._get_link()
+        if link is None or not link.fc_connected or link.target_system is None:
+            return "the Pixhawk is not connected"
+        if not force and (self._get_cfg() or {}).get("rc_source") == "gamepad":
+            return "rc_source is gamepad (the game controller drives CH3)"
+        s = link.snapshot()
+        if not s.get("armed"):
+            if force:
+                try:
+                    link.arm(True, force=True)
+                    time.sleep(0.08)
+                    s = link.snapshot()
+                except Exception as exc:
+                    log.warning("motor auto-arm: %s", exc)
+            if not s.get("armed"):
+                return "the boat is DISARMED (arm it with the left stick in MANUAL)"
+        if s.get("flight_mode") not in ("MANUAL", "LEARNING", "STEERING"):
+            if force:
+                try:
+                    link.set_mode("MANUAL")
+                    time.sleep(0.08)
+                    s = link.snapshot()
+                except Exception as exc:
+                    log.warning("motor auto set MANUAL: %s", exc)
+            if s.get("flight_mode") not in ("MANUAL", "LEARNING", "STEERING"):
+                return f"the boat is in {s.get('flight_mode') or 'an unknown mode'}, not MANUAL (set SwD to MANUAL)"
+        return None
+
+    def effective_pct(self, pct):
+        cap = self.params.get("MOT_THR_MAX")
+        return min(float(pct), float(cap)) if cap else float(pct)
+
+    def esc_us(self, pct):
+        tr, mx = self.params["SERVO3_TRIM"], self.params["SERVO3_MAX"]
+        return int(round(tr + max(0.0, pct) / 100.0 * (mx - tr)))
+
+    # ------------------------------------------------------------ signal / stop
+    def signal(self, ids, source="drone", force=False, pct=None, quiet=False, gate="motor_on_signal"):
+        """A drone signal (new plastic find), camera detection or test. Returns (started, message).
+
+        `quiet` is for keeping a run alive while the boat goes for the same
+        plastic: it does the same thing without writing another event line."""
+        ids = [str(i) for i in (ids or [])]
+        drone = source == "drone"
+        label = "Drone signal" if drone else source.capitalize()
+        what = (f"{len(ids)} new plastic find{'s' if len(ids) != 1 else ''}"
+                + (f": {ids[0]}" if len(ids) == 1 else "")) if drone else ("plastic detected" if source == "boat camera" else "from the app")
+        now = time.time()
+        with self.lock:
+            self.last_signal = {"t": round(now, 2), "ids": ids[:10], "source": source, "started": False}
+        # Each way of finding plastic has its own switch: the drone's finds
+        # (Auto motor) and the boat's own camera (Camera motor).
+        if not force and gate and not self.settings.get(gate, True):
+            off = "Auto motor is OFF" if gate == "motor_on_signal" else "Camera motor is OFF"
+            return self._refuse(f"{label} ({what}) — motor NOT started: {off}")
+        link = self._get_link()
+        why = self.not_ready(link, force=force)
+        if why:
+            return self._refuse(f"{label} ({what}) — motor NOT started: {why}")
+        if pct is None:
+            pct = float(self.settings.get("motor_power_pct", 20))
+        else:
+            pct = float(pct)
+        run_s = float(self.settings.get("motor_run_s", 10))
+        with self.lock:
+            was = self.on
+            pwm = throttle_pwm(pct, self.params)
+            self.on, self.pct, self.pwm, self.run_s = True, pct, pwm, run_s
+            self.forced = bool(force)
+            self.until = now + run_s
+            self.started_at = self.started_at if was else now
+            self.last_signal["started"] = True
+            self.reason = f"{label}: {what}"
+            self._send(link, pwm)                                    # at once; the thread keeps it alive
+        self._wake.set()
+        eff = self.effective_pct(pct)
+        if was:
+            msg = f"{label} ({what}) — motor stays at {pct:g} %, {run_s:g} s again"
+        else:
+            msg = (f"{label} ({what}) — MOTOR ON at {pct:g} %"
+                   + (f" (capped to {eff:g} % by MOT_THR_MAX)" if eff < pct else "")
+                   + f" for {run_s:g} s: CH3 {pwm} µs, ESC about {self.esc_us(eff)} µs. "
+                     "No steering — the rudder stays on the transmitter")
+        if not (quiet and was):
+            self._event(msg)
+        return True, msg
+
+    def _refuse(self, msg):
+        with self.lock:
+            self.reason = msg.split(" — ", 1)[-1]
+        self._event(msg, "warn")
+        return False, msg
+
+    def stop(self, why="stopped"):
+        """Throttle back on the transmitter at once. True if the motor was running."""
+        with self.lock:
+            was = self.on
+            self.on, self.until = False, 0.0
+            if not was:
+                return False
+            ran = time.time() - (self.started_at or time.time())
+            self.started_at = None
+            self.reason = f"stopped: {why}"
+            self._release(self._get_link())                          # under the lock: no send can follow it
+        self._event(f"MOTOR OFF ({why}) after {ran:.0f} s — throttle back on the transmitter")
+        return True
+
+    # ------------------------------------------------------------ MAVLink
+    @staticmethod
+    def _send(link, pwm):
+        """CH3 = pwm; every other channel 'ignore' (stays on the transmitter)."""
+        try:
+            link.rc_override_channels({RC_THROTTLE_CH: int(pwm)}, others=None)
+        except Exception as exc:                                     # noqa: BLE001
+            log.warning("motor push send: %s", exc)
+
+    @staticmethod
+    def _release(link):
+        """CH3 0 = back to the transmitter at once (sent twice in case one is lost)."""
+        if link is None or link.target_system is None:
+            return
+        for _ in range(2):
+            try:
+                link.rc_override_channels({RC_THROTTLE_CH: 0}, others=None)
+            except Exception as exc:                                 # noqa: BLE001
+                log.warning("motor push release: %s", exc)
+
+    def _maybe_read_params(self, link):
+        if link is None or not link.fc_connected or link.target_system is None:
+            return
+        if self._params_sys == link.target_system or self._reading \
+                or time.time() - self._params_try < MOTOR_PARAMS_RETRY_S:
+            return
+        self._reading, self._params_try = True, time.time()
+        threading.Thread(target=self._read_params, args=(link,), name="motor-params", daemon=True).start()
+
+    def _read_params(self, link):
+        try:
+            got = {}
+            for name in MOTOR_PARAM_DEFAULTS:
+                v = link.get_param(name, timeout=2.0)
+                if v is not None:
+                    got[name] = float(v)
+            with self.lock:
+                self.params.update(got)
+                if all(n in got for n in MOTOR_PARAM_DEFAULTS if n.startswith("RC3_")):
+                    self.params_from = "pixhawk"
+                    self._params_sys = link.target_system
+            if got:
+                log.info("Motor push: Pixhawk values %s -> 50 %% = CH3 %d µs", got, throttle_pwm(50, self.params))
+        except Exception as exc:                                     # noqa: BLE001 - LinkError, link gone
+            log.warning("Motor push: could not read the Pixhawk's RC3 values: %s", exc)
+        finally:
+            self._reading = False
+
+    # ------------------------------------------------------------ the app's view
+    def view(self, s=None):
+        now = time.time()
+        st = self.settings
+        with self.lock:
+            on, until, pct, pwm = self.on, self.until, self.pct, self.pwm
+            reason, last = self.reason, dict(self.last_signal) if self.last_signal else None
+        pct = pct if on else float(st.get("motor_power_pct", 50))
+        eff = self.effective_pct(pct)
+        out = s.get("servo_out") if s and now - (s.get("servo_out_t") or 0) < 3 else None
+        why = self.not_ready()
+        return {
+            "enabled": bool(st.get("motor_on_signal", True)), "on": on,
+            "power_pct": pct, "effective_pct": eff, "run_s": float(st.get("motor_run_s", 10)),
+            "left_s": round(max(0.0, until - now), 1) if on else None,
+            "ch3_us": pwm if on else throttle_pwm(pct, self.params), "esc_expected_us": self.esc_us(eff),
+            "esc_out_us": out[MOTOR_OUTPUT - 1] if out and len(out) >= MOTOR_OUTPUT else None,
+            "ready": why is None, "not_ready": why, "reason": reason, "last_signal": last,
+            "params_from": self.params_from,
+        }
+
+
+MOTOR = MotorPush()
+
+# ---------------------------------------------------------------- drone signal -> visual alert (LED strip & buzzer)
+# When a NEW drone find reaches the boat, the 5V relay on AUX OUT 1 (Pin 50,
+# RELAY1_PIN) pulses in an unmistakable alert rhythm (triple-burst beacon:
+# 220ms ON, 180ms OFF x 3, then 400ms pause, repeating for alert_duration_s).
+# The E-minus LED strip and the buzzer are wired to the relay switch contacts,
+# so they flash and sound in exact lockstep rhythm.
+RELAY_DO_SET = 181  # MAV_CMD_DO_SET_RELAY
+RELAY_INSTANCE = 0  # 0 = RELAY1 (AUX 1, Pin 50)
+
+
+def _trigger_esp32(endpoint):
+    """Notify ESP32 relay controller asynchronously over Wi-Fi."""
+    def _call():
+        urls = [
+            f"http://varuna-relay.local/{endpoint}",
+            f"http://varuna-boat.local/{endpoint}",
+        ]
+        esp_ip = os.environ.get("ESP32_RELAY_IP")
+        if esp_ip:
+            urls.insert(0, f"http://{esp_ip}/{endpoint}")
+        for arg in sys.argv:
+            if "tcp:" in arg:
+                host = arg.split("tcp:")[-1].split(":")[0]
+                urls.append(f"http://{host}/{endpoint}")
+        for url in urls:
+            try:
+                with urllib.request.urlopen(url, timeout=0.8):
+                    return
+            except Exception:
+                pass
+    threading.Thread(target=_call, name="esp32-alert-http", daemon=True).start()
+
+
+class AlertBlinker:
+    """Pulses the Pixhawk AUX 1 relay and/or Wi-Fi ESP32 relay in an alert rhythm for alert_duration_s."""
+
+    def __init__(self, get_link=None, event=None, settings=None):
+        self._get_link = get_link or (lambda: getattr(_main(), "link", None))
+        self._event = event or (lambda text, level="info": OPS.event(text, level))
+        self.settings = OPS_SETTINGS if settings is None else settings
+        self.lock = threading.RLock()
+        self.on = False
+        self.until = 0.0
+        self.started_at = None
+        self.run_s = None
+        self.relay_state = 0
+        self._wake = threading.Event()
+        self._started = False
+
+    def start(self):
+        if self._started:
+            return
+        self._started = True
+        threading.Thread(target=self._run, name="alert-blinker", daemon=True).start()
+
+    def _set_relay(self, link, state):
+        self.relay_state = 1 if state else 0
+        if link is None or not link.fc_connected or link.target_system is None:
+            return
+        try:
+            ts, tc = link.target_system, link.target_component
+            link._send(lambda m: m.mav.command_long_send(
+                ts, tc, RELAY_DO_SET, 0, RELAY_INSTANCE, int(bool(state)), 0, 0, 0, 0, 0))
+        except Exception as exc:                                     # noqa: BLE001
+            log.warning("relay send: %s", exc)
+
+    def _run(self):
+        # Exactly 4 beeps/pulses: ON -> OFF repeated 4 times
+        cadence = [(0.25, 1), (0.20, 0),
+                   (0.25, 1), (0.20, 0),
+                   (0.25, 1), (0.20, 0),
+                   (0.25, 1), (0.20, 0)]
+        while True:
+            self._wake.wait(0.1)
+            with self.lock:
+                active = self.on
+            if not active:
+                continue
+
+            link = self._get_link()
+            for duration, state in cadence:
+                with self.lock:
+                    if not self.on:
+                        break
+                self._set_relay(link, state)
+                time.sleep(duration)
+
+            self.stop("4 beeps finished")
+
+    def signal(self, ids, source="drone", force=False):
+        """A drone signal (new plastic find) or operator test."""
+        ids = [str(i) for i in (ids or [])]
+        drone = source == "drone"
+        label = "Drone signal" if drone else source.capitalize()
+        what = (f"{len(ids)} new plastic find{'s' if len(ids) != 1 else ''}"
+                + (f": {ids[0]}" if len(ids) == 1 else "")) if drone else "from the app"
+        now = time.time()
+        if not force and not self.settings.get("alert_on_signal", True):
+            return False, f"{label} ({what}) — alert NOT triggered: Visual alert is OFF"
+        run_s = float(self.settings.get("alert_duration_s", 8))
+        with self.lock:
+            was = self.on
+            self.on = True
+            self.run_s = run_s
+            self.until = now + run_s
+            self.started_at = self.started_at if was else now
+        self._wake.set()
+        # Trigger ESP32 over Wi-Fi
+        _trigger_esp32(f"alert?duration={int(run_s)}")
+        link = self._get_link()
+        self._set_relay(link, 1)
+        if was:
+            msg = f"{label} ({what}) — visual alert stays active, {run_s:g} s again"
+        else:
+            msg = f"{label} ({what}) — VISUAL ALERT ACTIVE (LED strip & buzzer pulsing rhythm for {run_s:g} s)"
+        self._event(msg)
+        return True, msg
+
+    def stop(self, why="stopped"):
+        with self.lock:
+            was = self.on
+            self.on = False
+            self.until = 0.0
+            self.started_at = None
+        # Stop ESP32 over Wi-Fi
+        _trigger_esp32("stop")
+        link = self._get_link()
+        self._set_relay(link, 0)
+        time.sleep(0.04)
+        self._set_relay(link, 0)
+        if was:
+            self._event(f"VISUAL ALERT OFF ({why}) — LED strip & buzzer silenced")
+        return was
+
+    def view(self):
+        now = time.time()
+        st = self.settings
+        with self.lock:
+            on, until, run_s = self.on, self.until, self.run_s
+            state = self.relay_state
+        return {
+            "enabled": bool(st.get("alert_on_signal", True)),
+            "on": on,
+            "duration_s": float(st.get("alert_duration_s", 8)),
+            "left_s": round(max(0.0, until - now), 1) if on else None,
+            "relay_pin": 50,
+            "relay_state": state,
+        }
+
+
+ALERT = AlertBlinker()
+
+# ---------------------------------------------------------------- the boat's own camera -> motor -> scoop
+# The app watches the boat's camera, tracks what it sees and sends ONE verified
+# item (src/lib/boatTarget.js: right class, sure enough, seen in several passes
+# running, with its distance ahead in metres). This is what acts on it:
+#
+#   plastic verified ──▶ motor on (camera_motor_pct)
+#          │                 the boat moves towards it, distance updated 6x/s
+#          │
+#          ├─ reaches camera_scoop_m, in front of the boat ──▶ motor OFF, scoop
+#          │                                                   (every check in
+#          │                                                    camera_checks)
+#          └─ out of sight longer than camera_lock_lost_s ───▶ motor OFF
+#
+# Nothing here starts the motor on a raw detection box. The app's lock has
+# already applied class, confidence and persistence; this applies them AGAIN
+# (never trust one side alone), plus the boat-only conditions the app cannot
+# see: armed, in MANUAL, slow enough, scoop free.
+CAMERA_TICK_S = 0.2
+
+
+class CameraCollect:
+    """Verified plastic from the boat's camera: go to it, scoop it, move on."""
+
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.state = "idle"          # idle | approach | collecting | cooldown
+        self.target = None           # the app's verified item (its last report)
+        self.t_seen = 0.0            # when it was last reported
+        self.t_obs = 0.0             # when ANY observation last arrived
+        self.cooldown_until = 0.0
+        self.motor_mine = False      # this is running the motor (not the drone path)
+        self.collected = 0
+        self.refused = None          # why the last scoop did not happen
+        self.last_reason = None
+        self._cycle_gen = None
+        self._started = False
+
+    # ------------------------------------------------------------ thread
+    def start(self):
+        if self._started:
+            return
+        self._started = True
+        threading.Thread(target=self._run, name="camera-collect", daemon=True).start()
+
+    def _run(self):
+        while True:
+            time.sleep(CAMERA_TICK_S)
+            try:
+                self._tick()
+            except Exception:                                        # noqa: BLE001
+                log.exception("camera collect")
+
+    def _tick(self):
+        """Safety net, 5x a second: nothing may keep the motor on by itself.
+
+        The app stops sending (its tab closed, the laptop slept, the link
+        dropped), or the plastic goes out of sight — either way the motor stops
+        here, without waiting for the run timer."""
+        now = time.time()
+        with self.lock:
+            state, t_seen, t_obs, mine = self.state, self.t_seen, self.t_obs, self.motor_mine
+            lost_s = self._lost_s()
+            stale_s = float(OPS_SETTINGS["camera_stale_s"])
+        if state == "cooldown" and now >= self.cooldown_until:
+            with self.lock:
+                if self.state == "cooldown":
+                    self.state = "idle"
+        if state == "collecting":
+            self._watch_cycle()
+            return
+        if state not in ("approach",):
+            return
+        if now - t_obs > stale_s:
+            self._lose(f"the app stopped sending what the camera sees ({now - t_obs:.1f} s)")
+        elif now - t_seen > lost_s:
+            self._lose(f"the plastic went out of sight for {now - t_seen:.1f} s")
+        elif mine:
+            # Keep the run alive while the boat is still going for it, without
+            # filling the event log: the motor's own timer is the backstop.
+            self._push(quiet=True)
+
+    @staticmethod
+    def _lost_s():
+        cfg = getattr(_main(), "cfg", None) or {}
+        try:
+            return float(cfg.get("camera_lock_lost_s", 1.2))
+        except (TypeError, ValueError):
+            return 1.2
+
+    # ------------------------------------------------------------ what the app saw
+    def observe(self, payload):
+        """One observation from the app. `plastic` is its verified item, or None."""
+        now = time.time()
+        with self.lock:
+            self.t_obs = now
+        item = payload.get("plastic") if isinstance(payload, dict) else None
+        valid, why = self._valid(item)
+        if not valid:
+            with self.lock:
+                self.last_reason = why
+                state, t_seen = self.state, self.t_seen
+            if state == "approach" and now - t_seen > self._lost_s():
+                self._lose(why or "the plastic went out of sight")
+            return
+        with self.lock:
+            if self.state in ("collecting", "cooldown"):
+                return                                   # busy with the last one
+            same = self.target and self.target.get("id") == item.get("id")
+            self.target, self.t_seen, self.last_reason = item, now, None
+            if not same and self.state == "approach":
+                self.event_new(item)
+            elif self.state == "idle":
+                self.state = "approach"
+                self.event_new(item)
+        if float(item.get("distance_m") or 1e9) <= float(OPS_SETTINGS["camera_scoop_m"]) and item.get("centred"):
+            self._collect(item)
+        else:
+            self._push()
+
+    def event_new(self, item):
+        d = item.get("distance_m")
+        OPS.event(f"Boat camera: plastic verified ({item.get('label') or 'plastic'}, "
+                  f"{float(item.get('score') or 0) * 100:.0f}%, seen {item.get('hits')}x)"
+                  + (f" — {d:.2f} m ahead" if d is not None else ""))
+        if OPS_SETTINGS.get("camera_alert"):
+            try:
+                ALERT.signal([str(item.get("id"))], source="boat camera")
+            except Exception:                                        # noqa: BLE001
+                log.exception("camera alert")
+
+    def _valid(self, item):
+        """The app's item, checked again here. (ok, why not)."""
+        if not isinstance(item, dict):
+            return False, "no plastic in view"
+        if not item.get("confirmed"):
+            return False, "not verified yet"
+        cfg = getattr(_main(), "cfg", None) or {}
+        try:
+            conf = float(cfg.get("camera_plastic_conf", 0.45))
+            hits = int(cfg.get("camera_plastic_hits", 2))
+            max_m = float(cfg.get("camera_target_max_m", 15.0))
+        except (TypeError, ValueError):
+            conf, hits, max_m = 0.45, 2, 15.0
+        if float(item.get("score") or 0) < conf:
+            return False, f"only {float(item.get('score') or 0) * 100:.0f}% sure (needs {conf * 100:.0f}%)"
+        if int(item.get("hits") or 0) < hits and float(item.get("score") or 0) < 0.8:
+            return False, f"seen {item.get('hits')}x (needs {hits})"
+        d = item.get("distance_m")
+        if d is None or not (0 < float(d) <= max_m):
+            return False, f"no usable distance ({d})"
+        return True, None
+
+    # ------------------------------------------------------------ motor
+    def _push(self, quiet=False):
+        if not OPS_SETTINGS.get("camera_motor", True):
+            with self.lock:
+                self.last_reason = "Camera motor is OFF"
+            return
+        with self.lock:
+            item = self.target
+        if not item:
+            return
+        # Already running with time to spare: leave it alone.
+        with MOTOR.lock:
+            on, until, run_s = MOTOR.on, MOTOR.until, MOTOR.run_s or 10.0
+        if on and until - time.time() > max(1.0, run_s / 3.0):
+            with self.lock:
+                self.motor_mine = True
+            return
+        started, msg = MOTOR.signal([str(item.get("id"))], source="boat camera", gate="camera_motor",
+                                    pct=float(OPS_SETTINGS["camera_motor_pct"]), quiet=quiet)
+        with self.lock:
+            self.motor_mine = bool(started)
+            if not started:
+                self.last_reason = msg
+
+    def _stop_motor(self, why):
+        with self.lock:
+            mine = self.motor_mine
+            self.motor_mine = False
+        if mine:
+            MOTOR.stop(why)
+
+    def _lose(self, why):
+        with self.lock:
+            if self.state != "approach":
+                return
+            self.state = "idle"
+            self.target = None
+            self.last_reason = why
+        self._stop_motor(why)
+        OPS.event(f"Boat camera: plastic lost — {why}", "warn")
+
+    # ------------------------------------------------------------ scoop
+    def _collect(self, item):
+        M = _main()
+        vm = getattr(M, "vision", None) if M else None
+        if vm is None:
+            return
+        with self.lock:
+            self.state = "collecting"
+        # Stop pushing first: the boat coasts the last stretch into the item
+        # instead of driving over it while the scoop is still moving.
+        self._stop_motor("plastic reached the collection zone")
+        d = item.get("distance_m")
+        OPS.event(f"Boat camera: plastic in the collection zone"
+                  + (f" ({d:.2f} m)" if d is not None else "") + " — scooping")
+        with OPS.lock:
+            self._cycle_gen = OPS.gen + 1
+        OPS.request_collect(vm, f"camera-{item.get('id')}", None, source="camera", target=item,
+                            on_refused=self._refused)
+
+    def _refused(self):
+        with self.lock:
+            self.refused = time.time()
+        self._done(collected=False)
+
+    def _watch_cycle(self):
+        """The scoop cycle runs in its own thread; see when it has finished."""
+        with OPS.lock:
+            state = OPS.cycle.get("state")
+        if state in ("checking", "waiting", "to_extreme", "holding", "to_zero"):
+            return
+        self._done(collected=state == "done")
+
+    def _done(self, collected):
+        with self.lock:
+            if self.state != "collecting":
+                return
+            self.target = None
+            self.state = "cooldown"
+            self.cooldown_until = time.time() + float(OPS_SETTINGS["camera_cooldown_s"])
+            if collected:
+                self.collected += 1
+        OPS.event("Boat camera: collected — ready for the next plastic" if collected
+                  else "Boat camera: the scoop did not run — ready for the next plastic",
+                  "info" if collected else "warn")
+
+    # ------------------------------------------------------------ operator / the app's view
+    def abort(self, why="operator"):
+        with self.lock:
+            busy = self.state in ("approach", "collecting")
+            self.state = "idle"
+            self.target = None
+            self.cooldown_until = 0.0
+        self._stop_motor(why)
+        return busy
+
+    def view(self):
+        now = time.time()
+        with self.lock:
+            state, item, t_seen, t_obs = self.state, self.target, self.t_seen, self.t_obs
+            reason, collected = self.last_reason, self.collected
+            cool = max(0.0, self.cooldown_until - now)
+        st = OPS_SETTINGS
+        return {
+            "enabled": bool(st.get("camera_motor", True)),
+            "scoop_enabled": bool(st.get("camera_scoop", True)),
+            "state": state,
+            "target": item,
+            "distance_m": (item or {}).get("distance_m"),
+            "seen_ago_s": round(now - t_seen, 2) if t_seen else None,
+            "app_ago_s": round(now - t_obs, 2) if t_obs else None,
+            "scoop_m": float(st["camera_scoop_m"]),
+            "motor_pct": float(st["camera_motor_pct"]),
+            "cooldown_s": round(cool, 1) if cool else None,
+            "collected": collected,
+            "why": reason,
+        }
+
+
+CAMERA = CameraCollect()
 
 # Patched in when the boat program starts (Collector.start runs in its lifespan),
 # so vision.py is loaded by main.py itself first.
@@ -777,6 +1592,9 @@ def _col_start_ops(self):
 
     threading.Thread(target=_rc_rate_loop, name="rc-rate", daemon=True).start()
     OPS.start()
+    MOTOR.start()
+    ALERT.start()
+    CAMERA.start()
 
 
 collector.Collector.start = _col_start_ops
@@ -837,6 +1655,79 @@ def _lc_tick_skip(self):
 live_collect.LiveCollect.start = _lc_start_skip
 live_collect.LiveCollect._tick = _lc_tick_skip
 
+# ---------------------------------------------------------------- drone signal -> motor
+# A NEW drone find arriving (POST /api/live/targets -> "added") is the signal
+# that starts the motor push. The same plastic sent again (updated / merged)
+# does not restart it. Every operator command that pauses / stops live collect
+# (STOP = Hold, brake, emergency stop, arm / disarm, mode from the app, Pause,
+# Stop) also hands the throttle straight back to the transmitter.
+_lc_add, _lc_operator = live_collect.LiveCollect.add_targets, live_collect.LiveCollect.operator
+_lc_pause, _lc_stop = live_collect.LiveCollect.pause, live_collect.LiveCollect.stop
+
+
+def _lc_add_signal(self, items):
+    res = _lc_add(self, items)
+    if res.get("added"):
+        try:
+            # Not forced: Auto motor OFF means OFF, and a drone find never arms
+            # the boat or changes its mode — it only runs a motor the operator
+            # has already armed in MANUAL.
+            MOTOR.signal(res["added"], source="drone")
+        except Exception:                                            # noqa: BLE001 - never break the intake
+            log.exception("motor signal")
+        try:
+            ALERT.signal(res["added"], source="drone")
+        except Exception:                                            # noqa: BLE001
+            log.exception("alert signal")
+    return res
+
+
+# ---------------------------------------------------------------- what the boat's camera sees
+# Every observation from the app goes to CameraCollect, which acts only on the
+# ONE item the app has verified as plastic (payload["plastic"]). The raw boxes
+# are what the operator sees on screen and what the drone-target homing uses;
+# they never move anything by themselves.
+_orig_vision_observe = vision.VisionManager.observe
+
+
+def _vision_observe_with_triggers(self, payload):
+    res = _orig_vision_observe(self, payload)
+    try:
+        CAMERA.observe(payload if isinstance(payload, dict) else {})
+    except Exception:                                                # noqa: BLE001 - never break seeing
+        log.exception("camera collect observe")
+    return res
+
+
+vision.VisionManager.observe = _vision_observe_with_triggers
+
+
+def _lc_operator_motor(self, reason):
+    CAMERA.abort(f"operator: {reason}")
+    MOTOR.stop(f"operator: {reason}")
+    ALERT.stop(f"operator: {reason}")
+    return _lc_operator(self, reason)
+
+
+def _lc_pause_motor(self, reason="paused from the app", hold=True):
+    CAMERA.abort(reason)
+    MOTOR.stop(reason)
+    ALERT.stop(reason)
+    return _lc_pause(self, reason, hold)
+
+
+def _lc_stop_motor(self, rtl=False):
+    CAMERA.abort("live collect stopped")
+    MOTOR.stop("live collect stopped")
+    ALERT.stop("live collect stopped")
+    return _lc_stop(self, rtl)
+
+
+live_collect.LiveCollect.add_targets = _lc_add_signal
+live_collect.LiveCollect.operator = _lc_operator_motor
+live_collect.LiveCollect.pause = _lc_pause_motor
+live_collect.LiveCollect.stop = _lc_stop_motor
+
 # ---------------------------------------------------------------- /api/ops/... for the app
 import fastapi  # noqa: E402
 from fastapi import APIRouter, Body  # noqa: E402
@@ -855,7 +1746,41 @@ def ops_settings(body: dict = Body(...)):
     if err:
         return {"success": False, "message": err, "settings": dict(new)}
     OPS.event("Settings changed: " + ", ".join(f"{k}={v}" for k, v in body.items()))
+    if "motor_on_signal" in body and not new["motor_on_signal"]:
+        MOTOR.stop("Auto motor switched OFF")
+    if "alert_on_signal" in body and not new["alert_on_signal"]:
+        ALERT.stop("Visual alert switched OFF")
+    if "camera_motor" in body and not new["camera_motor"]:
+        CAMERA.abort("Camera motor switched OFF")
     return {"success": True, "message": "Saved.", "settings": dict(new)}
+
+
+@ops_router.post("/api/ops/alert")
+def ops_alert(body: dict = Body(...)):
+    """Visual alert (LED strip + buzzer): test | stop."""
+    action = str(body.get("action", ""))
+    if action == "stop":
+        was = ALERT.stop("operator (app)")
+        return {"success": True, "message": "Alert stopped (LED strip & buzzer OFF)." if was
+                else "The alert was not active."}
+    if action == "test":
+        started, msg = ALERT.signal(["test"], source="operator test", force=True)
+        return {"success": started, "message": msg}
+    return {"success": False, "message": "action must be test or stop"}
+
+
+@ops_router.post("/api/ops/motor")
+def ops_motor(body: dict = Body(...)):
+    """Motor on drone signal: test (acts exactly like a new drone find) | stop."""
+    action = str(body.get("action", ""))
+    if action == "stop":
+        was = MOTOR.stop("operator (app)")
+        return {"success": True, "message": "Motor stopped — throttle back on the transmitter." if was
+                else "The motor was not running."}
+    if action == "test":
+        started, msg = MOTOR.signal(["test"], source="operator test", force=True)
+        return {"success": started, "message": msg}
+    return {"success": False, "message": "action must be test or stop"}
 
 
 @ops_router.post("/api/ops/scoop")
@@ -865,6 +1790,7 @@ def ops_scoop(body: dict = Body(...)):
     M = _main()
     col = M.collector
     if action == "abort":
+        CAMERA.abort("operator")
         was = OPS.abort("operator")
         return {"success": True, "message": "Scoop cycle aborted, scoop gliding back to 0." if was
                 else "No cycle running — scoop gliding back to 0."}

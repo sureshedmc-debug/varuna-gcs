@@ -97,8 +97,22 @@ class _Waiter:
 
 
 def usb_devices():
-    """Flight controllers plugged in over USB (ArduPilot boards show up as ttyACM)."""
+    """Flight controllers plugged in over USB (ArduPilot boards show up as ttyACM on Linux, COM on Windows)."""
     found = []
+    if os.name == "nt":
+        try:
+            import serial.tools.list_ports
+            for p in serial.tools.list_ports.comports():
+                desc = (p.description or "").lower()
+                if "ardupilot" in desc or "pixhawk" in desc or "px4" in desc:
+                    found.append(p.device)
+            if not found:
+                for p in serial.tools.list_ports.comports():
+                    if p.device.upper() != "COM1":
+                        found.append(p.device)
+        except Exception:
+            pass
+        return found
     for path in sorted(glob.glob("/dev/serial/by-id/*")):
         real = os.path.realpath(path)
         if "ttyACM" in real and real not in found:
@@ -210,29 +224,26 @@ class BoatLink:
 
     # ------------------------------------------------------------------ connection
     def _candidates(self):
-        """(device, baud) pairs to try, configured one first. Network links
-        (simulator, SITL) are used as they are."""
+        """(device, baud) pairs to try, configured one first."""
         dev, baud = self.configured
-        if not str(dev).startswith("/dev/"):
-            return [(dev, baud)]
-        return self._serial_candidates()
-
-    def _serial_candidates(self):
-        out = [self.configured]
-        out += [(d, USB_BAUD) for d in usb_devices()]
-        out += [(TELEM2_DEVICE, b) for b in TELEM2_BAUDS]
+        out = [(dev, baud)]
+        for d in usb_devices():
+            if d != dev:
+                out.append((d, USB_BAUD))
+        if str(dev).startswith("/dev/"):
+            out += [(TELEM2_DEVICE, b) for b in TELEM2_BAUDS]
         seen, unique = set(), []
-        for dev, baud in out:
-            key = self._key(dev, baud)
+        for d, b in out:
+            key = self._key(d, b)
             if key not in seen:
                 seen.add(key)
-                unique.append((dev, baud))
+                unique.append((d, b))
         return unique
 
     @staticmethod
     def _key(dev, baud):
         # A USB flight controller ignores the baud rate: one entry per port.
-        return dev if "ttyACM" in dev or "/by-id/" in dev else f"{dev} @ {baud}"
+        return dev if "ttyACM" in dev or "/by-id/" in dev or (isinstance(dev, str) and dev.upper().startswith("COM")) else f"{dev} @ {baud}"
 
     def _connect(self):
         cands = self._candidates()

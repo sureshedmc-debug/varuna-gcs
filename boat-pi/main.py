@@ -1242,13 +1242,13 @@ def camera_snapshot():
     return Response(content=jpeg, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
-def mjpeg_frames():
+async def mjpeg_frames():
     """Multipart MJPEG. Each part carries X-Frame-Time (when the frame was
     captured, Pi clock) and X-Frame-Seq: the app sends the time back with its
     detections so the Pi can match them to where the boat was."""
     seq, last_sent, last_frame = 0, 0.0, time.time()
     while True:
-        seq, jpeg, t = camera.wait_frame(seq, timeout=2.0)
+        seq, jpeg, t = await asyncio.to_thread(camera.wait_frame, seq, 2.0)
         if jpeg is None:
             if time.time() - last_frame > 15:
                 return                       # camera gone: end the stream, the app retries

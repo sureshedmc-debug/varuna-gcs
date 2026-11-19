@@ -161,10 +161,20 @@ def discover_phones(timeout=0.7, ask=(), sweep=False):
 
 
 def known_phones():
-    """The phones VARUNA Cam may run on (VARUNA_PHONE_IPS, from phone-link's
-    phone_ip.txt): whichever one has it running is used."""
+    """The phones VARUNA Cam may run on, best first: the ones you named
+    (VARUNA_PHONE_IPS, from phone-link's phone_ip.txt), then every NetBird peer
+    this computer can see. Over NetBird the phone needs no shared Wi-Fi with
+    the laptop at all - each is asked directly at its 100.x address."""
     raw = os.environ.get("VARUNA_PHONE_IPS", "")
-    return [ip for ip in raw.replace(",", " ").split() if ip]
+    out = [ip for ip in raw.replace(",", " ").split() if ip]
+    try:
+        import netbird
+        for ip in netbird.phone_ips():
+            if ip not in out:
+                out.append(ip)
+    except Exception:                      # noqa: BLE001 - no NetBird here: Wi-Fi as before
+        pass
+    return out
 
 
 def _local_networks():

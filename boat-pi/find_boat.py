@@ -3,9 +3,18 @@ Find the boat's link on the laptop's network, and (with --run) keep the boat
 program connected to it no matter what.
 
 The link is the phone on the boat running VARUNA Boat Link (boat-phone/): the
-Pixhawk's MAVLink on TCP port 5760 and the phone's camera on port 8080 (the
-laptop's hotspot, 192.168.137.x, is searched first). The old ESP32 bridge
-(boat-esp32/, TCP 5760, no camera) is found the same way.
+Pixhawk's MAVLink on TCP port 5760 and the phone's camera on port 8080. It is
+looked for in three places, in this order:
+
+  1. the address you gave (the command line, or VARUNA_BOAT_PHONE)
+  2. NetBird  — every peer this computer can see (netbird.py). The phone and
+                the laptop need no shared Wi-Fi at all: they can be on mobile
+                data, anywhere, as long as both are joined to your NetBird
+                network. This is the normal way now.
+  3. the local network — the laptop's hotspot (192.168.137.x) first, then any
+                other network it is on. Used when NetBird is off.
+
+The old ESP32 bridge (boat-esp32/, TCP 5760, no camera) is found the same way.
 
     py find_boat.py [port]              print "ip:port" of the ESP32 (exit 1 if none)
     py find_boat.py --run [ip:port]     find it, run the boat program, and watch it:
@@ -28,6 +37,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 import psutil
 
+import netbird
+
 HOTSPOT_PREFIX = "192.168.137."
 BACKEND_PORT = 8001
 CAMERA_PORT = 8080        # VARUNA Boat Link's MJPEG camera
@@ -46,7 +57,7 @@ def local_networks():
             ip = ipaddress.ip_address(a.address)
             if not ip.is_private or ip.is_loopback or a.address.startswith("169.254."):
                 continue
-            if a.address.startswith("100."):        # NetBird / CGNAT: not a hotspot
+            if a.address.startswith("100."):        # NetBird: asked peer by peer, never swept
                 continue
             nets.append((a.address, ipaddress.ip_network(f"{a.address}/24", strict=False)))
     nets.sort(key=lambda n: not n[0].startswith(HOTSPOT_PREFIX))
@@ -72,11 +83,39 @@ def is_boat_phone(ip):
         return False
 
 
+def fixed_phone():
+    """The boat phone's address if you gave one (VARUNA_BOAT_PHONE, or the file
+    boat_phone_ip.txt next to this script). An address here is tried first and
+    works over NetBird, Wi-Fi or a hotspot alike."""
+    out = []
+    raw = os.environ.get("VARUNA_BOAT_PHONE", "")
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "boat_phone_ip.txt"),
+                  encoding="ascii") as f:
+            raw += " " + f.read()
+    except OSError:
+        pass
+    for ip in raw.replace(",", " ").split():
+        ip = ip.split(":")[0].strip()
+        if ip and ip not in out:
+            out.append(ip)
+    return out
+
+
 def find(port=5760, prefer=None):
-    """The boat's link: `prefer` (ip) if it still answers, else a scan. A phone
+    """The boat's link: `prefer` (ip) if it still answers, then the address you
+    gave, then NetBird's peers, then a scan of the local networks. A phone
     running VARUNA Boat Link wins over anything else with `port` open."""
     if prefer and answers(prefer, port, 1.5):
         return f"{prefer}:{port}"
+    # 1 + 2: a given address and NetBird peers — asked one by one, no sweep.
+    direct = [ip for ip in fixed_phone() + netbird.phone_ips() if ip != prefer]
+    if direct:
+        with ThreadPoolExecutor(max_workers=16) as pool:
+            hits = [ip for ip, ok in zip(direct, pool.map(lambda h: answers(h, port, 2.0), direct)) if ok]
+        if hits:
+            phones = [ip for ip in hits if is_boat_phone(ip)]
+            return f"{(phones or hits)[0]}:{port}"
     for own, net in local_networks():
         hosts = [str(h) for h in net.hosts() if str(h) != own]
         with ThreadPoolExecutor(max_workers=64) as pool:
@@ -129,16 +168,43 @@ def stop(proc):
             proc.wait(timeout=5)
 
 
+def find_serial_pixhawk():
+    if os.name == "nt":
+        try:
+            import serial.tools.list_ports
+            for p in serial.tools.list_ports.comports():
+                desc = (p.description or "").lower()
+                if "ardupilot" in desc or "pixhawk" in desc or "px4" in desc:
+                    return p.device
+            for p in serial.tools.list_ports.comports():
+                if p.device.upper() != "COM1":
+                    return p.device
+        except Exception:
+            pass
+    return None
+
+
 def wait_for_esp(port, prefer=None):
     first = True
-    while True:
+    for _ in range(3):
         found = find(port, prefer)
         if found:
             return found
+        sp = find_serial_pixhawk()
+        if sp:
+            say(f"Found Pixhawk on serial port {sp}.")
+            return sp
         if first:
-            say("Boat not found yet - check: phone on the laptop's hotspot, VARUNA Boat Link open on it. Still looking...")
+            say("Boat not found yet - check: VARUNA Boat Link open on the boat's phone, and the phone "
+                "on NetBird (or on this laptop's hotspot). Still looking...")
+            say("  " + netbird.describe())
             first = False
-        time.sleep(3)
+        time.sleep(2)
+    # Check serial port directly
+    sp = find_serial_pixhawk()
+    if sp:
+        return sp
+    return wait_for_esp(port, prefer)
 
 
 def run(port=5760, fixed=None):
@@ -153,21 +219,25 @@ def run(port=5760, fixed=None):
     try:
         while True:
             if not fixed:
-                say("Looking for the boat (phone with VARUNA Boat Link) ...")
+                say("Looking for the boat (phone with VARUNA Boat Link over NetBird or Wi-Fi, or a USB Pixhawk) ...")
                 addr = wait_for_esp(port, prefer=addr.split(":")[0] if addr else None)
-            ip = addr.rsplit(":", 1)[0]
+            is_serial = addr.upper().startswith("COM") or addr.startswith("/dev/")
+            ip = addr.rsplit(":", 1)[0] if not is_serial else "127.0.0.1"
             # No turbidity sensor (it was on the Pi's pins). The phone's camera, when
             # there is one, is the boat's camera; wildlife watching needs it.
             env = dict(os.environ, BOAT_TURBIDITY_ENABLED="0")
-            if answers(ip, CAMERA_PORT, 1.5):
+            if not is_serial and answers(ip, CAMERA_PORT, 1.5):
                 env.update(BOAT_CAMERA_SOURCE="usb", BOAT_CAMERA_URL=f"http://{ip}:{CAMERA_PORT}/video",
                            BOAT_PHONE_URL=f"http://{ip}:{CAMERA_PORT}")    # phone GPS / USB status
                 say(f"Boat link at {addr} (phone, camera on) - starting the boat program.")
+            elif is_serial:
+                say(f"Boat link at {addr} (USB serial) - starting the boat program.")
             else:
                 env.update(BOAT_CAMERA_SOURCE="off", BOAT_WILDLIFE_ENABLED="0")
                 say(f"Boat link at {addr} (no camera) - starting the boat program.")
+            conn_arg = addr if is_serial else f"tcp:{addr}"
             proc = subprocess.Popen(
-                [sys.executable, "boat_extras.py", "--connection", f"tcp:{addr}", "--port", str(BACKEND_PORT)],
+                [sys.executable, "boat_extras.py", "--connection", conn_arg, "--port", str(BACKEND_PORT)],
                 cwd=here, env=env)
             started = time.time()
             last_answer = last_fc = time.time()

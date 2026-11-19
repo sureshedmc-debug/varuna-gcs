@@ -17,6 +17,23 @@ sensor](#boat-camera-and-water-sensor)): last-metre homing onto each item,
 wildlife-safe mode, a catch counter on the intake ramp, and water turbidity
 along the route.
 
+
+## The boat phone over NetBird
+
+The boat's phone (VARUNA Boat Link) and this laptop no longer need to share a
+Wi-Fi or a hotspot. Put both on your NetBird network — install the NetBird app
+on the phone, sign in, wait for Connected — and `start_boat.bat` finds the phone
+by asking NetBird which peers it knows, then follows it if its address changes.
+Wi-Fi and the laptop hotspot still work exactly as before; NetBird is tried
+first, the local network second.
+
+    py netbird.py                      what NetBird can see from here
+    set VARUNA_BOAT_PHONE=100.x.x.x    pin one address (or boat_phone_ip.txt)
+
+The phone's camera (port 8080) and the Pixhawk's MAVLink (port 5760) both travel
+over the same NetBird link, so the live view, the AI and the scoop work from
+anywhere with mobile data.
+
 ## Easiest way: the VARUNA Boat Pi Tool
 
 Double-click **VARUNA Boat Pi Tool.exe**. Build it with `boat-installer\build.bat`; it lands in `boat-installer\dist\`. Enter the boat Pi's IP, username and password, then choose **1) Full setup**. It does sections 4–5 below automatically over SSH:

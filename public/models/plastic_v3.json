@@ -1,0 +1,10 @@
+{
+  "model": "Ultralytics YOLO26n, exported 2026-11-19",
+  "status": "testing",
+  "imgsz": 640,
+  "names": ["plastic bag", "OTHERS", "plastic bottle", "plastic container"],
+  "target_class_ids": [0, 1, 2, 3],
+  "recommended_conf": 0.25,
+  "output_layout": "[1, 8, 8400]: cx,cy,w,h then one score per class; no NMS inside (end2end off)",
+  "note": "Class order must match training (names in the ONNX metadata). recommended_conf is the Ultralytics default."
+}
