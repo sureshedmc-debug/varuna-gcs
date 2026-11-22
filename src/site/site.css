@@ -452,6 +452,10 @@ textarea.vs-input { resize: vertical; min-height: 130px; line-height: 1.55; }
   .vs-brand img { width: 30px; height: 30px; }
   .vs-login { padding: 8px 12px; font-size: 13px; }
   .vs-hero-body { padding-top: 110px; padding-bottom: 32px; }
+  /* The opening text is taller than a phone screen. Stretching the 16:9 clip to
+     that whole height showed only a blurry sliver, so keep it one screen tall at
+     the top and let the page's dark background carry on below it. */
+  .vs-xhero .vs-hero-media { bottom: auto; height: 100vh; height: 100svh; }
   .vs-choice { padding: 16px; gap: 14px; border-radius: 18px; }
   .vs-choice-icon { width: 46px; height: 46px; border-radius: 13px; }
   .vs-choice-go { display: none; }

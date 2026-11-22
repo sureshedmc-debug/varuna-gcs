@@ -48,8 +48,10 @@ export function Reveal({ as = 'div', delay = 0, y = 34, children, ...rest }) {
   )
 }
 
-/** A muted looping clip that only downloads and plays while it is on screen. */
-export function LoopVideo({ name, className, rate = 1, eager = false }) {
+/** A muted looping clip that only downloads and plays while it is on screen.
+ * `phone`: a lighter copy for phone screens (picked once, when the page opens). */
+export function LoopVideo({ name: full, phone, className, rate = 1, eager = false }) {
+  const [name] = useState(() => (phone && typeof window !== 'undefined' && window.matchMedia?.('(max-width: 640px)').matches ? phone : full))
   const ref = useRef(null)
   useEffect(() => {
     const v = ref.current

@@ -254,6 +254,20 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource: sourceProp
   useEffect(() => { setConf(confThr) }, [confThr])
   confRef.current = conf
 
+  // Settings panel: a mouse opens it by hovering the gear. A touch screen has no
+  // hover — a tap there left the panel "stuck" open and it kept reappearing —
+  // so on touch the gear is a plain open / close button, and a tap anywhere
+  // else closes it.
+  const [gearOpen, setGearOpen] = useState(false)
+  const gearRef = useRef(null)
+  useEffect(() => {
+    if (!gearOpen) return
+    const off = (e) => { if (!gearRef.current?.contains(e.target)) setGearOpen(false) }
+    document.addEventListener('pointerdown', off)
+    return () => document.removeEventListener('pointerdown', off)
+  }, [gearOpen])
+  const canHover = () => typeof window !== 'undefined' && !!window.matchMedia?.('(hover: hover) and (pointer: fine)').matches
+
   // Position for geotagging trash, matched to where the camera actually is:
   //  - Drone mode: the drone GPS streamed over the WebSocket (telemetry), or
   //    the laptop's GPS when the drone has no fix.
@@ -1125,12 +1139,14 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource: sourceProp
         )}
       </div>
 
-      {/* settings gear — bottom right, hover reveals panel */}
-      <div className="group absolute bottom-5 right-4 z-30">
+      {/* settings gear — bottom right; a mouse hover or (touch) a tap reveals the panel */}
+      <div ref={gearRef} className="group absolute bottom-5 right-4 z-30">
         {/* slide-up settings panel */}
-        <div className="pointer-events-none mb-3 flex flex-col items-end gap-2
-          opacity-0 translate-y-3 scale-95
-          group-hover:pointer-events-auto group-hover:opacity-100 group-hover:translate-y-0 group-hover:scale-100"
+        <div className={`mb-3 flex flex-col items-end gap-2 ${gearOpen
+          ?'pointer-events-auto opacity-100 translate-y-0 scale-100'
+          :`pointer-events-none opacity-0 translate-y-3 scale-95
+          [@media(hover:hover)_and_(pointer:fine)]:group-hover:pointer-events-auto [@media(hover:hover)_and_(pointer:fine)]:group-hover:opacity-100
+          [@media(hover:hover)_and_(pointer:fine)]:group-hover:translate-y-0 [@media(hover:hover)_and_(pointer:fine)]:group-hover:scale-100`}`}
           style={{transition:'opacity 0.25s ease,transform 0.25s cubic-bezier(.34,1.56,.64,1)',transformOrigin:'bottom right'}}>
 
           {/* Detection model (the test one is marked) */}
@@ -1229,8 +1245,10 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource: sourceProp
         </div>
 
         {/* Gear icon */}
-        <button className="flex h-12 w-12 items-center justify-center rounded-full
-          transition-all duration-300 group-hover:rotate-90 group-hover:scale-110"
+        <button type="button" aria-label="Detection settings" aria-expanded={gearOpen}
+          onClick={()=>{ if(!canHover()) setGearOpen(o=>!o) }}
+          className={`flex h-12 w-12 items-center justify-center rounded-full
+          transition-all duration-300 ${gearOpen?'rotate-90 scale-110':'[@media(hover:hover)_and_(pointer:fine)]:group-hover:rotate-90 [@media(hover:hover)_and_(pointer:fine)]:group-hover:scale-110'}`}
           style={{background:'linear-gradient(135deg,rgba(59,65,255,0.6),rgba(107,184,255,0.3))',border:'1px solid rgba(107,184,255,0.35)',boxShadow:'0 0 20px rgba(59,158,255,0.3),0 4px 12px rgba(0,0,0,0.5)'}}>
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="12" cy="12" r="3"/>
