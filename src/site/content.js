@@ -5,6 +5,7 @@ export const M = (f) => `/site/${f}`
 
 export const NAV = [
   ['Overview', '/#story'],
+  ['Achievements', '/#achievements'],
   ['How it works', '/#how'],
   ['Technology', '/#tech'],
   ['Gallery', '/#gallery'],
@@ -85,6 +86,40 @@ export const GALLERY = [
   { type: 'img', src: 'p-boat', title: 'Built by hand', sub: 'Electronics inside the EPS hull' },
   { type: 'img', src: 'p-drone-sky', title: 'In the air', sub: 'Hovering above the trees' },
   { type: 'video', src: 'render-night', poster: 'render-night', title: 'Night patrol', sub: 'The app’s 3D river scene' },
+  { type: 'video', src: 'boat-scoop', poster: 'boat-scoop', title: 'Plastic, collected', sub: 'The tricolour boat scoops a floating bag' },
+  { type: 'img', src: 'award-exhibit', title: 'At the exhibition', sub: 'The VARUNA AI stand, DoE Science Centre No. 4' },
+  { type: 'video', src: 'boat-night', poster: 'boat-night', title: 'After dark', sub: 'The boat with its lights on' },
+  { type: 'img', src: 'award-trophy', title: 'Position I', sub: 'The 1st-place trophy' },
+]
+
+// The competition win. Wording follows the certificate and the trophy.
+export const AWARD = {
+  headline: 'First place at DoE Science Centre No. 4',
+  event: 'Centre Level Science & Mathematics Exhibition 2026-27',
+  org: 'Directorate of Education, Govt. of NCT of Delhi',
+  centre: 'Science Centre No. 4, Gazipur, Delhi',
+  category: 'Artificial Intelligence',
+  venue: 'CM Shri School, Surajmal Vihar, Delhi',
+  next: 'Selected for Skill Expo',
+}
+
+// Photos and a clip from the competition (opened big in the viewer).
+export const AWARD_MEDIA = [
+  { type: 'img', src: 'award-stage-photo', title: '1st place, on stage', sub: 'Receiving the trophy and certificates at Science Centre No. 4' },
+  { type: 'img', src: 'award-trophy', title: 'The trophy', sub: 'Position I · Centre Level Science & Mathematics Exhibition 2026-27' },
+  { type: 'img', src: 'award-certificate', title: 'The certificate', sub: 'Directorate of Education, Govt. of NCT of Delhi · Science Branch' },
+  { type: 'img', src: 'award-exhibit', title: 'The VARUNA AI stand', sub: 'Drone, boat, app and trophies at the exhibition' },
+  { type: 'video', src: 'award-ceremony', poster: 'award-ceremony', title: 'The ceremony', sub: 'Prize-giving on stage at Science Centre No. 4' },
+]
+
+// New footage of the tricolour collector boat.
+export const BOAT_REELS = [
+  { type: 'video', src: 'boat-scoop', poster: 'boat-scoop', tag: 'Collect', title: 'Scooping the plastic', sub: 'The front net lifts a floating bag out of the water' },
+  { type: 'video', src: 'boat-drone', poster: 'boat-drone', tag: 'Team-up', title: 'Drone above, boat below', sub: 'Varuna flies over while the boat waits on the water' },
+  { type: 'video', src: 'boat-night', poster: 'boat-night', tag: 'Night run', title: 'Lights on, after dark', sub: 'The tricolour hull with its LED strip glowing' },
+]
+export const MATCH_CLIP = [
+  { type: 'video', src: 'app-match', poster: 'app-match', title: 'Waste matched', sub: 'The boat’s camera confirms it is the same plastic the drone found' },
 ]
 
 export const TEAM = {
@@ -105,6 +140,10 @@ export const FAQ = [
     a: 'VARUNA AI was created by Aditya Gautam and Samar Garg, students of Bhai Parmanand Vidya Mandir, for the theme Environment & Sustainability. They designed, wired, coded and tested the drone, the boat and the VARUNA GCS ground-control app themselves.',
   },
   {
+    q: 'Has VARUNA AI won any awards?',
+    a: 'Yes. VARUNA AI, by Aditya Gautam and Samar Garg, won first place (Position I) in Artificial Intelligence at the Centre Level Science & Mathematics Exhibition 2026-27 of the Directorate of Education, Govt. of NCT of Delhi, at Science Centre No. 4, Gazipur, held at CM Shri School, Surajmal Vihar. It was then selected for Skill Expo.',
+  },
+  {
     q: 'What is VARUNA AI?',
     a: 'VARUNA AI is a river-cleaning system made of two machines: Varuna, an AI drone that flies over a river and finds floating plastic, and Nirmal Dhara Jalyan, a solar-powered autonomous boat that goes to that plastic and collects it.',
   },
@@ -118,6 +157,6 @@ export const FAQ = [
   },
   {
     q: 'Can I try VARUNA AI?',
-    a: 'Yes. The Try the AI page at varuna-gcs.vercel.app/try runs the same plastic detection on your own webcam, inside your browser. The VARUNA GCS app is free to download for Android and Windows.',
+    a: 'Yes. The Try the AI page at varuna-gcs.vercel.app/try runs the same plastic detection on your own webcam, inside your browser. The VARUNA GCS app is free to download for Android and Windows once you sign in with a Google account.',
   },
 ]

@@ -5,11 +5,16 @@ import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { navigate } from './router'
 import { EASE, Icon, LoopVideo, Nav, Footer, Reveal, useActiveSection } from './parts'
-import { M, STEPS, MACHINES, STACK, COMPARE, GALLERY, TEAM, FAQ } from './content'
+import { M, STEPS, MACHINES, STACK, COMPARE, GALLERY, TEAM, FAQ, AWARD, AWARD_MEDIA, BOAT_REELS, MATCH_CLIP } from './content'
 import Feedback from './Feedback'
 import { openDownloads } from './downloads'
 
-const SECTIONS = ['story', 'how', 'tech', 'gallery', 'team', 'feedback']
+const SECTIONS = ['achievements', 'story', 'how', 'water', 'tech', 'gallery', 'team', 'feedback']
+
+const toSection = (id) => (e) => {
+  e.preventDefault()
+  document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' })
+}
 
 const rise = (i) => ({
   initial: { opacity: 0, y: 30 },
@@ -80,6 +85,33 @@ function Viewer({ items, index, onIndex, onClose }) {
   )
 }
 
+// A sprig of laurel leaves along a curve, either side of the 1st-place medal.
+function Laurel({ flip }) {
+  const P = [[46, 112], [12, 92], [6, 46], [30, 6]] // cubic Bézier, bottom to top
+  const at = (t) => {
+    const u = 1 - t
+    const w = [u * u * u, 3 * u * u * t, 3 * u * t * t, t * t * t]
+    const d = [-3 * u * u, 3 * u * u - 6 * u * t, 6 * u * t - 3 * t * t, 3 * t * t]
+    const sum = (k, i) => k.reduce((a, c, j) => a + c * P[j][i], 0)
+    return { x: sum(w, 0), y: sum(w, 1), a: (Math.atan2(sum(d, 1), sum(d, 0)) * 180) / Math.PI }
+  }
+  return (
+    <svg className={`vs-laurel${flip ? ' flip' : ''}`} viewBox="0 0 60 120" aria-hidden="true">
+      <path d="M46 112C12 92 6 46 30 6" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
+      {[0.12, 0.26, 0.4, 0.54, 0.68, 0.82].map((t) => {
+        const p = at(t)
+        return (
+          <g key={t}>
+            <ellipse cx={p.x} cy={p.y} rx="10" ry="4.2" fill="currentColor" transform={`rotate(${p.a - 40} ${p.x} ${p.y}) translate(-8 0)`} />
+            <ellipse cx={p.x} cy={p.y} rx="9" ry="3.8" fill="currentColor" opacity="0.75" transform={`rotate(${p.a + 40} ${p.x} ${p.y}) translate(-8 0)`} />
+          </g>
+        )
+      })}
+      <ellipse cx="31" cy="8" rx="4.5" ry="8" fill="currentColor" transform="rotate(25 31 8)" />
+    </svg>
+  )
+}
+
 const FILM = [{ type: 'video', src: 'film', poster: 'p-poster', title: 'VARUNA AI — the film', sub: 'The drone and the boat, start to finish', sound: true }]
 
 export default function Explore() {
@@ -95,6 +127,15 @@ export default function Explore() {
         <div className="vs-hero-media"><LoopVideo name="hero-1080" phone="hero-540" eager /></div>
         <div className="vs-aurora" />
         <div className="vs-hero-body">
+          <motion.a href="#achievements" className="vs-award-pill" onClick={toSection('achievements')}
+            initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2, duration: 0.9, ease: EASE }}>
+            <span className="cup"><Icon name="trophy" size={16} stroke={2} /></span>
+            <b>1st place</b>
+            <span className="where">DoE Science Centre No. 4</span>
+            <i aria-hidden="true" />
+            <span>Selected for Skill Expo</span>
+            <Icon name="arrow" size={14} className="go" />
+          </motion.a>
           <motion.span className="vs-eyebrow" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3, duration: 1 }}>
             <span className="dot" /> Explore Varuna · {TEAM.theme}
           </motion.span>
@@ -119,7 +160,7 @@ export default function Explore() {
 
           <motion.button type="button" className="vs-dlbtn" onClick={openDownloads} {...rise(3)}>
             <span className="ic"><Icon name="download" size={24} stroke={2.2} /></span>
-            <span className="t"><b>Download the VARUNA app</b><small>Android · Windows · install on any device</small></span>
+            <span className="t"><b>Download the VARUNA app</b><small>Android · Windows · sign in with Google to download</small></span>
             <span className="go">Free download <Icon name="arrow" size={16} /></span>
           </motion.button>
 
@@ -146,6 +187,60 @@ export default function Explore() {
           {[0, 1].map((k) => STACK.map((s) => <span key={`${k}-${s}`} aria-hidden={k === 1}>{s}</span>))}
         </div>
       </div>
+
+      {/* ── achievements ── */}
+      <section id="achievements" className="vs-sec vs-award-sec">
+        <div className="vs-award-glow" aria-hidden="true" />
+        <div className="vs-wrap">
+          <div className="vs-sec-head center">
+            <Reveal><span className="vs-kicker gold">Achievements</span></Reveal>
+            <Reveal delay={0.05}><h2 className="vs-h2">First place. <span className="vs-gold">Selected for Skill Expo.</span></h2></Reveal>
+            <Reveal delay={0.1}>
+              <p className="vs-lead">VARUNA AI won <b>Position I</b> in {AWARD.category} at the {AWARD.event} of the {AWARD.org}, at {AWARD.centre}, and goes on to Skill Expo.</p>
+            </Reveal>
+          </div>
+
+          <Reveal as="button" type="button" className="vs-award-hero" y={50} onClick={() => setView({ items: AWARD_MEDIA, index: 0 })}
+            aria-label="1st place, on stage: open the photo">
+            <img src={M('award-stage-photo.jpg')} alt="Aditya Gautam and Samar Garg on stage with their 1st-place trophies and certificates at DoE Science Centre No. 4" loading="lazy" />
+            <span className="vs-award-ribbon"><Icon name="trophy" size={15} stroke={2} /> 1st place · Position I</span>
+            <span className="vs-award-hero-cap"><b>On stage at Science Centre No. 4</b><span>Prize-giving · {AWARD.event}</span></span>
+            <span className="vs-tile-badge"><Icon name="expand" size={13} /></span>
+          </Reveal>
+
+          <div className="vs-award-grid">
+            <Reveal className="vs-award-card">
+              <div className="vs-medal">
+                <Laurel />
+                <b>1<sup>st</sup></b>
+                <Laurel flip />
+              </div>
+              <span className="vs-award-pos">Position I · Winner</span>
+              <h3>{AWARD.headline}</h3>
+              <dl className="vs-award-facts">
+                <div><dt>Event</dt><dd>{AWARD.event}</dd></div>
+                <div><dt>Organised by</dt><dd>{AWARD.org}</dd></div>
+                <div><dt>Category</dt><dd>{AWARD.category}</dd></div>
+                <div><dt>Venue</dt><dd>{AWARD.venue}</dd></div>
+              </dl>
+              <div className="vs-award-next">
+                <span className="ic"><Icon name="star" size={18} /></span>
+                <div><b>{AWARD.next}</b><span>The certificate also marks the project as selected for the state level.</span></div>
+              </div>
+            </Reveal>
+            <div className="vs-award-tiles">
+              {AWARD_MEDIA.slice(1).map((g, i) => (
+                <Reveal key={g.src} delay={0.06 * i} as="button" type="button" className="vs-tile vs-award-tile"
+                  onClick={() => setView({ items: AWARD_MEDIA, index: i + 1 })} aria-label={`${g.title}: ${g.sub}`}>
+                  {g.type === 'img' ? <img src={M(`${g.src}.jpg`)} alt="" loading="lazy" /> : <LoopVideo name={g.src} />}
+                  <span className="vs-tile-badge"><Icon name={g.type === 'img' ? 'expand' : 'play'} size={13} /></span>
+                  <span className="vs-tile-cap"><b>{g.title}</b><span>{g.sub}</span></span>
+                </Reveal>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
 
       {/* ── the problem ── */}
       <section id="story" className="vs-sec">
@@ -195,6 +290,45 @@ export default function Explore() {
                 </Reveal>
               </div>
             ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── the boat on the water ── */}
+      <section id="water" className="vs-sec vs-water">
+        <div className="vs-wrap">
+          <Head center kicker="On the water" title={<>The boat, <span className="vs-grad">in action.</span></>}
+            lead="New footage of Nirmal Dhara Jalyan, the tricolour collector boat: scooping up plastic, working under the drone, and running after dark." />
+          <div className="vs-reels">
+            {BOAT_REELS.map((r, i) => (
+              <Reveal key={r.src} delay={0.08 * i} y={60} as="button" type="button" className="vs-reel"
+                onClick={() => setView({ items: BOAT_REELS, index: i })} aria-label={`${r.title}: ${r.sub}`}>
+                <span className="vs-reel-in"><LoopVideo name={r.src} /></span>
+                <span className="vs-reel-tag">{r.tag}</span>
+                <span className="vs-reel-cap"><b>{r.title}</b><span>{r.sub}</span></span>
+              </Reveal>
+            ))}
+          </div>
+
+          <div className="vs-match">
+            <div className="vs-match-txt">
+              <Reveal><span className="vs-kicker">Waste matching</span></Reveal>
+              <Reveal delay={0.05}><h3>The boat checks it found the <span className="vs-grad">same plastic.</span></h3></Reveal>
+              <Reveal delay={0.1}>
+                <p>As the boat closes in, its own camera compares what it sees with the picture the drone took. Above 55% it counts as a match: here it is 61% sure, with the waste 24 m ahead.</p>
+              </Reveal>
+              <Reveal delay={0.15} className="vs-match-stats">
+                <div><b className="vs-grad">61%</b><span>same waste</span></div>
+                <div><b>24 m</b><span>to the target</span></div>
+                <div><b>Live</b><span>boat camera</span></div>
+              </Reveal>
+            </div>
+            <Reveal y={60} style={{ position: 'relative' }}>
+              <div className="vs-frame-glow" />
+              <button type="button" className="vs-frame vs-match-frame" onClick={() => setView({ items: MATCH_CLIP, index: 0 })} aria-label="Waste matched: play the clip big">
+                <span className="vs-frame-in"><LoopVideo name="app-match" /><span className="vs-frame-tag">VARUNA app · Waste matched</span></span>
+              </button>
+            </Reveal>
           </div>
         </div>
       </section>
@@ -272,6 +406,10 @@ export default function Explore() {
               <div><small>Theme</small><b>{TEAM.theme}</b></div>
               <div><small>Drone</small><b>Varuna · AI aerial scout</b></div>
               <div><small>Boat</small><b>Nirmal Dhara Jalyan</b></div>
+              <a className="vs-team-award" href="#achievements" onClick={toSection('achievements')}>
+                <span className="ic"><Icon name="trophy" size={18} stroke={2} /></span>
+                <span><small>Award</small><b>1st place · DoE Science Centre No. 4 · Selected for Skill Expo</b></span>
+              </a>
             </div>
           </Reveal>
         </div>

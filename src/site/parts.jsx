@@ -25,6 +25,7 @@ const P = {
   shield: <path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z" />,
   phone: <><rect x="7" y="2.5" width="10" height="19" rx="2.5" /><path d="M11 18.5h2" /></>,
   windows: <path d="M3 5.5l7.5-1v7H3zM12 4.3 21 3v8.5h-9zM3 12.5h7.5v7l-7.5-1zM12 12.5h9V21l-9-1.3z" fill="currentColor" stroke="none" />,
+  trophy: <><path d="M7 4h10v4.5a5 5 0 0 1-10 0z" /><path d="M7 6H4.5c0 2.6 1.3 4.2 3.4 4.6M17 6h2.5c0 2.6-1.3 4.2-3.4 4.6" /><path d="M12 13.5V17M8 20.5h8M9.5 17h5v3.5h-5z" /></>,
   share: <><path d="M12 15V3m0 0L8 7m4-4 4 4" /><path d="M6 11H5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-1" /></>,
 }
 
