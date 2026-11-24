@@ -740,3 +740,7 @@ textarea.vs-input { resize: vertical; min-height: 130px; line-height: 1.55; }
   .vs-award-hero-cap span { display: none; }
   .vs-award-hero-cap b { font-size: 14.5px; margin: 0; }
 }
+/* Three competition tiles: trophy and certificate side by side, the stand across. */
+.vs-award-tiles > :nth-child(3) { grid-column: 1 / -1; }
+@media (max-width: 640px) { .vs-award-tiles > :nth-child(3) { aspect-ratio: 16 / 10; } }
+.vs-award-tile img { position: absolute; inset: 0; }

@@ -109,7 +109,6 @@ export const AWARD_MEDIA = [
   { type: 'img', src: 'award-trophy', title: 'The trophy', sub: 'Position I · Centre Level Science & Mathematics Exhibition 2026-27' },
   { type: 'img', src: 'award-certificate', title: 'The certificate', sub: 'Directorate of Education, Govt. of NCT of Delhi · Science Branch' },
   { type: 'img', src: 'award-exhibit', title: 'The VARUNA AI stand', sub: 'Drone, boat, app and trophies at the exhibition' },
-  { type: 'video', src: 'award-ceremony', poster: 'award-ceremony', title: 'The ceremony', sub: 'Prize-giving on stage at Science Centre No. 4' },
 ]
 
 // New footage of the tricolour collector boat.
