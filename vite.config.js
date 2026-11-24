@@ -2,7 +2,7 @@ import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import { createRequire } from 'node:module'
 import path from 'node:path'
-import { FAQ, TEAM, AWARD } from './src/site/content.js'
+import { FAQ, TEAM, AWARD, CONTACT } from './src/site/content.js'
 
 // The competition win, as one line for search data.
 const AWARD_LINE = `1st place (Position I), ${AWARD.category}, ${AWARD.event}, ${AWARD.org}, ${AWARD.centre}; ${AWARD.next}`
@@ -269,6 +269,7 @@ function siteSeo(mode) {
         jobTitle: 'Creator of VARUNA AI',
         affiliation: { '@type': 'EducationalOrganization', name: 'Bhai Parmanand Vidya Mandir' },
         award: AWARD_LINE,
+        telephone: CONTACT.tel,
         url: URL_,
       },
       {
@@ -328,6 +329,7 @@ function siteSeo(mode) {
       <p>${esc(DESC)}</p>
       <p>VARUNA AI and the VARUNA GCS ground-control app were created by Aditya Gautam and Samar Garg, Bhai Parmanand Vidya Mandir (theme: Environment &amp; Sustainability).</p>
       <p>Award: ${esc(AWARD_LINE)}.</p>
+      <p>Contact: for any enquiry or funding, call ${esc(CONTACT.name)} on <a href="tel:${CONTACT.tel}">${esc(CONTACT.phone)}</a>.</p>
     </noscript>`
   return {
     name: 'varuna-site-seo',
@@ -374,6 +376,7 @@ function aboutPage(URL_, esc) {
         jobTitle: p.role.split(' · ')[0],
         affiliation: { '@type': 'EducationalOrganization', name: TEAM.school },
         award: AWARD_LINE,
+        ...(p.name === CONTACT.name ? { telephone: CONTACT.tel } : {}),
         url: PAGE,
       })),
       {
@@ -442,6 +445,9 @@ function aboutPage(URL_, esc) {
       .links a { display: inline-block; padding: 11px 18px; border-radius: 999px; border: 1px solid rgba(255,255,255,.16); color: var(--ink); text-decoration: none; font-weight: 600; font-size: 15px; }
       .links a:hover { border-color: #7dd3fc; }
       footer { border-top: 1px solid var(--line); padding: 26px 0 40px; font-size: 13px; color: var(--ink3); }
+      .call { display: block; margin: 0 0 44px; padding: 20px 24px; border-radius: 20px; text-decoration: none; color: #05070a; background: linear-gradient(150deg, #fff, #e9f8ff 60%, #efe9ff); }
+      .call small { display: block; font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: rgba(5,7,10,.6); }
+      .call b { display: block; font-size: clamp(26px, 5vw, 36px); letter-spacing: -.02em; margin-top: 4px; }
       .award { margin: 0 0 44px; border: 1px solid rgba(245,196,81,.4); border-radius: 24px; overflow: hidden; background: linear-gradient(165deg, rgba(245,196,81,.14), rgba(255,255,255,.02) 55%); }
       .award img { display: block; width: 100%; height: auto; }
       .award-body { padding: 22px 24px 24px; }
@@ -485,6 +491,10 @@ function aboutPage(URL_, esc) {
           <span class="next">${esc(AWARD.next)}</span>
         </div>
       </section>
+      <a class="call" href="tel:${CONTACT.tel}">
+        <small>Enquiries, funding &amp; partnerships · call ${esc(CONTACT.name)} directly</small>
+        <b>${esc(CONTACT.phone)}</b>
+      </a>
       <figure>
         <img src="/site/p-poster.jpg" alt="VARUNA AI, the river-cleaning drone and boat by ${esc(TEAM.makers.map((p) => p.name).join(' and '))}" loading="lazy" />
         <figcaption>VARUNA AI by ${esc(TEAM.makers.map((p) => p.name).join(' and '))}.</figcaption>

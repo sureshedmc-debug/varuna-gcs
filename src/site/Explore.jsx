@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { navigate } from './router'
 import { EASE, Icon, LoopVideo, Nav, Footer, Reveal, useActiveSection } from './parts'
-import { M, STEPS, MACHINES, STACK, COMPARE, GALLERY, TEAM, FAQ, AWARD, AWARD_MEDIA, BOAT_REELS, MATCH_CLIP } from './content'
+import { M, STEPS, MACHINES, STACK, COMPARE, GALLERY, TEAM, FAQ, AWARD, AWARD_MEDIA, BOAT_REELS, MATCH_CLIP, CONTACT } from './content'
 import Feedback from './Feedback'
 import { openDownloads } from './downloads'
 
@@ -411,6 +411,26 @@ export default function Explore() {
                 <span><small>Award</small><b>1st place · DoE Science Centre No. 4 · Selected for Skill Expo</b></span>
               </a>
             </div>
+          </Reveal>
+        </div>
+      </section>
+
+      {/* ── contact ── */}
+      <section id="contact" className="vs-sec" style={{ paddingTop: 0 }}>
+        <div className="vs-wrap">
+          <Reveal className="vs-contact">
+            <div className="vs-contact-txt">
+              <span className="vs-kicker">Contact</span>
+              <h2 className="vs-h2">Let&apos;s talk about <span className="vs-grad">VARUNA AI.</span></h2>
+              <p className="vs-lead">For any enquiry, funding or sponsorship, a partnership or a demo, call {CONTACT.name}, the creator of VARUNA AI, directly.</p>
+              <ul className="vs-contact-topics">{CONTACT.topics.map((t) => <li key={t}>{t}</li>)}</ul>
+            </div>
+            <a className="vs-contact-call" href={`tel:${CONTACT.tel}`} aria-label={`Call ${CONTACT.name} on ${CONTACT.phone}`}>
+              <span className="ic"><Icon name="call" size={26} /></span>
+              <small>Call {CONTACT.name} directly</small>
+              <b>{CONTACT.phone}</b>
+              <span className="go">Tap to call <Icon name="arrow" size={16} /></span>
+            </a>
           </Reveal>
         </div>
       </section>

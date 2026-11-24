@@ -744,3 +744,39 @@ textarea.vs-input { resize: vertical; min-height: 130px; line-height: 1.55; }
 .vs-award-tiles > :nth-child(3) { grid-column: 1 / -1; }
 @media (max-width: 640px) { .vs-award-tiles > :nth-child(3) { aspect-ratio: 16 / 10; } }
 .vs-award-tile img { position: absolute; inset: 0; }
+
+/* ── contact: call Aditya directly ── */
+.vs-contact { position: relative; display: grid; grid-template-columns: 1.25fr 1fr; gap: clamp(28px, 5vw, 70px); align-items: center; overflow: hidden;
+  padding: clamp(28px, 5vw, 64px); border-radius: 32px; border: 1px solid var(--line2);
+  background: radial-gradient(60% 90% at 100% 0%, rgba(103, 232, 249, 0.14), transparent 70%), radial-gradient(50% 80% at 0% 100%, rgba(139, 92, 246, 0.14), transparent 70%), var(--bg2); }
+.vs-contact .vs-h2 { font-size: clamp(34px, 4.6vw, 64px); }
+.vs-contact .vs-lead { max-width: 560px; }
+.vs-contact-topics { list-style: none; margin: 26px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.vs-contact-topics li { padding: 8px 14px; border-radius: 999px; border: 1px solid var(--line2); background: var(--glass); font-size: 13px; color: var(--ink2); }
+.vs-contact-call { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: clamp(24px, 3vw, 36px); border-radius: 26px;
+  background: linear-gradient(150deg, #ffffff, #e9f8ff 60%, #efe9ff); color: #05070a; box-shadow: 0 30px 80px rgba(103, 232, 249, 0.22);
+  transition: transform 0.45s var(--ease), box-shadow 0.45s var(--ease); }
+.vs-contact-call:hover { transform: translateY(-4px); box-shadow: 0 40px 90px rgba(103, 232, 249, 0.34); }
+.vs-contact-call .ic { width: 56px; height: 56px; border-radius: 18px; display: grid; place-items: center; color: #fff; background: #05070a; margin-bottom: 10px; box-shadow: 0 10px 26px rgba(5, 7, 10, 0.3); }
+.vs-contact-call small { font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: rgba(5, 7, 10, 0.6); }
+.vs-contact-call b { font-size: clamp(30px, 3.6vw, 46px); font-weight: 900; letter-spacing: -0.03em; line-height: 1.05; white-space: nowrap; }
+.vs-contact-call .go { margin-top: 14px; display: inline-flex; align-items: center; gap: 8px; padding: 11px 18px; border-radius: 999px; background: #05070a; color: #fff; font-weight: 800; font-size: 14px; }
+.vs-contact-call:hover .go svg { transform: translateX(3px); }
+.vs-contact-call .go svg { transition: transform 0.35s var(--ease); }
+
+.vs-foot-call { margin-top: 22px; display: inline-flex; align-items: center; gap: 12px; padding: 10px 16px 10px 12px; border-radius: 16px; border: 1px solid var(--line2); background: var(--glass); transition: border-color 0.3s; }
+.vs-foot-call:hover { border-color: rgba(103, 232, 249, 0.5); }
+.vs-foot-call svg { color: var(--cyan); flex-shrink: 0; }
+.vs-foot-call small { display: block; font-size: 11.5px; color: var(--ink3); }
+.vs-foot-call b { display: block; font-size: 16px; letter-spacing: 0.01em; }
+
+@media (max-width: 860px) {
+  .vs-contact { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+  .vs-contact { border-radius: 24px; padding: 24px 18px; }
+  .vs-contact-call { border-radius: 20px; }
+  .vs-contact-call b { font-size: 30px; }
+}
+.vs .vs-contact-call { color: #05070a; }
+.vs .vs-contact-call .go { color: #fff; }

@@ -130,6 +130,14 @@ export const TEAM = {
   ],
 }
 
+// How to reach the team: a call to Aditya Gautam, for any enquiry or funding.
+export const CONTACT = {
+  name: 'Aditya Gautam',
+  phone: '+91 78383 24455',
+  tel: '+917838324455',
+  topics: ['Enquiries', 'Funding & sponsorship', 'Partnerships', 'Demos & media'],
+}
+
 // Plain questions and answers. Shown on the home page, written into the page's
 // search data, and built into the static /about page (vite.config.js), so the
 // three always say the same thing. Answers are plain text, no markup.
@@ -141,6 +149,10 @@ export const FAQ = [
   {
     q: 'Has VARUNA AI won any awards?',
     a: 'Yes. VARUNA AI, by Aditya Gautam and Samar Garg, won first place (Position I) in Artificial Intelligence at the Centre Level Science & Mathematics Exhibition 2026-27 of the Directorate of Education, Govt. of NCT of Delhi, at Science Centre No. 4, Gazipur, held at CM Shri School, Surajmal Vihar. It was then selected for Skill Expo.',
+  },
+  {
+    q: 'How can I contact the VARUNA AI team?',
+    a: 'Call Aditya Gautam, creator of VARUNA AI, directly on +91 78383 24455 for any enquiry, funding or sponsorship, partnership or demo.',
   },
   {
     q: 'What is VARUNA AI?',

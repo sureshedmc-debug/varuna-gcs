@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useUser, displayName, logout } from '../lib/auth'
 import { navigate, linkProps, usePath } from './router'
-import { M, NAV } from './content'
+import { M, NAV, CONTACT } from './content'
 import { openDownloads } from './downloads'
 
 export const EASE = [0.16, 1, 0.3, 1]
@@ -26,6 +26,7 @@ const P = {
   phone: <><rect x="7" y="2.5" width="10" height="19" rx="2.5" /><path d="M11 18.5h2" /></>,
   windows: <path d="M3 5.5l7.5-1v7H3zM12 4.3 21 3v8.5h-9zM3 12.5h7.5v7l-7.5-1zM12 12.5h9V21l-9-1.3z" fill="currentColor" stroke="none" />,
   trophy: <><path d="M7 4h10v4.5a5 5 0 0 1-10 0z" /><path d="M7 6H4.5c0 2.6 1.3 4.2 3.4 4.6M17 6h2.5c0 2.6-1.3 4.2-3.4 4.6" /><path d="M12 13.5V17M8 20.5h8M9.5 17h5v3.5h-5z" /></>,
+  call: <path d="M5 4h3.5l1.8 4.5-2.3 1.5a11 11 0 0 0 6 6l1.5-2.3L20 15.5V19a1.5 1.5 0 0 1-1.6 1.5C10.6 20 4 13.4 3.5 5.6A1.5 1.5 0 0 1 5 4z" />,
   share: <><path d="M12 15V3m0 0L8 7m4-4 4 4" /><path d="M6 11H5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-1" /></>,
 }
 
@@ -161,6 +162,7 @@ export function Nav({ active }) {
               <button type="button" className="vs-btn ghost block" onClick={() => { setDrawer(false); openDownloads() }}><Icon name="download" size={16} /> Download the app</button>
               <button type="button" className="vs-btn primary block" onClick={() => { setDrawer(false); navigate('/app') }}>Open the app <Icon name="arrow" size={16} /></button>
               {!user && <button type="button" className="vs-btn ghost block" onClick={() => { setDrawer(false); login() }}>Log in</button>}
+              <a className="vs-btn ghost block" href={`tel:${CONTACT.tel}`}><Icon name="call" size={16} /> Call {CONTACT.phone}</a>
             </div>
           </motion.div>
         )}
@@ -196,6 +198,10 @@ export function Footer() {
             <p style={{ color: 'var(--ink2)', fontSize: 14, lineHeight: 1.65, maxWidth: 360, marginTop: 18 }}>
               An AI drone that finds floating plastic and an autonomous solar boat that collects it. Student-built, real prototype.
             </p>
+            <a className="vs-foot-call" href={`tel:${CONTACT.tel}`}>
+              <Icon name="call" size={16} />
+              <span><small>Enquiries &amp; funding · call {CONTACT.name}</small><b>{CONTACT.phone}</b></span>
+            </a>
           </div>
           <div>
             <h4>Explore</h4>
