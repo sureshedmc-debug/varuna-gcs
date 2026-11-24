@@ -329,7 +329,7 @@ function siteSeo(mode) {
       <p>${esc(DESC)}</p>
       <p>VARUNA AI and the VARUNA GCS ground-control app were created by Aditya Gautam and Samar Garg, Bhai Parmanand Vidya Mandir (theme: Environment &amp; Sustainability).</p>
       <p>Award: ${esc(AWARD_LINE)}.</p>
-      <p>Contact: for any enquiry or funding, call ${esc(CONTACT.name)} on <a href="tel:${CONTACT.tel}">${esc(CONTACT.phone)}</a>.</p>
+      <p>Contact: for any enquiry or funding, call or WhatsApp ${esc(CONTACT.name)} on <a href="tel:${CONTACT.tel}">${esc(CONTACT.phone)}</a>.</p>
     </noscript>`
   return {
     name: 'varuna-site-seo',
@@ -447,7 +447,10 @@ function aboutPage(URL_, esc) {
       footer { border-top: 1px solid var(--line); padding: 26px 0 40px; font-size: 13px; color: var(--ink3); }
       .call { display: block; margin: 0 0 44px; padding: 20px 24px; border-radius: 20px; text-decoration: none; color: #05070a; background: linear-gradient(150deg, #fff, #e9f8ff 60%, #efe9ff); }
       .call small { display: block; font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: rgba(5,7,10,.6); }
-      .call b { display: block; font-size: clamp(26px, 5vw, 36px); letter-spacing: -.02em; margin-top: 4px; }
+      .call .num { display: block; font-weight: 800; color: #05070a; text-decoration: none; font-size: clamp(26px, 5vw, 36px); letter-spacing: -.02em; margin-top: 4px; }
+      .call .acts { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+      .call .acts a { padding: 10px 18px; border-radius: 999px; background: #05070a; color: #fff; text-decoration: none; font-weight: 700; font-size: 14px; }
+      .call .acts a.wa { background: #25d366; }
       .award { margin: 0 0 44px; border: 1px solid rgba(245,196,81,.4); border-radius: 24px; overflow: hidden; background: linear-gradient(165deg, rgba(245,196,81,.14), rgba(255,255,255,.02) 55%); }
       .award img { display: block; width: 100%; height: auto; }
       .award-body { padding: 22px 24px 24px; }
@@ -491,10 +494,11 @@ function aboutPage(URL_, esc) {
           <span class="next">${esc(AWARD.next)}</span>
         </div>
       </section>
-      <a class="call" href="tel:${CONTACT.tel}">
-        <small>Enquiries, funding &amp; partnerships · call ${esc(CONTACT.name)} directly</small>
-        <b>${esc(CONTACT.phone)}</b>
-      </a>
+      <div class="call">
+        <small>Enquiries, funding &amp; partnerships · call or WhatsApp ${esc(CONTACT.name)}</small>
+        <a class="num" href="tel:${CONTACT.tel}">${esc(CONTACT.phone)}</a>
+        <div class="acts"><a href="tel:${CONTACT.tel}">Call now</a><a class="wa" href="${esc(CONTACT.whatsapp)}" target="_blank" rel="noopener noreferrer">WhatsApp</a></div>
+      </div>
       <figure>
         <img src="/site/p-poster.jpg" alt="VARUNA AI, the river-cleaning drone and boat by ${esc(TEAM.makers.map((p) => p.name).join(' and '))}" loading="lazy" />
         <figcaption>VARUNA AI by ${esc(TEAM.makers.map((p) => p.name).join(' and '))}.</figcaption>

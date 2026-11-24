@@ -26,6 +26,7 @@ const P = {
   phone: <><rect x="7" y="2.5" width="10" height="19" rx="2.5" /><path d="M11 18.5h2" /></>,
   windows: <path d="M3 5.5l7.5-1v7H3zM12 4.3 21 3v8.5h-9zM3 12.5h7.5v7l-7.5-1zM12 12.5h9V21l-9-1.3z" fill="currentColor" stroke="none" />,
   trophy: <><path d="M7 4h10v4.5a5 5 0 0 1-10 0z" /><path d="M7 6H4.5c0 2.6 1.3 4.2 3.4 4.6M17 6h2.5c0 2.6-1.3 4.2-3.4 4.6" /><path d="M12 13.5V17M8 20.5h8M9.5 17h5v3.5h-5z" /></>,
+  whatsapp: <path fill="currentColor" stroke="none" d="M12 2.2a9.8 9.8 0 0 0-8.4 14.9L2.3 21.8l4.8-1.3A9.8 9.8 0 1 0 12 2.2zm0 17.9a8.1 8.1 0 0 1-4.1-1.1l-.3-.2-2.9.8.8-2.8-.2-.3A8.1 8.1 0 1 1 12 20.1zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8-.2-.1-.4-.1-.6.1l-.8 1c-.1.2-.3.2-.5.1a6.6 6.6 0 0 1-3.3-2.9c-.2-.4.2-.4.7-1.3.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.2 5.2 0 0 0 1.1 2.7 11.8 11.8 0 0 0 4.5 4c1.7.7 2.3.8 3.2.7a2.7 2.7 0 0 0 1.8-1.3 2.2 2.2 0 0 0 .2-1.3c-.1-.1-.3-.2-.5-.3z" />,
   call: <path d="M5 4h3.5l1.8 4.5-2.3 1.5a11 11 0 0 0 6 6l1.5-2.3L20 15.5V19a1.5 1.5 0 0 1-1.6 1.5C10.6 20 4 13.4 3.5 5.6A1.5 1.5 0 0 1 5 4z" />,
   share: <><path d="M12 15V3m0 0L8 7m4-4 4 4" /><path d="M6 11H5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-1" /></>,
 }
@@ -162,7 +163,10 @@ export function Nav({ active }) {
               <button type="button" className="vs-btn ghost block" onClick={() => { setDrawer(false); openDownloads() }}><Icon name="download" size={16} /> Download the app</button>
               <button type="button" className="vs-btn primary block" onClick={() => { setDrawer(false); navigate('/app') }}>Open the app <Icon name="arrow" size={16} /></button>
               {!user && <button type="button" className="vs-btn ghost block" onClick={() => { setDrawer(false); login() }}>Log in</button>}
-              <a className="vs-btn ghost block" href={`tel:${CONTACT.tel}`}><Icon name="call" size={16} /> Call {CONTACT.phone}</a>
+              <div className="vs-drawer-contact">
+                <a className="vs-btn ghost block" href={`tel:${CONTACT.tel}`}><Icon name="call" size={16} /> Call</a>
+                <a className="vs-btn block vs-wa" href={CONTACT.whatsapp} target="_blank" rel="noopener noreferrer"><Icon name="whatsapp" size={17} /> WhatsApp</a>
+              </div>
             </div>
           </motion.div>
         )}
@@ -201,6 +205,9 @@ export function Footer() {
             <a className="vs-foot-call" href={`tel:${CONTACT.tel}`}>
               <Icon name="call" size={16} />
               <span><small>Enquiries &amp; funding · call {CONTACT.name}</small><b>{CONTACT.phone}</b></span>
+            </a>
+            <a className="vs-foot-wa" href={CONTACT.whatsapp} target="_blank" rel="noopener noreferrer" aria-label={`WhatsApp ${CONTACT.name}`}>
+              <Icon name="whatsapp" size={20} /> <span>WhatsApp</span>
             </a>
           </div>
           <div>

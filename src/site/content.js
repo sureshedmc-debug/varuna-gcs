@@ -135,6 +135,7 @@ export const CONTACT = {
   name: 'Aditya Gautam',
   phone: '+91 78383 24455',
   tel: '+917838324455',
+  whatsapp: `https://wa.me/917838324455?text=${encodeURIComponent('Hi Aditya, I saw VARUNA AI and would like to talk about ')}`,
   topics: ['Enquiries', 'Funding & sponsorship', 'Partnerships', 'Demos & media'],
 }
 
@@ -152,7 +153,7 @@ export const FAQ = [
   },
   {
     q: 'How can I contact the VARUNA AI team?',
-    a: 'Call Aditya Gautam, creator of VARUNA AI, directly on +91 78383 24455 for any enquiry, funding or sponsorship, partnership or demo.',
+    a: 'Call or WhatsApp Aditya Gautam, creator of VARUNA AI, directly on +91 78383 24455 for any enquiry, funding or sponsorship, partnership or demo.',
   },
   {
     q: 'What is VARUNA AI?',

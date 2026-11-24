@@ -422,15 +422,18 @@ export default function Explore() {
             <div className="vs-contact-txt">
               <span className="vs-kicker">Contact</span>
               <h2 className="vs-h2">Let&apos;s talk about <span className="vs-grad">VARUNA AI.</span></h2>
-              <p className="vs-lead">For any enquiry, funding or sponsorship, a partnership or a demo, call {CONTACT.name}, the creator of VARUNA AI, directly.</p>
+              <p className="vs-lead">For any enquiry, funding or sponsorship, a partnership or a demo, call or WhatsApp {CONTACT.name}, the creator of VARUNA AI, directly.</p>
               <ul className="vs-contact-topics">{CONTACT.topics.map((t) => <li key={t}>{t}</li>)}</ul>
             </div>
-            <a className="vs-contact-call" href={`tel:${CONTACT.tel}`} aria-label={`Call ${CONTACT.name} on ${CONTACT.phone}`}>
+            <div className="vs-contact-call">
               <span className="ic"><Icon name="call" size={26} /></span>
-              <small>Call {CONTACT.name} directly</small>
-              <b>{CONTACT.phone}</b>
-              <span className="go">Tap to call <Icon name="arrow" size={16} /></span>
-            </a>
+              <small>Call or WhatsApp {CONTACT.name}</small>
+              <a className="num" href={`tel:${CONTACT.tel}`}>{CONTACT.phone}</a>
+              <div className="acts">
+                <a className="go" href={`tel:${CONTACT.tel}`}><Icon name="call" size={16} /> Call now</a>
+                <a className="go wa" href={CONTACT.whatsapp} target="_blank" rel="noopener noreferrer"><Icon name="whatsapp" size={18} /> WhatsApp</a>
+              </div>
+            </div>
           </Reveal>
         </div>
       </section>
