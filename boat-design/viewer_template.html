@@ -361,12 +361,12 @@ function render() {
     <p style="margin:6px 0 10px;font-size:14.5px;color:var(--muted)">${esc(d.summary)}</p>
     <dl class="spec" style="margin:0">
       <dt>Hull</dt><dd>${s.length} × ${s.width} × ${s.hull_height} mm</dd>
-      <dt>Height to GPS</dt><dd>${s.overall_height} mm</dd>
+      <dt>Overall height</dt><dd>${s.overall_height} mm</dd>
       <dt>Weight empty / full</dt><dd>${(s.empty.mass_g / 1000).toFixed(2)} / ${(s.full.mass_g / 1000).toFixed(2)} kg</dd>
       <dt>Draft empty / full</dt><dd>${s.empty.draft_mm} / ${s.full.draft_mm} mm</dd>
       <dt>Reserve buoyancy</dt><dd>${s.reserve_kg} kg</dd>
       <dt>Stability (GM)</dt><dd>${s.empty.gm_t_mm} mm</dd>
-      <dt>Trim empty</dt><dd>bow ${s.empty.bow_up_mm} mm up</dd>
+      <dt>Trim empty</dt><dd>${Math.abs(s.empty.bow_up_mm) < 5 ? "level" : `bow ${Math.abs(s.empty.bow_up_mm)} mm ${s.empty.bow_up_mm > 0 ? "up" : "down"}`}</dd>
       <dt>Collection</dt><dd>${s.bin_l} L</dd>
       <dt>Camera</dt><dd>${s.cam_height_mm} mm up, ${s.cam_tilt}° down</dd>
       <dt>Battery</dt><dd>${esc(s.battery)}</dd>

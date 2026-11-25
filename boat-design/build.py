@@ -298,9 +298,9 @@ def guard_ring(label):
                  "Foot glues to the deck. Ring centre = motor centre, 90 mm above the deck.")
 
 
-def mast_socket(hole=21):
-    els = [("poly", rect(0, 0, 50, 50), "cut"), ("circle", (25, 25), hole / 2, "cut"),
-           ("text", (25, 6), "front (bow)", 2.4, "c")]
+def mast_socket(hole=21, size=50):
+    els = [("poly", rect(0, 0, size, size), "cut"), ("circle", (size / 2, size / 2), hole / 2, "cut"),
+           ("text", (size / 2, 6), "front (bow)", 2.2, "c")]
     return tpart("Mast socket layer", "5 mm sunboard (cut 2, top one with hole)", els)
 
 
@@ -690,14 +690,12 @@ POD_WELLS = [("Turbidity probe", 140, 85, 16), ("pH probe", 140, -85, 8), ("TDS 
 POD_SKEWERS = [(32, 0), (300, 117), (300, -117), (450, 117), (450, -117)]
 
 POD_LOWER = [  # name, x0, yc, z0, sx, sy, sz, mass, colour, info
-    ("ESC 30 A bidirectional (left)", 65, 50, 75, 50, 25, 10, 25, "#5b6370", "left thruster, reversible for turning on the spot"),
-    ("ESC 30 A bidirectional (right)", 65, -50, 75, 50, 25, 10, 25, "#5b6370", "right thruster"),
-    ("12 V to 5 V 5 A buck converter", 120, -50, 75, 60, 35, 20, 30, "#46505c", "powers the Pi, servo and LEDs"),
-    ("2-channel relay module", 120, 50, 75, 50, 38, 19, 30, "#1f4f8a", "switches the spray pump and the UV LED"),
-    ("Li-ion 3S6P 20 Ah battery (18 x 18650 + BMS)", 100, 0, 75, 115, 60, 70, 960, "#2f6fb5",
+    ("12 V to 5 V 5 A buck converter", 210, 70, 75, 60, 35, 20, 30, "#46505c", "powers the Pi, servo and LEDs"),
+    ("2-channel relay module", 280, 70, 75, 50, 38, 19, 30, "#1f4f8a", "switches the spray pump and the UV LED"),
+    ("Li-ion 3S6P 20 Ah battery (18 x 18650 + BMS)", 55, 0, 75, 115, 60, 70, 960, "#2f6fb5",
      "lowest and heaviest part: keeps the boat stable. Velcro strap, slide to trim"),
-    ("CN3791 solar charge module", 340, -75, 75, 50, 30, 15, 15, "#2f7d4f", "between the panel and the battery"),
-    ("Spray pump 12 V (385 diaphragm)", 240, -40, 75, 90, 40, 35, 110, "#7a828c", "feeds 4 nozzles through 4 mm tube"),
+    ("CN3791 solar charge module", 310, -70, 75, 50, 30, 15, 15, "#2f7d4f", "between the panel and the battery"),
+    ("Spray pump 12 V (385 diaphragm)", 210, -70, 75, 90, 40, 35, 110, "#7a828c", "feeds 4 nozzles through 4 mm tube"),
     ("Ultrasonic board (front)", 430, -40, 80, 41, 28, 10, 10, "#2f7d4f", "JSN-SR04T, echo to Pixhawk"),
     ("Ultrasonic board (left)", 480, -40, 80, 41, 28, 10, 10, "#2f7d4f", "JSN-SR04T"),
     ("Ultrasonic board (right)", 430, -78, 80, 41, 28, 10, 10, "#2f7d4f", "JSN-SR04T"),
@@ -719,8 +717,9 @@ POD_ELECTRONICS = [
     ("USB webcam on MG90S servo (360 deg camera)", "webcam about 60 x 30 x 30", 75),
     ("GPS + compass (M8N)", "50 dia x 15", 30),
     ("Li-ion 3S6P 20 Ah pack + 3S BMS (18 x 18650)", "115 x 60 x 70", 960),
-    ("2 x 12 V brushless underwater thruster, 2 kg class", "45 dia x 95 each", 360),
-    ("2 x 30 A bidirectional ESC", "50 x 25 x 10 each", 50),
+    ("2 x 2205 2300KV brushless motor (air drive)", "28 dia x 30 each", 60),
+    ("2 x 20 A BLHeli ESC, 3D (reversible) mode", "45 x 25 x 8 each", 40),
+    ("2 x 5045 2-blade prop, one CW + one CCW (+ spares)", "127 dia", 8),
     ("10 W flexible solar panel", "340 x 230 x 3", 220),
     ("CN3791 3S solar charge module", "50 x 30 x 15", 15),
     ("Power module + 12 V to 5 V 5 A buck", "25 x 21 / 60 x 35", 45),
@@ -741,13 +740,13 @@ def design_pod():
     d = {"id": "ai-pod", "name": "VARUNA AI Pod", "tag": "Your design, upgraded",
          "summary": ("The boat from your picture at 60 x 30 cm: a rounded, enclosed thermocol pod with a pull-out "
                      "collection drawer at the front, solar panel on the lid, a front camera and a 360 degree camera, "
-                     "water-quality sensors, obstacle sensors and a 4-way spray. Two shelves inside keep the heavy "
-                     "battery at the bottom for stability.")}
+                     "water-quality sensors, obstacle sensors and a 4-way spray. Two air propellers at the back push "
+                     "it, so nothing in the water can catch plastic or weeds. The heavy battery sits on the floor "
+                     "for stability.")}
     outer_n, outer = pod_outline(True), pod_outline(False)
     inner, ledge = pod_inner(P["wall"]), pod_inner(P["ledge"])
     wells = [circle_pts(x, y, r, 28) for _, x, y, r in POD_WELLS]
-    beam_slot = rect(60, -115, 100, 115)
-    layers = [{"pts": outer_n, "holes": wells + [beam_slot], "z0": 0, "h": T, "layer": 1, "name": "Base layer 1"},
+    layers = [{"pts": outer_n, "holes": wells, "z0": 0, "h": T, "layer": 1, "name": "Base layer 1"},
               {"pts": outer_n, "holes": wells, "z0": T, "h": T, "layer": 2, "name": "Base layer 2"},
               {"pts": outer_n, "holes": wells, "z0": 2 * T, "h": T, "layer": 3, "name": "Base layer 3 (lower-bay floor)"}]
     for i in range(4, 9):
@@ -757,23 +756,32 @@ def design_pod():
     roof = clip_rect(inner, P["tunnel_x"] - 10, -90, 600, 90)
     shelf = pod_inner(P["wall"] + 1)
     slots = [rect(160, 60, 190, 85), rect(160, -85, 190, -60)]
-    lid_holes = [circle_pts(90, 0, 10.5, 24), circle_pts(530, 0, 10, 24), circle_pts(320, 0, 4, 16),
-                 circle_pts(120, 80, 2.5, 12)] + [circle_pts(x, y, 3, 12) for x in (60, 540) for y in (105, -105)]
+    lid_holes = [circle_pts(565, 0, 10.5, 24), circle_pts(520, 0, 10, 24), circle_pts(320, 0, 4, 16),
+                 circle_pts(130, 0, 5, 16), circle_pts(130, 40, 2.5, 12)] + \
+        [circle_pts(x, y, 3, 12) for x, y in ((80, 112), (80, -112), (540, 105), (540, -105))]
     slabs = [{"name": "Drawer tunnel roof (5 mm sunboard, sealed)", "pts": ccw(roof), "holes": [], "z0": 3 * T, "h": 5},
              {"name": "Shelf (3 mm sunboard)", "pts": ccw(shelf), "holes": slots, "z0": 150, "h": 3},
              {"name": "Lid top (3 mm sunboard)", "pts": ccw(outer), "holes": lid_holes, "z0": 200, "h": 3}]
 
     parts = []
-    # propulsion: underwater thrusters on a beam set into layer 1
-    comp(parts, "Thruster beam (wood 230 x 40 x 20)", 60, 0, 0, 40, 230, 20, 115, C["wood"], "mech",
-         "glued into the slot in base layer 1, thrusters bolt underneath")
+    # propulsion: two pusher air props on towers at the back of the lid (nothing in the water to snag plastic)
+    lid_z = 203
+    hub = lid_z + 90
     for side, lab in ((1, "left"), (-1, "right")):
-        comp(parts, f"Thruster bracket ({lab})", 70, side * 80, -10, 20, 12, 10, 10, "#7a828c", "mech", "")
-        cyl(parts, f"Underwater thruster ({lab})", [80, side * 80, -32], 22, 95, "x", 180, "#3b4148", "mech",
-            "12 V brushless, 2 kg class, prop in its own guard duct")
+        y = side * 75
+        comp(parts, f"Motor tower ({lab})", 52, y, lid_z, 6, 50, 125, 14, C["ply"], "mech",
+             "6 mm plywood glued and screwed to the lid, 2 gussets on the bow side; motor centre 90 mm above the lid")
+        cyl(parts, f"Motor 2205 2300KV ({lab})", [37, y, hub], 14, 30, "x", 30, C["motor"], "mech",
+            "on the stern face of the tower, prop pushes air backwards")
+        cyl(parts, f"Prop 5045 ({lab})", [18, y, hub], 63.5, 2, "x", 4, "#c3ccd6", "mech",
+            "5 inch 2-blade, " + ("CCW" if side > 0 else "CW"), opacity=0.45)
+        parts.append({"kind": "torus", "name": f"Prop guard ({lab})", "c": [15, y, hub], "r": 70, "tube": 3, "mass": 8,
+                      "color": C["sunboard"], "group": "mech", "info": "5 mm sunboard ring, OD 146 / ID 134, foot glued to the lid"})
+        comp(parts, f"ESC 20 A ({lab})", 62, y, lid_z, 45, 25, 8, 20, C["esc"], "elec",
+             "on the lid in the prop's air flow, which cools it; one XT30 plug joins the lid to the hull")
     for n, x0, yc, z0, sx, sy, sz, m, col, info in POD_LOWER + POD_UPPER:
         comp(parts, n, x0, yc, z0, sx, sy, sz, m, col, "elec", info)
-    cyl(parts, "Spray tank (500 ml bottle)", [340, 60, 112.5], 32.5, 200, "x", 525, "#cfe3ea", "spray",
+    cyl(parts, "Spray tank (500 ml bottle)", [275, 0, 107.5], 32.5, 200, "x", 525, "#cfe3ea", "spray",
         "PAC solution, refill through the lid; full = 500 g", opacity=0.7)
     for n, x, y, r in POD_WELLS:
         hgt = {"pH probe": 160, "Turbidity probe": 105, "TDS probe": 110, "Temperature probe": 80}[n]
@@ -801,17 +809,18 @@ def design_pod():
     # lid
     comp(out_, "Solar panel 10 W (flexible)", 150, 0, 203, 340, 230, 3, 220, "#1d2b4a", "power",
          "340 x 230, glued on the lid, cable through the 8 mm hole")
-    comp(out_, "Mast socket (2 x 5 mm sunboard)", 65, 0, 203, 50, 50, 10, 10, C["sunboard"], "mech", "")
-    cyl(out_, "GPS mast (20 mm PVC conduit)", [90, 0, 273], 10, 120, "z", 18, C["mast"], "mech", "120 mm tall")
-    cyl(out_, "GPS + compass", [90, 0, 341], 25, 15, "z", 30, C["gps"], "elec", "arrow to the bow")
-    cyl(out_, "GPS disc (5 mm sunboard)", [90, 0, 335], 35, 4, "z", 5, C["sunboard"], "mech", "")
-    comp(out_, "Pan servo MG90S (360 deg camera)", 510, 0, 203, 40, 22, 30, 14, "#2c3036", "elec", "on the servo plate")
-    out_.append({"kind": "sphere", "name": "360 deg camera dome (USB webcam inside)", "c": [530, 0, 258], "r": 25,
+    comp(out_, "Mast socket (2 x 5 mm sunboard)", 545, 0, 203, 40, 40, 10, 8, C["sunboard"], "mech", "")
+    cyl(out_, "GPS mast (20 mm PVC conduit)", [565, 0, 273], 10, 120, "z", 18, C["mast"], "mech",
+        "120 mm tall, at the bow: half a metre from the motors so they do not upset the compass")
+    cyl(out_, "GPS + compass", [565, 0, 341], 25, 15, "z", 30, C["gps"], "elec", "arrow to the bow")
+    cyl(out_, "GPS disc (5 mm sunboard)", [565, 0, 335], 35, 4, "z", 5, C["sunboard"], "mech", "")
+    comp(out_, "Pan servo MG90S (360 deg camera)", 500, 0, 203, 40, 22, 30, 14, "#2c3036", "elec", "on the servo plate")
+    out_.append({"kind": "sphere", "name": "360 deg camera dome (USB webcam inside)", "c": [520, 0, 258], "r": 25,
                  "mass": 80, "color": "#20232a", "group": "elec", "opacity": 0.92,
                  "info": "webcam in a clear plastic ball half, turns with the servo"})
-    cyl(out_, "Status LED (RGB)", [120, 80, 207], 5, 8, "z", 3, "#59d18a", "elec", "green = auto, blue = manual, red = fault")
-    for x in (60, 540):
-        for y in (105, -105):
+    cyl(out_, "Status LED (RGB)", [130, 40, 207], 5, 8, "z", 3, "#59d18a", "elec", "green = auto, blue = manual, red = fault")
+    for x, y in ((80, 112), (80, -112), (540, 105), (540, -105)):
+        if True:
             cyl(out_, "Spray nozzle", [x, y, 210], 4, 14, "z", 5, "#9aa3ad", "spray", "one of 4, aimed outwards")
     # bumper: half pipe-insulation round the waterline, open at the drawer mouth
     path = outer_n[outer_n.index(next(p for p in outer_n if p[0] == P["tunnel_x"] and p[1] > 0)) + 1:] + \
@@ -827,9 +836,6 @@ def design_pod():
         for n, x, y, r in POD_WELLS:
             els.append(("circle", (x, y), r, "cut"))
             els.append(("text", (x, y + r + 4 if y > 0 else y - r - 4), n.replace(" probe", ""), 2.2, "c"))
-        if i == 1:
-            els.append(("poly", beam_slot, "pocket"))
-            els.append(("text", (80, 0), "beam slot", 2.4, "c"))
         for x, y in POD_SKEWERS + [(250, 0), (370, 0)]:
             els.append(("skewer", (x, y)))
         els.append(("text", (490, 0), "DRAWER TUNNEL (cut away)", 3, "c"))
@@ -854,10 +860,13 @@ def design_pod():
     cam = [("poly", rect(574, -14, 590, 14), "mark"), ("text", (530, 0), "camera window", 2.2, "c")]
     lid_els = [("poly", outer, "cut")] + [("poly", h, "cut") for h in lid_holes] + [
         ("poly", rect(150, -115, 490, 115), "mark"), ("text", (320, 20), "solar panel 340 x 230", 3, "c"),
-        ("poly", rect(510, -11, 550, 11), "mark"), ("text", (530, -20), "servo plate", 2.2, "c"),
-        ("poly", rect(65, -25, 115, 25), "mark"), ("text", (90, 32), "GPS mast", 2.2, "c"),
-        ("text", (120, 90), "status LED", 2.2, "c"), ("text", (60, 95), "nozzle", 2, "c"),
-        ("text", (540, 95), "nozzle", 2, "c"), ("text", (575, 0), "BOW >", 3, "r")]
+        ("poly", rect(500, -11, 540, 11), "mark"), ("text", (520, -20), "servo plate", 2.2, "c"),
+        ("poly", rect(545, -20, 585, 20), "mark"), ("text", (565, 26), "GPS mast", 2.2, "c"),
+        ("poly", rect(52, 50, 58, 100), "mark"), ("poly", rect(52, -100, 58, -50), "mark"),
+        ("poly", rect(62, 62.5, 107, 87.5), "mark"), ("poly", rect(62, -87.5, 107, -62.5), "mark"),
+        ("text", (55, 0), "motor towers", 2.2, "c"), ("text", (85, 75), "ESC", 2, "c"), ("text", (85, -75), "ESC", 2, "c"),
+        ("text", (130, 50), "status LED", 2.2, "c"), ("text", (130, -10), "ESC cable", 2, "c"),
+        ("text", (80, 102), "nozzle", 2, "c"), ("text", (540, 95), "nozzle", 2, "c"), ("text", (520, 0), "BOW >", 3, "r")]
     shelf_els = [("poly", shelf, "cut")] + [("poly", s, "pocket") for s in slots]
     for n, x0, yc, z0, sx, sy, sz, *_ in POD_UPPER:
         shelf_els += [("poly", rect(x0, yc - sy / 2, x0 + sx, yc + sy / 2), "mark"),
@@ -874,7 +883,7 @@ def design_pod():
         if x0 + sx > P["tunnel_x"]:
             roof_els += [("poly", rect(max(x0, P["tunnel_x"] - 10), yc - sy / 2, x0 + sx, yc + sy / 2), "mark"),
                          ("text", (max(x0, P["tunnel_x"]) + 20, yc), n.split(" (")[0][:16], 1.8, "c")]
-    roof_els += [("poly", rect(385, 27.5, 440, 92.5), "mark"), ("text", (412, 60), "tank end", 2, "c")]
+    pass
     cw, cp = camera_parts(10)
     small = [tpart("Drawer tunnel roof", "5 mm sunboard", roof_els, "Seal all round with hot glue"),
              framed_panel("Drawer bottom", "3 mm sunboard", 203, 134),
@@ -890,10 +899,12 @@ def design_pod():
              tpart("Servo plate", "3 mm sunboard", [("poly", rect(0, 0, 50, 50), "cut"),
                                                     ("poly", rect(13.5, 19, 36.5, 31.5), "cut"),
                                                     ("text", (25, 8), "MG90S cut-out", 2.2, "c")]),
-             mast_socket(), mast_socket(), gps_disc(), cw, cw, cp]
+             mast_socket(size=40), mast_socket(size=40), gps_disc(), cw, cw, cp,
+             tower_plate("left"), tower_plate("right"), gusset(), gusset(), gusset(), gusset(),
+             guard_ring("left"), guard_ring("right")]
     d.update(layers=layers, slabs=slabs, parts=parts, sheets=sheets, small=small, deck_z=200,
              cam_z=140, cam_tilt=10, bin_vol=203 * 134 * 70 / 1e6, foam_sheets=4, glue=300, hull_h=8 * T,
-             power=(222, 40, 10), battery="Li-ion 3S6P 20 Ah (222 Wh)", electronics=POD_ELECTRONICS)
+             power=(222, 45, 10), battery="Li-ion 3S6P 20 Ah (222 Wh)", electronics=POD_ELECTRONICS)
     return d
 
 
@@ -958,8 +969,6 @@ def pod_half_sheets(small):
         els += [("circle", (x, y + B), rl, "cut"), ("circle", (x, y + B), rr, "pocket"),
                 ("text", (x, y + B + rl + 4), f"left: {nl} {2 * rl} dia", 1.9, "c"),
                 ("text", (x, y + B - rl - 3.5), f"right (flipped): {nr} {2 * rr} dia", 1.9, "c")]
-    els += [("poly", rect(60, B, 100, B + 115), "pocket"), ("text", (80, B + 60), "layer 1 only:", 1.9, "c"),
-            ("text", (80, B + 55), "beam slot", 1.9, "c")]
     for x, y in ((300, 117), (450, 117), (32, 0), (250, 0), (370, 0)):
         els.append(("skewer", (x, y + B)))
     els += [("text", (250, B + 60), "BASE LAYERS 1, 2, 3 - half template (cut 3, both halves)", 3.2, "c"),
@@ -993,12 +1002,16 @@ def pod_half_sheets(small):
     Lz, S = 104, 0
     lid = [("poly", half(pod_outline(False), Lz), "cut")]
     lid += cline(15, 585, Lz, "CENTRELINE - flip here")
-    for (x, y, r, t) in ((90, 0, 10.5, "mast 21 dia, 75 from stern"), (530, 0, 10, "camera cable 20 dia, 515 from stern"),
-                         (320, 0, 4, "panel cable 8 dia, 305 from stern"), (60, 105, 3, "nozzle 6 dia, 45 from stern"),
-                         (540, 105, 3, "nozzle 6 dia, 525 from stern"), (120, 80, 2.5, "status LED 5 dia: LEFT SIDE ONLY")):
+    for (x, y, r, t) in ((565, 0, 10.5, "GPS mast 21 dia, 550 from stern"), (520, 0, 10, "camera cable 20 dia, 505 from stern"),
+                         (320, 0, 4, "panel cable 8 dia, 305 from stern"), (130, 0, 5, "ESC cable 10 dia, 115 from stern"),
+                         (80, 112, 3, "nozzle 6 dia, 65 from stern"), (540, 105, 3, "nozzle 6 dia, 525 from stern"),
+                         (130, 40, 2.5, "status LED 5 dia: LEFT ONLY")):
         lid += [("poly", half(circle_pts(x, y, r, 24), Lz), "cut"), ("text", (x, y + Lz + r + 4), t, 1.9, "c")]
     lid += [("poly", half(rect(150, -115, 490, 115), Lz), "mark"), ("text", (320, Lz + 60), "solar panel 340 x 230", 2.6, "c"),
-            ("poly", half(rect(510, -11, 550, 11), Lz), "mark"), ("poly", half(rect(65, -25, 115, 25), Lz), "mark"),
+            ("poly", half(rect(500, -11, 540, 11), Lz), "mark"), ("poly", half(rect(545, -20, 585, 20), Lz), "mark"),
+            ("poly", rect(52, Lz + 50, 58, Lz + 100), "mark"), ("poly", rect(62, Lz + 62.5, 107, Lz + 87.5), "mark"),
+            ("text", (55, Lz + 106), "motor tower: 37 from stern, 50-100 from centre", 1.9, "l"),
+            ("text", (110, Lz + 90), "ESC", 1.9, "l"),
             ("text", (300, Lz + 40), "LID TOP - half template, 3 mm sunboard", 3.2, "c"),
             ("dim", (15, Lz + 125), (585, Lz + 125), "570 overall length"),
             ("dim", (30, Lz), (30, Lz + 135), "135 (270 total)")]
@@ -1038,10 +1051,6 @@ def add_dims(d):
                 for nm, x, y, r in POD_WELLS:
                     els.append(("text", (x, y + r + 8 if y > 0 else y - r - 8),
                                 f"{2 * r} dia: {x - 15} from stern, {abs(y)} {'left' if y > 0 else 'right'}", 1.9, "c"))
-                if n.endswith("1"):
-                    els = [e for e in els if not (e[0] == "text" and e[2] == "beam slot")]
-                    els += [("dim", (108, -115), (108, 115), "230 beam slot"),
-                            ("dim", (60, -40), (100, -40), "40"), ("text", (80, 50), "slot starts 45 from stern", 1.9, "c")]
             elif n.startswith(("Wall ring", "Ledge ring")):
                 ledge = n.startswith("Ledge")
                 w_ = POD["ledge"] if ledge else POD["wall"]
@@ -1141,6 +1150,8 @@ def hydro(d):
             return p["c"][2] + (p["h"] / 2 if p["axis"] == "z" else p["r"])
         if p["kind"] == "sphere":
             return p["c"][2] + p["r"]
+        if p["kind"] == "torus":
+            return p["c"][2] + p["r"] + p["tube"]
         return 0
     wh, load, solar = d.get("power", (24.4, 25, 0))
     d["specs"] = {"length": L, "width": W, "hull_height": d.get("hull_h", TOP),
@@ -1631,26 +1642,26 @@ BUILD_STEPS = {
                             "Build the basket, tape the flap inside the entrance, hang it by its lips."),
     ],
     "ai-pod": [
-        ("Build the base", "Base layers 1 to 3 are solid except the drawer tunnel at the bow, the 4 sensor wells and "
-                           "the beam slot in layer 1. Glue them on skewers, then glue the wooden thruster beam into "
-                           "the slot."),
+        ("Build the base", "Base layers 1 to 3 are solid except the drawer tunnel at the bow and the 4 sensor wells. "
+                           "Glue them on skewers."),
         ("Roof the tunnel", "Glue the 5 mm tunnel roof over the tunnel on top of layer 3 and seal every edge with hot "
                             "glue: it is the floor of the dry bay. Glue the two drawer rails along the tunnel walls."),
         ("Build the walls", "Stack wall ring, wall ring (with the 3 ultrasonic holes), ledge ring, wall ring. Line them "
                             "up on the skewers. The fourth wall-ring copy is the lid rim: glue it under the lid top, not "
                             "to the hull."),
-        ("Fit the lower bay", "Battery, ESCs, buck converter, relay, pump, spray tank and solar module go on the "
+        ("Fit the lower bay", "Battery, buck converter, relay, pump, spray tank and solar module go on the "
                               "dashed outlines on the floor. Heavy parts low keep the boat from rolling."),
         ("Fit the shelf", "Lay the shelf on the ledge, then the Pixhawk, Pi, ADS1115 and sensor boards on their "
                           "outlines. Cables pass through the two slots."),
         ("Sensors and lights", "Push the pH, TDS, turbidity and temperature probes through their wells so the tips "
                                "sit 15 mm below the hull, and seal with hot glue. Fit the 3 ultrasonic sensors, the "
                                "front camera behind a clear plastic window, the UV LEDs and the LED strip."),
-        ("Lid and bumper", "Glue the solar panel, servo plate, GPS mast and nozzles on the lid. Seal the lid to the "
+        ("Lid and bumper", "Glue the solar panel, servo plate, GPS mast (at the bow), motor towers, ESCs and nozzles on the lid. Seal the lid to the "
                            "top ring with foam tape and hold it with 4 rubber bands. Glue split black pipe insulation "
                            "round the waterline as the bumper."),
-        ("Thrusters and drawer", "Bolt the two thrusters under the beam. Build the mesh drawer, tape the flap inside "
-                                 "its entrance and slide it in on the rails."),
+        ("Props and drawer", "Screw the 2205 motors to the towers, fit one CW and one CCW 5045 prop so both blow "
+                             "backwards, and glue on the guard rings. Build the mesh drawer, tape the flap inside its "
+                             "entrance and slide it in on the rails."),
     ],
     "conveyor-cat": [
         ("Join the pontoons", "Glue the deck on both pontoons with the channel exactly 140 mm wide. Glue and screw "
