@@ -1,7 +1,7 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
-import { getTheme, applyTheme } from './lib/theme'
+import { getTheme, applyTheme, getLook, applyLook } from './lib/theme'
 // Bundled rather than fetched from Google Fonts, so the app renders correctly
 // with no internet (it only needs the Netbird mesh to reach the Pi). Same
 // weights the old Google Fonts link requested.
@@ -15,6 +15,7 @@ import '@fontsource/jetbrains-mono/600.css'
 import './index.css'
 
 applyTheme(getTheme())
+applyLook(getLook())
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>

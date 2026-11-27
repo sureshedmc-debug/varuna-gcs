@@ -11,3 +11,13 @@ desktop.ini
 
 # Desktop app (electron-builder output)
 release/
+
+# Local editor settings and unpacked desktop-app builds
+.idea/
+/VARUNA GCS/
+
+# Local CSV records and sign-in data written by `npm run dev`
+/data/
+
+# CC0 scanned plants used only to render the Home video (not shipped)
+rec-assets/

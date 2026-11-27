@@ -1,0 +1,96 @@
+// VARUNA GCS for Android: a WebView on the same built frontend as the desktop
+// app, plus the desktop app's own Node server (nodejs-mobile) for the Pi proxy
+// and the local records / sign-in store. Build with: node scripts/build-android.mjs
+plugins {
+    id 'com.android.application'
+}
+
+def pkg = new groovy.json.JsonSlurper().parse(file('../../package.json'))
+// "2.1.8" or "2.2.0-beta.1": only the three numbers count for the version code.
+def vm = (pkg.version =~ /^(\d+)\.(\d+)\.(\d+)/)
+if (!vm.find()) throw new GradleException("package.json version '${pkg.version}' is not x.y.z")
+def vMajor = vm.group(1) as int
+def vMinor = vm.group(2) as int
+def vPatch = vm.group(3) as int
+
+// Release signing: android/keystore.properties (not in git) points at the keystore.
+def keystoreProps = new Properties()
+def keystoreFile = rootProject.file('keystore.properties')
+if (keystoreFile.exists()) keystoreFile.withInputStream { keystoreProps.load(it) }
+
+android {
+    namespace 'ai.varuna.gcs'
+    compileSdk 34
+    ndkVersion '28.2.13676358'
+
+    defaultConfig {
+        applicationId 'ai.varuna.gcs'
+        minSdk 26
+        targetSdk 34
+        versionCode vMajor * 10000 + vMinor * 100 + vPatch
+        versionName pkg.version
+        externalNativeBuild {
+            cmake {
+                arguments '-DANDROID_STL=c++_shared'
+            }
+        }
+        ndk {
+            // Phones: 64-bit and 32-bit ARM. -PwithX86 adds the emulator's ABI.
+            abiFilters = project.hasProperty('withX86') ? ['arm64-v8a', 'armeabi-v7a', 'x86_64'] : ['arm64-v8a', 'armeabi-v7a']
+        }
+    }
+
+    signingConfigs {
+        release {
+            if (keystoreProps['storeFile']) {
+                storeFile rootProject.file(keystoreProps['storeFile'])
+                storePassword keystoreProps['storePassword']
+                keyAlias keystoreProps['keyAlias']
+                keyPassword keystoreProps['keyPassword']
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            if (keystoreProps['storeFile']) signingConfig signingConfigs.release
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path 'src/main/cpp/CMakeLists.txt'
+            version '3.22.1'
+        }
+    }
+
+    sourceSets {
+        main {
+            jniLibs.srcDirs = ['libnode/bin']
+        }
+    }
+
+    packagingOptions {
+        jniLibs {
+            // Compress the .so files in the APK (Node is ~60 MB per ABI unpacked).
+            useLegacyPackaging true
+        }
+    }
+
+    androidResources {
+        // Stored as they are, so the shell can serve byte ranges straight from the APK.
+        noCompress += ['onnx', 'wasm', 'mp4', 'webm', 'jpg', 'jpeg', 'png', 'webp', 'woff', 'woff2']
+        // Keep every asset: the default pattern drops files starting with "_".
+        ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:!CVS:!thumbs.db:!picasa.ini:!*~'
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+}

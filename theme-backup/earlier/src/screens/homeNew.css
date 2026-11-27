@@ -1,0 +1,473 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   VARUNA AI — HOME PAGE — PREMIUM PURPLE/WHITE THEME
+   Scoped entirely under .varuna-home
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Reset & base ── */
+.varuna-home {
+  min-height: 100vh;
+  background: #f8f7ff;
+  color: #1e1b4b;
+  font-family: 'Inter', system-ui, sans-serif;
+  overflow-x: hidden;
+}
+
+/* ── Secondary header ── */
+.vh-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 24px;
+  background: #ffffff;
+  border-bottom: 1px solid #f0ecff;
+  height: 56px;
+  gap: 16px;
+  box-shadow: 0 2px 12px rgba(109,40,217,0.05);
+}
+
+.vh-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #fafbff;
+  border: 1.5px solid #ede9fe;
+  border-radius: 26px;
+  padding: 8px 18px;
+  width: 360px;
+  flex-shrink: 0;
+  transition: border-color 0.18s, box-shadow 0.18s;
+}
+.vh-search:focus-within {
+  border-color: #a78bfa;
+  box-shadow: 0 0 0 3px rgba(167,139,250,0.15);
+}
+.vh-search input {
+  background: transparent; border: none; outline: none;
+  color: #1e1b4b; font-size: 13px; width: 100%; font-weight: 500;
+}
+.vh-search input::placeholder { color: #a78bfa; }
+
+.vh-header-right { display: flex; align-items: center; gap: 18px; }
+
+.vh-weather { display: flex; align-items: center; gap: 7px; }
+.vh-weather-temp { font-size: 15px; font-weight: 800; color: #1e1b4b; }
+.vh-weather-city { font-size: 10.5px; color: #8b5cf6; line-height: 1; font-weight: 500; }
+
+.vh-notif {
+  position: relative; width: 38px; height: 38px;
+  display: flex; align-items: center; justify-content: center;
+  background: #fafbff; border: 1.5px solid #ede9fe; border-radius: 50%;
+  cursor: pointer; color: #7c3aed; flex-shrink: 0;
+  transition: all 0.18s;
+}
+.vh-notif:hover { border-color: #a78bfa; box-shadow: 0 0 0 3px rgba(167,139,250,0.12); }
+.vh-notif-badge {
+  position: absolute; top: -3px; right: -3px;
+  width: 16px; height: 16px;
+  background: linear-gradient(135deg,#ef4444,#f87171);
+  border-radius: 50%; font-size: 8px; font-weight: 700; color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  border: 2px solid #ffffff;
+}
+.vh-user { display: flex; align-items: center; gap: 9px; cursor: pointer; }
+.vh-avatar {
+  width: 36px; height: 36px; border-radius: 50%;
+  background: linear-gradient(135deg, #4c1d95 0%, #7c3aed 55%, #a78bfa 100%);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 800; color: #fff; flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(109,40,217,0.35);
+}
+.vh-username { font-size: 13px; font-weight: 700; color: #1e1b4b; }
+
+/* ── Hero ── */
+.vh-hero {
+  position: relative; height: 320px; overflow: hidden;
+  flex-shrink: 0; border-radius: 16px; margin: 16px 24px 0;
+}
+.vh-hero-img {
+  width: 100%; height: 100%; object-fit: cover;
+  object-position: center 25%; display: block;
+}
+.vh-hero-overlay {
+  position: absolute; inset: 0;
+  background: linear-gradient(90deg,
+    rgba(246,244,255,0.88) 0%,
+    rgba(246,244,255,0.55) 35%,
+    rgba(246,244,255,0.08) 62%,
+    transparent 100%
+  );
+}
+.vh-hero-content {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 32px;
+}
+.vh-hero-eyebrow {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.28em;
+  text-transform: uppercase; color: #5b21b6; margin-bottom: 4px;
+}
+.vh-hero-title {
+  font-size: 44px; font-weight: 900; line-height: 1.05;
+  letter-spacing: -0.02em; margin: 0 0 8px;
+  background: linear-gradient(135deg, #4c1d95 0%, #7c3aed 50%, #a78bfa 100%);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.vh-hero-title span { /* same gradient — no override needed */ }
+.vh-hero-sub { font-size: 14px; color: #5b21b6; margin-bottom: 12px; font-weight: 500; }
+.vh-hero-line {
+  width: 48px; height: 3px; border-radius: 2px;
+  background: linear-gradient(90deg, #6d28d9, #a78bfa);
+  box-shadow: 0 0 8px rgba(124,58,237,0.4);
+}
+.vh-hero-right { text-align: right; }
+.vh-hero-right-text {
+  font-size: 11.5px; font-weight: 800; letter-spacing: 0.18em;
+  text-transform: uppercase; color: rgba(255,255,255,0.92);
+  line-height: 2; text-shadow: 0 1px 4px rgba(0,0,0,0.3);
+}
+
+/* ── Telemetry rings row ── */
+.vh-telem-row {
+  display: grid; grid-template-columns: 1fr;
+  gap: 12px; padding: 14px 24px 0;
+}
+.vh-telem-card {
+  background: #ffffff; border-radius: 14px;
+  border: 1.5px solid #f0ecff;
+  padding: 14px 10px 12px;
+  display: flex; flex-direction: column; align-items: center; gap: 7px;
+  box-shadow: 0 2px 12px rgba(109,40,217,0.06), 0 1px 3px rgba(109,40,217,0.04);
+  transition: all 0.22s;
+}
+.vh-telem-card:hover {
+  border-color: #a78bfa;
+  transform: translateY(-3px);
+  box-shadow: 0 8px 24px rgba(109,40,217,0.12), 0 0 0 3px rgba(167,139,250,0.12);
+}
+/* Full-width featured telemetry card (Battery) — ring left, details right */
+.vh-telem-card--feature {
+  flex-direction: row; align-items: center; justify-content: flex-start;
+  gap: 26px; padding: 20px 32px;
+}
+.vh-telem-detail { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; }
+.vh-telem-card--feature .vh-telem-label { font-size: 13px; letter-spacing: 0.12em; }
+.vh-telem-card--feature .vh-telem-sub   { font-size: 14px; text-align: left; }
+.vh-ring-wrap { position: relative; width: 72px; height: 72px; flex-shrink: 0; }
+.vh-ring-wrap svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.vh-ring-track { fill: none; stroke: #ede9fe; stroke-width: 7; }
+.vh-ring-fill  { fill: none; stroke-width: 7; stroke-linecap: round; transition: stroke-dashoffset 0.9s ease, stroke 0.4s; }
+.vh-ring-center {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1;
+}
+.vh-ring-val  { font-size: 14px; font-weight: 900; color: #1e1b4b; font-variant-numeric: tabular-nums; }
+.vh-ring-unit { font-size: 8.5px; color: #8b5cf6; font-weight: 700; margin-top: 2px; }
+.vh-telem-label { font-size: 9.5px; font-weight: 800; color: #6d28d9; text-transform: uppercase; letter-spacing: 0.1em; text-align: center; }
+.vh-telem-sub   { font-size: 9.5px; color: #a78bfa; text-align: center; font-variant-numeric: tabular-nums; min-height: 12px; }
+
+.vh-link-pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 10px; border-radius: 99px;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.05em;
+}
+.vh-link-pill.live        { background: #ede9fe; color: #6d28d9; border: 1px solid #ddd6fe; }
+.vh-link-pill.polling     { background: #fef3c7; color: #b45309; }
+.vh-link-pill.connecting  { background: #f1f5f9; color: #64748b; }
+.vh-link-pill.sim         { background: #ede9fe; color: #7c3aed; border: 1px solid #ddd6fe; }
+
+@keyframes vh-pulse {
+  0%,100% { opacity:1; transform:scale(1); }
+  50%      { opacity:0.35; transform:scale(1.35); }
+}
+.vh-pulse-dot {
+  width: 6px; height: 6px; border-radius: 50%; background: currentColor;
+  animation: vh-pulse 1.6s ease-in-out infinite;
+}
+
+/* ── Body ── */
+.vh-body { padding: 14px 24px 28px; display: flex; flex-direction: column; gap: 14px; }
+/* Below the launchpad, smaller: the buttons and artwork above are the spotlight. */
+.varuna-home > .vh-body { zoom: 0.8; }
+@media (max-width: 860px) { .varuna-home > .vh-body { zoom: 0.9; } }
+
+/* ── KPI cards ── */
+.vh-kpi-row { display: grid; grid-template-columns: repeat(3,1fr); gap: 14px; }
+.vh-kpi-card {
+  background: #ffffff; border-radius: 16px;
+  border: 1.5px solid #f0ecff;
+  padding: 20px 24px;
+  display: flex; align-items: center; gap: 16px;
+  box-shadow: 0 2px 12px rgba(109,40,217,0.06);
+  transition: all 0.22s;
+}
+.vh-kpi-card:hover {
+  border-color: #c4b5fd;
+  transform: translateY(-3px);
+  box-shadow: 0 8px 24px rgba(109,40,217,0.1), 0 0 0 3px rgba(196,181,253,0.15);
+}
+.vh-kpi-icon {
+  width: 54px; height: 54px; border-radius: 14px;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  background: linear-gradient(135deg, #7c3aed, #a78bfa);
+  color: #ffffff;
+  box-shadow: 0 4px 12px rgba(124,58,237,0.3);
+}
+.vh-kpi-icon.teal  { background: linear-gradient(135deg,#6d28d9,#8b5cf6); }
+.vh-kpi-icon.blue  { background: linear-gradient(135deg,#4c1d95,#7c3aed); }
+.vh-kpi-icon.green { background: linear-gradient(135deg,#7c3aed,#a78bfa); }
+.vh-kpi-icon.amber { background: linear-gradient(135deg,#5b21b6,#8b5cf6); }
+
+.vh-kpi-right { flex: 1; min-width: 0; }
+.vh-kpi-top   { display: flex; justify-content: space-between; align-items: flex-start; }
+.vh-kpi-label { font-size: 10.5px; color: #8b5cf6; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 4px; }
+.vh-kpi-value { font-size: 38px; font-weight: 900; color: #1e1b4b; line-height: 1; margin-bottom: 4px; font-variant-numeric: tabular-nums; }
+.vh-kpi-delta { font-size: 11px; font-weight: 600; display: flex; align-items: center; gap: 3px; }
+.vh-kpi-delta.up   { color: #059669; }
+.vh-kpi-delta.down { color: #dc2626; }
+.vh-kpi-delta.neu  { color: #8b5cf6; }
+
+/* KPI sparkline wave */
+.vh-sparkline { flex-shrink: 0; opacity: 0.7; }
+
+/* ── Analytics + mission row ── */
+.vh-mid-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+.vh-panel {
+  background: #ffffff; border-radius: 16px;
+  border: 1.5px solid #f0ecff; padding: 18px;
+  box-shadow: 0 2px 12px rgba(109,40,217,0.06);
+}
+.vh-panel-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 14px; gap: 8px; }
+.vh-panel-title { font-size: 14px; font-weight: 800; color: #1e1b4b; }
+.vh-panel-sub   { font-size: 10.5px; color: #8b5cf6; margin-top: 1px; }
+.vh-period-btn {
+  display: flex; align-items: center; gap: 4px;
+  background: #f8f7ff; border: 1.5px solid #ede9fe; border-radius: 8px;
+  padding: 5px 10px; font-size: 11px; color: #7c3aed; cursor: pointer;
+  font-weight: 600; white-space: nowrap; flex-shrink: 0;
+  transition: all 0.15s;
+}
+.vh-period-btn:hover { border-color: #a78bfa; background: #f3f0ff; }
+
+/* Bar chart */
+.vh-barchart { width: 100%; height: 160px; display: block; }
+
+/* Donut */
+.vh-donut-wrap { display: flex; align-items: center; gap: 20px; }
+.vh-donut-svg  { flex-shrink: 0; }
+.vh-donut-num  { font-size: 26px; font-weight: 900; color: #1e1b4b; line-height: 1; }
+.vh-donut-label{ font-size: 10px; color: #8b5cf6; font-weight: 700; }
+.vh-legend { display: flex; flex-direction: column; gap: 9px; flex: 1; }
+.vh-legend-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
+.vh-legend-left { display: flex; align-items: center; gap: 8px; color: #334155; font-weight: 500; }
+.vh-legend-dot  { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+.vh-legend-count{ font-weight: 800; color: #1e1b4b; min-width: 14px; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Mission panel */
+.vh-mission-name { font-size: 14px; font-weight: 800; color: #1e1b4b; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vh-mission-meta { font-size: 11px; color: #8b5cf6; margin-bottom: 12px; }
+.vh-wp-bar-label { display: flex; justify-content: space-between; font-size: 10px; color: #7c3aed; font-weight: 600; margin-bottom: 5px; }
+.vh-wp-bar-track { height: 5px; background: #ede9fe; border-radius: 3px; overflow: hidden; margin-bottom: 12px; }
+.vh-wp-bar-fill  { height: 100%; background: linear-gradient(90deg,#4c1d95,#7c3aed,#a78bfa); border-radius: 3px; transition: width 0.9s ease; box-shadow: 0 0 6px rgba(124,58,237,0.4); }
+.vh-mission-tiles { display: grid; grid-template-columns: repeat(3,1fr); gap: 7px; }
+.vh-mission-tile { background: #f8f7ff; border-radius: 9px; padding: 8px 10px; border: 1.5px solid #ede9fe; }
+.vh-mission-tile small { display: block; font-size: 9px; color: #8b5cf6; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 3px; }
+.vh-mission-tile b { font-size: 13px; font-weight: 900; color: #6d28d9; font-variant-numeric: tabular-nums; }
+.vh-no-mission { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 28px 0; color: #c4b5fd; gap: 8px; font-size: 12.5px; text-align: center; }
+
+/* ── Bottom row ── */
+.vh-bottom-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.vh-table-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.vh-view-all {
+  font-size: 12px; font-weight: 700; color: #7c3aed; cursor: pointer;
+  text-decoration: none; display: flex; align-items: center; gap: 3px;
+  background: none; border: none; padding: 0; font-family: inherit;
+  transition: color 0.15s;
+}
+.vh-view-all:hover { color: #4c1d95; }
+.vh-table { width: 100%; border-collapse: collapse; }
+.vh-table th {
+  font-size: 10px; font-weight: 700; color: #8b5cf6;
+  text-transform: uppercase; letter-spacing: 0.1em;
+  padding: 0 8px 10px 0; text-align: left;
+  border-bottom: 1.5px solid #f0ecff;
+}
+.vh-table td {
+  font-size: 12.5px; color: #1e1b4b; font-weight: 500;
+  padding: 10px 8px 10px 0;
+  border-bottom: 1px solid #f8f7ff; vertical-align: middle;
+}
+.vh-table tr:last-child td { border-bottom: none; }
+.vh-table td:last-child { color: #a78bfa; text-align: right; padding-right: 0; }
+.vh-table tr:hover td { background: rgba(124,58,237,0.025); }
+
+/* Mission row thumbnail */
+.vh-row-thumb {
+  width: 28px; height: 28px; border-radius: 8px;
+  background: linear-gradient(135deg,#ede9fe,#ddd6fe);
+  display: inline-flex; align-items: center; justify-content: center;
+  margin-right: 8px; flex-shrink: 0;
+  vertical-align: middle;
+}
+
+/* Drone row thumb */
+.vh-drone-thumb {
+  width: 28px; height: 28px; border-radius: 8px;
+  background: #f8f7ff; border: 1px solid #ede9fe;
+  display: inline-flex; align-items: center; justify-content: center;
+  margin-right: 8px; flex-shrink: 0; vertical-align: middle; color: #7c3aed;
+}
+
+.vh-pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 10px; border-radius: 99px; font-size: 11px; font-weight: 700; white-space: nowrap;
+}
+.vh-pill-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.vh-pill.completed   { background: #dcfce7; color: #15803d; }
+.vh-pill.completed   .vh-pill-dot { background: #16a34a; }
+.vh-pill.inprogress  { background: #dbeafe; color: #1d4ed8; }
+.vh-pill.inprogress  .vh-pill-dot { background: #3b82f6; }
+.vh-pill.scheduled   { background: #fef3c7; color: #b45309; }
+.vh-pill.scheduled   .vh-pill-dot { background: #f59e0b; }
+.vh-pill.running     { background: #ede9fe; color: #6d28d9; border: 1px solid #ddd6fe; }
+.vh-pill.running     .vh-pill-dot { background: #7c3aed; animation: vh-pulse 1.2s infinite; }
+.vh-pill.online      { background: #dcfce7; color: #15803d; }
+.vh-pill.online      .vh-pill-dot { background: #16a34a; }
+.vh-pill.maintenance { background: #fef3c7; color: #b45309; }
+.vh-pill.maintenance .vh-pill-dot { background: #f59e0b; }
+.vh-pill.offline     { background: #fee2e2; color: #dc2626; }
+.vh-pill.offline     .vh-pill-dot { background: #ef4444; }
+.vh-pill.armed       { background: #fee2e2; color: #dc2626; }
+.vh-pill.armed       .vh-pill-dot { background: #ef4444; animation: vh-pulse 1.1s infinite; }
+.vh-pill.disarmed    { background: #f8f7ff; color: #8b5cf6; border: 1px solid #ede9fe; }
+.vh-pill.disarmed    .vh-pill-dot { background: #c4b5fd; }
+
+.vh-battery-wrap { display: flex; align-items: center; gap: 7px; }
+.vh-battery-bar  { width: 64px; height: 6px; background: #ede9fe; border-radius: 3px; overflow: hidden; }
+.vh-battery-fill { height: 100%; border-radius: 3px; transition: width 0.7s ease; }
+.vh-battery-fill.high   { background: linear-gradient(90deg,#6d28d9,#a78bfa); }
+.vh-battery-fill.medium { background: linear-gradient(90deg,#7c3aed,#c4b5fd); }
+.vh-battery-fill.low    { background: #ef4444; }
+.vh-battery-fill.dead   { background: #e2e8f0; }
+
+@keyframes vh-fadein {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.vh-animate   { animation: vh-fadein 0.4s ease both; }
+.vh-animate-1 { animation-delay: 0.04s; }
+.vh-animate-2 { animation-delay: 0.08s; }
+.vh-animate-3 { animation-delay: 0.12s; }
+.vh-animate-4 { animation-delay: 0.16s; }
+.vh-animate-5 { animation-delay: 0.20s; }
+.vh-animate-6 { animation-delay: 0.24s; }
+.vh-animate-7 { animation-delay: 0.28s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .vh-animate { animation: none !important; }
+  .vh-ring-fill { transition: none !important; }
+  .vh-pulse-dot { animation: none !important; }
+  .vh-wp-bar-fill { transition: none !important; }
+}
+
+/* -----------------------------------------------------------------------
+   PURPLE SHADOWS UNDER GRAPHS / WIDGETS
+   Applied to every card/panel on the home page.
+   All rules scoped under .varuna-home � zero impact on other pages.
+   ----------------------------------------------------------------------- */
+
+/* -- All panels and cards get a rich purple drop shadow -- */
+.varuna-home .vh-panel,
+.varuna-home .vh-kpi-card,
+.varuna-home .vh-telem-card {
+  box-shadow:
+    0 4px 6px  rgba(109, 40, 217, 0.06),
+    0 10px 24px rgba(109, 40, 217, 0.10),
+    0 20px 40px rgba(109, 40, 217, 0.07),
+    0  1px  0  rgba(255, 255, 255, 0.90) inset;
+}
+
+/* -- Deeper shadow on hover � lifts the card -- */
+.varuna-home .vh-panel:hover,
+.varuna-home .vh-kpi-card:hover,
+.varuna-home .vh-telem-card:hover {
+  box-shadow:
+    0  6px 10px  rgba(109, 40, 217, 0.09),
+    0 16px 32px  rgba(109, 40, 217, 0.14),
+    0 32px 56px  rgba(109, 40, 217, 0.09),
+    0  0   0 2px rgba(167, 139, 250, 0.18),
+    0  1px  0    rgba(255, 255, 255, 1.00) inset;
+}
+
+/* -- Bar chart � purple area shadow under the bars -- */
+.varuna-home .vh-barchart {
+  filter: drop-shadow(0 6px 12px rgba(109, 40, 217, 0.18));
+}
+
+/* -- Donut chart SVG � soft purple glow around the ring -- */
+.varuna-home .vh-donut-svg {
+  filter: drop-shadow(0 6px 16px rgba(109, 40, 217, 0.20));
+}
+
+/* -- Telemetry rings � purple glow behind each ring -- */
+.varuna-home .vh-ring-wrap svg {
+  filter: drop-shadow(0 4px 10px rgba(109, 40, 217, 0.22));
+}
+
+/* -- Sparkline � subtle purple shadow under each trend line -- */
+.varuna-home .vh-sparkline {
+  filter: drop-shadow(0 3px 6px rgba(109, 40, 217, 0.25));
+}
+
+/* -- KPI icon bubbles � deeper glow -- */
+.varuna-home .vh-kpi-icon {
+  box-shadow:
+    0 4px 10px  rgba(109, 40, 217, 0.30),
+    0 8px 20px  rgba(109, 40, 217, 0.18),
+    0 1px 0     rgba(255, 255, 255, 0.25) inset;
+}
+
+/* -- Battery bars � glow under the track -- */
+.varuna-home .vh-battery-bar {
+  box-shadow: 0 2px 8px rgba(109, 40, 217, 0.15);
+}
+.varuna-home .vh-battery-fill.high,
+.varuna-home .vh-battery-fill.medium {
+  box-shadow: 0 0 8px rgba(109, 40, 217, 0.35);
+}
+
+/* -- Progress bar fill � glowing purple beam -- */
+.varuna-home .vh-wp-bar-fill {
+  box-shadow: 0 0 10px rgba(109, 40, 217, 0.45), 0 0 4px rgba(167, 139, 250, 0.40);
+}
+
+/* -- Mission tiles � inset purple shadow -- */
+.varuna-home .vh-mission-tile {
+  box-shadow:
+    inset 0 1px 0   rgba(255, 255, 255, 0.80),
+    0 2px 8px  rgba(109, 40, 217, 0.10);
+}
+
+/* -- Hero section � purple shadow below -- */
+.varuna-home .vh-hero {
+  box-shadow: 0 12px 40px rgba(109, 40, 217, 0.18), 0 4px 12px rgba(109, 40, 217, 0.10);
+}
+
+/* -- Header � purple under-glow -- */
+.varuna-home .vh-header {
+  box-shadow:
+    0 2px  6px  rgba(109, 40, 217, 0.06),
+    0 6px 16px  rgba(109, 40, 217, 0.07);
+}
+
+/* -- Respect reduced motion � remove filter animations -- */
+@media (prefers-reduced-motion: reduce) {
+  .varuna-home .vh-barchart,
+  .varuna-home .vh-donut-svg,
+  .varuna-home .vh-ring-wrap svg,
+  .varuna-home .vh-sparkline {
+    filter: none;
+  }
+}
+
+.vh-bottom-row--single { grid-template-columns: 1fr; }

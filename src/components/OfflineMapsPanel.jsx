@@ -147,7 +147,7 @@ export default function OfflineMapsPanel() {
             </span>
             <button onClick={() => { stopRef.current = true }} className="font-semibold text-muted hover:text-bad">Stop</button>
           </div>
-          <div className="h-1.5 overflow-hidden rounded-full bg-slate-200">
+          <div className="h-1.5 overflow-hidden rounded-full bg-line">
             <div
               className="h-full rounded-full bg-accent transition-[width] duration-200"
               style={{ width: `${Math.min(100, (progress.processed / Math.max(1, progress.total)) * 100)}%` }}

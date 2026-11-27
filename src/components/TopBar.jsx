@@ -2,7 +2,9 @@ import { useState } from 'react'
 import { useSystem } from './SystemContext'
 import { StatusOrb } from './ui'
 import { pick, bool, DASH } from '../lib/format'
-import { getTheme, applyTheme, THEMES } from '../lib/theme'
+import { getTheme, applyTheme, THEMES, getLook, applyLook } from '../lib/theme'
+import { useUser, displayName } from '../lib/auth'
+import { useOnline } from '../lib/online'
 
 function Stat({ label, value }) {
   return (
@@ -76,9 +78,38 @@ function ThemeToggle() {
   )
 }
 
+// ── Look slider — New (navy / teal) ↔ Classic (the earlier gold + purple/white) ──
+function LookToggle() {
+  const [look, setLook] = useState(getLook)
+  const classic = look === 'classic'
+  function flip() {
+    const next = classic ? 'new' : 'classic'
+    applyLook(next)
+    setLook(next)
+  }
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={classic}
+      onClick={flip}
+      title={classic ? 'Classic look (earlier theme). Click for the new look.' : 'New look. Click for the classic (earlier) theme.'}
+      aria-label={classic ? 'Look: Classic. Click to switch to New.' : 'Look: New. Click to switch to Classic.'}
+      className="look-toggle"
+    >
+      <span className="look-toggle-label" data-on={!classic}>New</span>
+      <span className="look-toggle-track" data-classic={classic}>
+        <span className="look-toggle-knob" />
+      </span>
+      <span className="look-toggle-label" data-on={classic}>Classic</span>
+    </button>
+  )
+}
+
 /** Top mission status bar spanning the app. */
 export function TopBar({ onLock, onMenu, navPinned, onAssistant, wakeState, onToggleWake }) {
   const { telemetry, backendReachable } = useSystem()
+  const online = useOnline()
   const t = telemetry.data || {}
   const s = telemetry.status
   const level = backendReachable === false ? 'bad' : s === 'live' ? 'ok' : s === 'polling' ? 'warn' : 'bad'
@@ -87,10 +118,11 @@ export function TopBar({ onLock, onMenu, navPinned, onAssistant, wakeState, onTo
   const armed = bool(pick(t, ['armed', 'is_armed']))
   // Flight details only earn header space while there's a live link to report on
   const showFlight = s === 'live' && backendReachable !== false
+  const user = useUser()
 
   return (
     <header
-      className={`fixed inset-x-0 top-0 z-30 flex items-center justify-between border-b border-line bg-white/95 backdrop-blur-sm px-4 py-2 transition-[padding] duration-500 ease-[cubic-bezier(.16,1,.3,1)] ${navPinned ? 'md:pl-[252px]' : 'md:pl-[36px]'}`}
+      className={`fixed inset-x-0 top-0 z-30 flex items-center justify-between app-topbar border-b border-line backdrop-blur-sm px-4 py-2 transition-[padding] duration-500 ease-[cubic-bezier(.16,1,.3,1)] ${navPinned ? 'md:pl-[252px]' : 'md:pl-[36px]'}`}
       style={{ paddingTop: 'max(8px, env(safe-area-inset-top))' }}
     >
       <div className="flex items-center gap-2">
@@ -117,23 +149,34 @@ export function TopBar({ onLock, onMenu, navPinned, onAssistant, wakeState, onTo
           </>
         )}
 
+        {/* Signed-in operator */}
+        {user && (
+          <span
+            className="hidden max-w-[180px] truncate rounded-lg bg-chip px-3 py-1.5 text-[11px] font-semibold text-ink sm:inline"
+            title={[user.name, user.email].filter(Boolean).join(' · ')}
+          >
+            Hi, {displayName(user)}
+          </span>
+        )}
+
         {/* Link status pill */}
         <div className="flex items-center gap-2 rounded-lg bg-chip px-3 py-1.5">
           <StatusOrb level={level} size={9} pulse={s === 'polling' || s === 'connecting'} />
           <span className="text-[11px] font-semibold tracking-wider text-ink">{conn}</span>
         </div>
 
-        {/* Theme toggle */}
+        {/* Theme toggle, and the New / Classic look slider beside it */}
         <ThemeToggle />
+        <LookToggle />
 
         {/* Hi Varuna button */}
         {onAssistant && (
           <div className="flex items-center overflow-hidden rounded-lg" style={{ background: 'rgba(59,158,255,0.15)' }}>
             <button
               onClick={onAssistant}
-              title={'Wake Varuna (or just say \u201cVaruna\u201d)'}
+              title={online ? 'Wake Varuna (or just say \u201cVaruna\u201d)' : 'No internet: the voice assistant needs it, unless a local model is set in its settings'}
               className="flex h-9 items-center gap-1.5 px-3 text-[11px] font-bold tracking-wider"
-              style={{ color: 'var(--accent-hex)' }}
+              style={{ color: 'var(--accent-hex)', opacity: online ? 1 : 0.5 }}
             >
               <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 2l1.8 5.2L19 9l-5.2 1.8L12 16l-1.8-5.2L5 9l5.2-1.8L12 2zm7 11l.9 2.6 2.6.9-2.6.9L19 20l-.9-2.6-2.6-.9 2.6-.9L19 13z" fill="currentColor" /></svg>
               <span className="hidden sm:inline">HI VARUNA</span>

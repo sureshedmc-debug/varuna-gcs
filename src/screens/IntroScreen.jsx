@@ -14,6 +14,45 @@ function prefersReducedMotion() {
   }
 }
 
+// Pin the drone / boat call-outs to their 3D anchors every frame (no React re-render).
+function placeTags(f, droneEl, boatEl, countEl) {
+  const show = f.rushing ? 0 : f.ai
+  if (droneEl) {
+    droneEl.style.transform = `translate3d(${f.drone.x.toFixed(1)}px, ${f.drone.y.toFixed(1)}px, 0)`
+    droneEl.style.opacity = String(show)
+  }
+  if (boatEl) {
+    boatEl.style.transform = `translate3d(${f.boat.x.toFixed(1)}px, ${f.boat.y.toFixed(1)}px, 0)`
+    boatEl.style.opacity = String(f.boat.visible ? show : 0)
+  }
+  if (countEl) {
+    const n = String(f.boat.collected).padStart(2, '0')
+    if (countEl.textContent !== n) countEl.textContent = n
+  }
+}
+
+/** One leader-line call-out. `side` = which way the label extends from its anchor. */
+function Tag({ tagRef, side, title, children }) {
+  const left = side === 'left'
+  return (
+    <div ref={tagRef} className="absolute left-0 top-0 opacity-0 will-change-transform" style={{ transition: 'opacity 0.4s' }}>
+      <span className="absolute -left-[3px] -top-[3px] h-1.5 w-1.5 rounded-full bg-cyan-300 shadow-[0_0_8px_2px_rgba(103,232,249,0.6)]" />
+      <svg className={`absolute bottom-0 ${left ? 'right-0' : 'left-0'}`} width="46" height="34" style={{ overflow: 'visible' }}>
+        <polyline
+          points={left ? '46,34 22,10 0,10' : '0,34 24,10 46,10'}
+          fill="none"
+          stroke="rgba(165,243,252,0.55)"
+          strokeWidth="1"
+        />
+      </svg>
+      <div className={`absolute bottom-[26px] whitespace-nowrap ${left ? 'right-[52px] text-right' : 'left-[52px]'}`}>
+        <div className="font-mono text-[10.5px] font-semibold tracking-[0.26em] text-white/85">{title}</div>
+        <div className="mt-0.5 font-mono text-[9.5px] tracking-[0.2em] text-cyan-200/60">{children}</div>
+      </div>
+    </div>
+  )
+}
+
 /**
  * Cinematic activation gate: a quadcopter powers on in the dark and hovers.
  * Click / Enter / Space → it rushes the camera, the headlights white out the
@@ -21,6 +60,9 @@ function prefersReducedMotion() {
  */
 export default function IntroScreen({ onActivate }) {
   const mountRef = useRef(null)
+  const droneTagRef = useRef(null)
+  const boatTagRef = useRef(null)
+  const countRef = useRef(null)
   const apiRef = useRef(null)
   const activateRef = useRef(onActivate)
   activateRef.current = onActivate
@@ -36,6 +78,7 @@ export default function IntroScreen({ onActivate }) {
         if (cancelled || !mountRef.current) return
         api = createDroneIntro(mountRef.current, {
           reducedMotion: reduce,
+          onFrame: (f) => placeTags(f, droneTagRef.current, boatTagRef.current, countRef.current),
           onReveal: () => {
             if (cancelled) return
             if (reduce || !api?.supported) {
@@ -48,6 +91,7 @@ export default function IntroScreen({ onActivate }) {
           },
         })
         apiRef.current = api
+        if (import.meta.env.DEV) window.__varunaIntro = api // dev-only hook for stepping/capturing frames
         if (!api.supported) setFallback(true)
       })
       .catch(() => {
@@ -101,8 +145,18 @@ export default function IntroScreen({ onActivate }) {
             exit={{ opacity: 0, scale: 1.03, filter: 'blur(6px)', transition: { duration: 0.22, ease: 'easeIn' } }}
           >
             {/* legibility gradients */}
-            <div className="absolute inset-x-0 bottom-0 h-[45%] bg-gradient-to-t from-black/85 via-black/40 to-transparent" />
+            <div className="absolute inset-x-0 bottom-0 h-[36%] bg-gradient-to-t from-black/85 via-black/40 to-transparent" />
             <div className="absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-black/60 to-transparent" />
+
+            {/* the ecosystem, called out in the scene */}
+            <div className="hidden md:block">
+              <Tag tagRef={droneTagRef} side="left" title="VARUNA · AERIAL SCOUT">
+                SCANNING · TAGGING PLASTIC
+              </Tag>
+              <Tag tagRef={boatTagRef} side="right" title="NIRMAL DHARA JALYAN · COLLECTOR">
+                <span ref={countRef}>00</span> PIECES COLLECTED
+              </Tag>
+            </div>
 
             {/* HUD corner brackets */}
             {[
@@ -174,6 +228,17 @@ export default function IntroScreen({ onActivate }) {
                   AI
                 </motion.span>
               </h1>
+
+              {/* The collection boat that works with the drone. */}
+              <motion.div
+                className="mt-3 flex items-baseline gap-3"
+                initial={{ opacity: 0, y: 10, filter: 'blur(6px)' }}
+                animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+                transition={{ delay: 2.4, duration: 0.8, ease }}
+              >
+                <span className="font-mono text-[10.5px] tracking-[0.42em] text-white/50">BOAT</span>
+                <span className="text-xl font-bold tracking-[0.3em] text-white/90 sm:text-2xl">NIRMAL DHARA JALYAN</span>
+              </motion.div>
 
               <motion.button
                 type="button"

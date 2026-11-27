@@ -11,6 +11,7 @@ const http = require('node:http')
 const https = require('node:https')
 const settings = require('./settings.cjs')
 const { startServer } = require('./server.cjs')
+const { createLocalData } = require('./localData.cjs')
 
 const DEV_URL = process.env.VITE_DEV_SERVER_URL || ''
 
@@ -59,6 +60,13 @@ async function boot() {
       root: distRoot(),
       preferredPort: s.port,
       getTarget: () => settings.load().piAddress,
+      getBoatTarget: () => settings.load().boatAddress,
+      // Operator records (CSV) and sign-in live in the per-user folder, which
+      // survives app updates: %APPDATA%\VARUNA GCS\data on Windows.
+      localData: createLocalData({
+        dataDir: path.join(app.getPath('userData'), 'data'),
+        seedFile: path.join(distRoot(), 'config', 'rivers.json'),
+      }),
     })
     if (port !== s.port) {
       // The app's settings, saved Groq key and detection log live in
@@ -119,7 +127,8 @@ function applyCsp(ses) {
     "worker-src 'self' blob:",
     "style-src 'self' 'unsafe-inline'", // Tailwind + Framer Motion inject styles
     "font-src 'self' data:",
-    `img-src 'self' data: blob: https://server.arcgisonline.com${devOrigin ? ` ${devOrigin}` : ''}`,
+    // googleusercontent: the signed-in operator's Google profile picture.
+    `img-src 'self' data: blob: https://server.arcgisonline.com https://*.googleusercontent.com${devOrigin ? ` ${devOrigin}` : ''}`,
     `media-src 'self' blob: data:${devOrigin ? ` ${devOrigin}` : ''}`,
     `connect-src 'self' ${CONNECT_HOSTS.join(' ')}${devConnectExtra ? ` ${devConnectExtra}` : ''}`,
     "form-action 'none'",
@@ -154,6 +163,28 @@ function isOwnUrl(u) {
   }
 }
 
+function isGoogleSignInPage(u) {
+  try {
+    const x = new URL(u)
+    return x.hostname === 'localhost' && x.pathname === '/local/auth/google/page'
+  } catch {
+    return false
+  }
+}
+
+// The Windows Hello page (localData.cjs). WebAuthn refuses the window's
+// 127.0.0.1 address, so it runs at localhost on the same port, in a small window
+// of its own inside the app.
+function isFingerprintPage(u) {
+  try {
+    const x = new URL(u)
+    return x.protocol === 'http:' && x.hostname === 'localhost' && x.port === new URL(appOrigin).port &&
+      x.pathname === '/local/auth/fingerprint/page'
+  } catch {
+    return false
+  }
+}
+
 function openExternal(u) {
   if (/^(https?:|mailto:)/i.test(u)) shell.openExternal(u).catch(() => {})
 }
@@ -175,6 +206,29 @@ function setupSecurity() {
   app.on('web-contents-created', (_e, contents) => {
 
     contents.setWindowOpenHandler(({ url }) => {
+      if (isFingerprintPage(url)) {
+        return {
+          action: 'allow',
+          overrideBrowserWindowOptions: {
+            width: 380,
+            height: 400,
+            resizable: false,
+            minimizable: false,
+            maximizable: false,
+            autoHideMenuBar: true,
+            title: 'VARUNA AI — Fingerprint',
+            parent: BrowserWindow.fromWebContents(contents) || undefined,
+            modal: true,
+            webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+          },
+        }
+      }
+      // Google refuses to sign in inside an embedded app window, so its sign-in
+      // page (served by localData.cjs) always opens in the system browser.
+      if (isGoogleSignInPage(url)) {
+        openExternal(url)
+        return { action: 'deny' }
+      }
       // The certificate print view (lib/certificate.js) opens a blank window and
       // writes into it; the camera snapshot opens a same-origin URL. Both stay
       // in-app. Everything else (Google Maps, WhatsApp) goes to the system browser.
@@ -243,6 +297,40 @@ function explainError(err, ms) {
   return { ok: false, ms, title: 'Could not reach the Pi', detail: `${code || (err && err.message) || 'Unknown error'}` }
 }
 
+/** Like testPi, then also checks the address really is the boat (not the drone's Pi). */
+async function testBoat(base) {
+  if (!base) {
+    return { ok: false, title: 'No address entered', detail: "Enter the boat Pi's Netbird address, e.g. http://100.92.14.8:8000" }
+  }
+  const r = await testPi(base)
+  if (!r.ok) return r
+  const body = await new Promise((resolve) => {
+    const u = new URL('/api/ping', base)
+    const req = (u.protocol === 'https:' ? https : http).get(u, (res) => {
+      let text = ''
+      res.setEncoding('utf8')
+      res.on('data', (c) => { if (text.length < 4096) text += c })
+      res.on('end', () => resolve(text))
+    })
+    req.on('error', () => resolve(''))
+    req.setTimeout(8000, () => { req.destroy(); resolve('') })
+  })
+  let vehicle = null
+  try {
+    vehicle = JSON.parse(body).vehicle
+  } catch {
+    /* not JSON */
+  }
+  if (vehicle !== 'boat') {
+    return {
+      ok: false, ms: r.ms,
+      title: 'That address is not the boat',
+      detail: "A backend answered, but it is not the VARUNA boat backend (it may be the drone's Pi). Enter the boat Pi's Netbird address.",
+    }
+  }
+  return { ...r, detail: `The boat answered /api/ping in ${r.ms} ms.` }
+}
+
 function testPi(base) {
   return new Promise((resolve) => {
     if (!base) {
@@ -299,6 +387,7 @@ function setupIpc() {
     if (!fromApp(event)) throw new Error('forbidden')
     return {
       piAddress: settings.load().piAddress,
+      boatAddress: settings.load().boatAddress,
       // In dev the page comes from Vite, whose proxy (VITE_DEV_API_TARGET) is in
       // charge, so the renderer should keep its normal browser behaviour.
       usesBuiltInProxy: !DEV_URL,
@@ -322,6 +411,23 @@ function setupIpc() {
     }
     return testPi(clean)
   })
+
+  ipcMain.handle('varuna:setBoatAddress', (event, raw) => {
+    if (!fromApp(event)) throw new Error('forbidden')
+    const clean = normalizeAddress(raw)
+    if (clean === null) return { ok: false, error: 'Enter an http:// address, e.g. http://100.92.14.8:8000' }
+    settings.save({ boatAddress: clean })
+    return { ok: true, boatAddress: clean }
+  })
+
+  ipcMain.handle('varuna:testBoatAddress', (event, raw) => {
+    if (!fromApp(event)) throw new Error('forbidden')
+    const clean = normalizeAddress(raw)
+    if (clean === null) {
+      return { ok: false, title: 'Invalid address', detail: 'Enter an http:// address, e.g. http://100.92.14.8:8000' }
+    }
+    return testBoat(clean)
+  })
 }
 
 // ---------- window + menu ----------
@@ -336,7 +442,8 @@ function onScreen(b) {
 function createWindow(url) {
   const saved = settings.load().windowBounds
   const bounds = onScreen(saved) ? { x: saved.x, y: saved.y, width: saved.width, height: saved.height } : {}
-  const iconPath = path.join(__dirname, '..', 'build', 'icon.png')
+  // .ico on Windows: it carries hand-made 16–32 px sizes for the title bar and taskbar.
+  const iconPath = path.join(__dirname, '..', 'build', process.platform === 'win32' ? 'icon.ico' : 'icon.png')
 
   win = new BrowserWindow({
     width: 1440,
@@ -354,6 +461,11 @@ function createWindow(url) {
       nodeIntegration: false,
       sandbox: true,
       spellcheck: false,
+      // A ground station must not slow down when another window covers it
+      // (screen recording, a second app on top): Chromium otherwise throttles
+      // timers and animation frames, so video, AI and telemetry fall behind
+      // and catch up in a burst when the window comes back.
+      backgroundThrottling: false,
     },
   })
   if (saved && saved.maximized) win.maximize()

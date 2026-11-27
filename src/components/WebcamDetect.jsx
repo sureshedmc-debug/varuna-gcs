@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  createPlasticDetector, mergeBoxes, makeTileGrid, overlapRatio, suppressByPerson,
+  createPlasticDetector, mergeBoxes, makeTileGrid, overlapRatio, suppressByPerson, suppressPersonBody,
   DETECT_MODELS, DEFAULT_DETECT_MODEL, getDetectModel, setDetectModel,
 } from '../lib/detector'
 import { BoxTracker } from '../lib/track'
@@ -13,9 +13,12 @@ import { useSystem } from './SystemContext'
 import { useLivePosition, useLaptopGps } from '../hooks/useLaptopGps'
 import { pick } from '../lib/format'
 import { StatusOrb } from './ui'
-import { getFovSettings, pixelBoxToRealSize } from '../lib/sizeEstimate'
+import { fmtLength, getFovSettings, metersPerPixel, pixelBoxToRealSize, summarizeSizes } from '../lib/sizeEstimate'
+import { projectBoxes } from '../lib/geoProject'
 import { getAlertSettings } from '../lib/alertSettings'
 import { sendBigDumpEmail } from '../lib/alerts/email'
+import { releaseStream } from './StreamImg'
+import { h264Supported, playH264 } from '../lib/h264Stream'
 import {
   createLearner, boxFeatures, cropInfo, saveFeedback, deleteFeedback, feedbackCount, clearFeedback, exportFeedback,
   learnerEnabled, setLearnerEnabled, showFilteredEnabled, setShowFilteredEnabled,
@@ -92,6 +95,52 @@ const DETECT_CONF_FLOOR = 0.2
 // was last seen (detections flicker, and the tracker then starts a new track).
 const ANSWER_HOLD_MS = 15000
 const TILE_CONF_FACTOR = 0.85
+// The face and person models only stop people being counted as plastic, and
+// people move slowly: running them on every frame tripled each frame's work.
+// They run at most this often; frames in between reuse their last answer.
+const HUMAN_EVERY_MS = 350
+// A webcam is not a drone looking down at a river: the plastic is held up
+// close, by a person who is in the picture. There, the general (COCO) model's
+// bottles and cups are added from the same pass that finds people (ITEM_CONF),
+// a zoomed tile runs on every pass (the river model misses close-up items at
+// full-frame scale; CAM_TILE_CONF keeps its zoomed-in guesses honest), and only
+// boxes that ARE a person are dropped, not ones they hold.
+const ITEM_CONF = 0.35
+const CAM_TILE_CONF = 0.35
+
+// One CPU copy of the current picture per detection pass. Every model, box
+// check and crop then reads from it. Reading pixels straight from the live
+// <video> / video canvas blocks the page ~16 ms EACH time (a GPU readback),
+// and a pass did it 4-15 times (each model, each box the self-learner
+// checks): the Live tab stuttered. VideoFrame.copyTo reads it once, without
+// blocking. Returns null where it isn't supported; callers then use the element.
+// `snap` is the caller's own { cv, ctx, buf, ok } (one per detector on screen).
+async function snapshotFrame(el, snap) {
+  if (!snap.ok || !el) return null
+  let vf = null
+  try {
+    vf = new VideoFrame(el, { timestamp: 0 })
+    const w = vf.displayWidth, h = vf.displayHeight
+    if (!w || !h) return null
+    const size = vf.allocationSize({ format: 'RGBA' })
+    if (!snap.buf || snap.buf.length !== size) snap.buf = new Uint8ClampedArray(size)
+    await vf.copyTo(snap.buf, { format: 'RGBA' })
+    if (!snap.cv) {
+      snap.cv = document.createElement('canvas')
+      snap.ctx = snap.cv.getContext('2d', { willReadFrequently: true })
+    }
+    if (snap.cv.width !== w || snap.cv.height !== h) { snap.cv.width = w; snap.cv.height = h }
+    snap.ctx.putImageData(new ImageData(snap.buf, w, h), 0, 0)
+    return snap.cv
+  } catch (e) {
+    // e.g. an older runtime without RGBA copyTo: stop trying, read the element.
+    console.info('[detect] reading frames directly:', e?.message ?? e)
+    snap.ok = false
+    return null
+  } finally {
+    vf?.close()
+  }
+}
 
 // Hand the main thread back to the browser between model runs, so the UI can
 // paint and take clicks mid-frame instead of freezing while all models run.
@@ -100,11 +149,38 @@ const yieldToUI = () =>
     ? globalThis.scheduler.yield()
     : new Promise((r) => { const ch = new MessageChannel(); ch.port1.onmessage = () => r(); ch.port2.postMessage(0) })
 
+// The public website (Vercel, `--mode site`): its drone is a demo on a server
+// with a test camera, so the visitor's own webcam is the camera instead.
+const WEB_SITE = import.meta.env.VITE_SITE === '1'
+const NO_SYSTEM = { telemetry: { data: null }, simulated: false }
+
 // controlsLift: extra px to raise the Start/Stop/Record row, for hosts that
 // overlay their own bottom panel (e.g. the Live tab's flight commands).
-export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam', autoStart = false, onCount, controlsLift = 0 }) {
+// demo: the website's public "Try the AI" page — webcam only, nothing saved,
+// no location asked for. background: the off-screen detector (BackgroundDetect).
+export default function WebcamDetect({ confThr = 0.15, defaultSource: sourceProp = 'webcam', autoStart: autoProp = false, onCount, controlsLift = 0, demo = false, background = false }) {
+  // On the website the webcam comes first and starts on a click, so a visitor
+  // is never asked for their camera before they choose to try it.
+  const webcamFirst = demo || (WEB_SITE && sourceProp === 'auto' && !background)
+  const defaultSource = webcamFirst ? 'webcam' : sourceProp
+  const autoStart = webcamFirst ? false : autoProp
   const videoRef     = useRef(null)
+  // The camera itself, kept apart from the <video>: React clears videoRef
+  // before an unmount's cleanup runs, so stopping through it left the camera
+  // on after leaving the page.
+  const camStreamRef = useRef(null)
+  const mountedRef   = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => { mountedRef.current = false; releaseCamera() }
+  }, [])
+  function releaseCamera() {
+    camStreamRef.current?.getTracks().forEach((t) => t.stop())
+    camStreamRef.current = null
+  }
   const streamImgRef = useRef(null)
+  const streamCanvasRef = useRef(null)   // drone H.264, decoded into it
+  const h264Ref = useRef(null)
   const canvasRef    = useRef(null)
   const srcElRef     = useRef(null)
   const detRef       = useRef(null)
@@ -140,7 +216,10 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
   const learnOnRef      = useRef(learnerEnabled())
   const showFilteredRef = useRef(showFilteredEnabled())
   const xformRef        = useRef(null)
+  const mppRef          = useRef(null)   // metres per pixel of the drone frame (null = no usable altitude)
   const frameCanvasRef  = useRef(null)
+  const frameElRef      = useRef(null)   // this pass's CPU copy of the picture (snapshotFrame)
+  const snapRef         = useRef({ cv: null, ctx: null, buf: null, ok: typeof VideoFrame === 'function' })
 
   const [status, setStatus]               = useState('init')
   const [msg,    setMsg]                  = useState('Loading AI models...')
@@ -148,7 +227,8 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
   const [fps,    setFps]                  = useState(0)
   const [count,  setCount]                = useState(0)
   const [facing, setFacing]               = useState('environment')
-  const [source, setSource]               = useState(defaultSource)
+  // 'auto' = the drone's camera when it is streaming, else the laptop webcam.
+  const [source, setSource]               = useState(defaultSource === 'auto' ? 'webcam' : defaultSource)
   const [longRange,        setLongRange]        = useState(false)
   const [gridSize,         setGridSize]         = useState(2)
   const [humanDetection,   setHumanDetection]   = useState(true)
@@ -174,15 +254,29 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
   useEffect(() => { setConf(confThr) }, [confThr])
   confRef.current = conf
 
+  // Settings panel: a mouse opens it by hovering the gear. A touch screen has no
+  // hover — a tap there left the panel "stuck" open and it kept reappearing —
+  // so on touch the gear is a plain open / close button, and a tap anywhere
+  // else closes it.
+  const [gearOpen, setGearOpen] = useState(false)
+  const gearRef = useRef(null)
+  useEffect(() => {
+    if (!gearOpen) return
+    const off = (e) => { if (!gearRef.current?.contains(e.target)) setGearOpen(false) }
+    document.addEventListener('pointerdown', off)
+    return () => document.removeEventListener('pointerdown', off)
+  }, [gearOpen])
+  const canHover = () => typeof window !== 'undefined' && !!window.matchMedia?.('(hover: hover) and (pointer: fine)').matches
+
   // Position for geotagging trash, matched to where the camera actually is:
   //  - Drone mode: the drone GPS streamed over the WebSocket (telemetry), or
   //    the laptop's GPS when the drone has no fix.
   //  - Webcam mode: the camera is the laptop's, so always the laptop's own
   //    location — never the drone's (or the simulator's) position.
   // Kept in refs so the detect loop always reads the latest fix.
-  const { telemetry, simulated } = useSystem()
+  const { telemetry, simulated } = useSystem() || NO_SYSTEM
   const live = useLivePosition(telemetry.data)
-  const laptop = useLaptopGps(true)
+  const laptop = useLaptopGps(!demo)
   const geoRef = useRef({ pos: null, posSource: null, alt: null, accuracy: null })
   geoRef.current =
     source === 'webcam'
@@ -197,6 +291,10 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
           posSource: live.source === 'drone' && simulated ? 'sim' : live.source,
           alt: live.source === 'drone' ? Number(pick(telemetry.data, ['altitude', 'alt', 'relative_alt'])) : null,
           accuracy: live.accuracy ?? null,
+          // Attitude, to place each item on the water from where it is in the picture.
+          heading: live.source === 'drone' ? pick(telemetry.data, ['heading', 'yaw']) : null,
+          roll: live.source === 'drone' ? pick(telemetry.data, ['roll']) : null,
+          pitch: live.source === 'drone' ? pick(telemetry.data, ['pitch']) : null,
         }
   const sourceRef = useRef(source)
   sourceRef.current = source
@@ -215,6 +313,9 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
 
   useEffect(() => {
     let alive = true
+    // Read now: React clears the ref before the cleanup below runs, and an
+    // MJPEG <img> that is only removed keeps streaming (see StreamImg).
+    const streamImg = streamImgRef.current
     ;(async () => {
       try {
         let d
@@ -246,7 +347,12 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
           personDetRef.current = pd; setEp(d.ep + '+face+person')
         } catch (pe) { console.warn('[person] load failed:', pe) }
         setStatus('ready')
-        if (autoStart) start(defaultSource)
+        if (autoStart) {
+          const first = defaultSource === 'auto' ? await pickSource() : defaultSource
+          if (!alive) return
+          setSource(first)
+          start(first)
+        }
       } catch (e) {
         if (!alive) return
         // "memory access out of bounds" is a WASM trap. Once the shared
@@ -260,14 +366,15 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
           : 'Failed to load model: ' + raw)
       }
     })()
-    return () => { alive=false; stop(); detRef.current?.dispose(); faceDetRef.current?.dispose(); personDetRef.current?.dispose() }
+    return () => { alive=false; stop(); releaseStream(streamImg); detRef.current?.dispose(); faceDetRef.current?.dispose(); personDetRef.current?.dispose() }
   }, [defaultSource, autoStart])
 
   function fitCanvas() { const cv=canvasRef.current; if(!cv) return; const r=cv.getBoundingClientRect(); cv.width=Math.max(2,Math.round(r.width)); cv.height=Math.max(2,Math.round(r.height)) }
-  function srcSize(el) { return [el.videoWidth||el.naturalWidth||0, el.videoHeight||el.naturalHeight||0] }
+  function srcSize(el) { return [el.videoWidth||el.naturalWidth||el.width||0, el.videoHeight||el.naturalHeight||el.height||0] }
 
   function drawBoxes(ctx, cw, ch, vw, vh, ox, oy, dw, dh) {
-    const fontSize = Math.max(12, Math.round(cw / 52))
+    // At least 15 px so the labels stay readable on a phone screen.
+    const fontSize = Math.max(15, Math.round(cw / 52))
     ctx.textBaseline = 'middle'
 
     for (const b of boxesRef.current) {
@@ -346,7 +453,10 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
         : b.answered === 0 ? '  ✖ not plastic'
         : unsure ? '  ?'
         : filtered ? (b.why === 'rule' ? '  ✖ your answer' : '  · filtered') : ''
-      const pillText = `${icon}  ${b.label}${confTxt}${mark}`
+      // Real-world size from the drone's altitude ("≈30 cm"), plastic only.
+      const mpp = mppRef.current
+      const sizeTxt = mpp && !isHuman && !filtered ? `  ${fmtLength(Math.max(b.x2 - b.x1, b.y2 - b.y1) * mpp)}` : ''
+      const pillText = `${icon}  ${b.label}${confTxt}${sizeTxt}${mark}`
 
       const textW  = ctx.measureText(pillText).width
       const pillH  = fontSize + 10
@@ -442,25 +552,50 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
   }
 
   async function detectLoop() {
-    let frames=0, t0=performance.now(), taintWarned=false
+    let frames=0, t0=performance.now(), taintWarned=false, lastShotTs=null
+    let humanAt=-Infinity, lastFaces=[], lastPersons=[], lastItems=[]
     while(runningRef.current&&detRef.current&&srcElRef.current){
       const tickStart=performance.now()
       const loopFrame={} // the person filter shares one COCO model pass per loop
+      // The drone's pose when this picture was taken (H.264 from the drone Pi):
+      // the detections are placed from it, not from telemetry that arrived later.
+      const shot=srcElRef.current===streamCanvasRef.current?h264Ref.current?.frame():null
+      // Drone video arrives at ~15 fps: don't run the models again on a picture
+      // they have already seen (long range does, a different tile each time).
+      // The next new frame then starts straight away instead of queueing on the GPU.
+      if(shot&&!longRangeRef.current&&shot.tsUs===lastShotTs){await new Promise(r=>requestAnimationFrame(r));continue}
+      lastShotTs=shot?.tsUs??null
+      const src=(await snapshotFrame(srcElRef.current,snapRef.current))||srcElRef.current
+      if(!runningRef.current) break
+      frameElRef.current=src
       let faceBoxes=[], personBoxes=[], trashBoxes=[]
       if(trashDetectionRef.current){
-        try { trashBoxes=await detRef.current.detect(srcElRef.current,{confThr:Math.max(DETECT_CONF_FLOOR,confRef.current),iouThr:0.40}) }
+        try { trashBoxes=await detRef.current.detect(src,{confThr:Math.max(DETECT_CONF_FLOOR,confRef.current),iouThr:0.40}) }
         catch(e){ if(!taintWarned&&/tainted|cross.origin|SecurityError/i.test(e?.message??'')){taintWarned=true;setMsg('Drone stream blocked by CORS')} }
       }
       await yieldToUI()
-      if(faceDetRef.current&&humanDetectionRef.current){
-        try{faceBoxes=await faceDetRef.current.detectFaces(srcElRef.current,{confThr:FACE_CONF,iouThr:0.25})}catch(e){console.warn('[face]',e)}
+      const cam=sourceRef.current==='webcam'
+      const wantItems=cam&&trashDetectionRef.current
+      if((humanDetectionRef.current||wantItems)&&tickStart-humanAt>=HUMAN_EVERY_MS){
+        humanAt=tickStart
+        if(humanDetectionRef.current&&faceDetRef.current){
+          try{lastFaces=await faceDetRef.current.detectFaces(src,{confThr:FACE_CONF,iouThr:0.25})}catch(e){console.warn('[face]',e)}
+        }
+        await yieldToUI()
+        if(humanDetectionRef.current&&personDetRef.current){
+          try{lastPersons=await personDetRef.current.detectPersons(src,{confThr:PERSON_CONF,iouThr:0.30,frame:loopFrame})}catch(e){console.warn('[person]',e)}
+        }
+        // Same COCO pass as the people (same frame token): no extra model run.
+        if(wantItems&&personDetRef.current){
+          try{lastItems=await personDetRef.current.detectItems(src,{confThr:ITEM_CONF,frame:loopFrame})}catch(e){console.warn('[items]',e)}
+        }
       }
-      await yieldToUI()
-      if(personDetRef.current&&humanDetectionRef.current){
-        try{personBoxes=await personDetRef.current.detectPersons(srcElRef.current,{confThr:PERSON_CONF,iouThr:0.30,frame:loopFrame})}catch(e){console.warn('[person]',e)}
-      }
+      if(humanDetectionRef.current){faceBoxes=lastFaces;personBoxes=lastPersons}
+      else{lastFaces=[];lastPersons=[];if(!wantItems)humanAt=-Infinity}
+      if(!wantItems)lastItems=[]
       let runTile=false
-      if(longRangeRef.current){
+      if(cam&&!longRangeRef.current){runTile=true;gridSizeRef.current=2}
+      else if(longRangeRef.current){
         if(emaRef.current<=BUDGET_MS){runTile=true;if(emaRef.current<=BUDGET_MS*0.4)gridSizeRef.current=3;else if(emaRef.current>BUDGET_MS*0.7)gridSizeRef.current=2}
         else if(emaRef.current<=BUDGET_MS*1.8){runTile=tileSkipRef.current++%2===0;gridSizeRef.current=2}
         else{gridSizeRef.current=2}
@@ -468,20 +603,24 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
       if(runTile){
         const tiles=ensureTileGrid(),idx=tileIndexRef.current%tiles.length,rect=tiles[idx]
         activeTileRef.current=rect
-        try{const tc=Math.max(DETECT_CONF_FLOOR,confRef.current*TILE_CONF_FACTOR),tb=await detRef.current.detect(srcElRef.current,{confThr:tc,iouThr:0.40,rect});tileBoxesRef.current.set(idx,{boxes:tb,ts:performance.now()})}catch{}
+        try{const tc=cam&&!longRangeRef.current?Math.max(CAM_TILE_CONF,confRef.current):Math.max(DETECT_CONF_FLOOR,confRef.current*TILE_CONF_FACTOR),tb=await detRef.current.detect(src,{confThr:tc,iouThr:0.40,rect});tileBoxesRef.current.set(idx,{boxes:tb,ts:performance.now()})}catch{}
         tileIndexRef.current=idx+1
       } else { activeTileRef.current=null }
       const now=performance.now()
       emaRef.current=emaRef.current*0.8+(now-tickStart)*0.2
       const ft=[];for(const{boxes,ts}of tileBoxesRef.current.values()){if(now-ts<=TILE_TTL)ft.push(boxes)}
-      const merged=ft.length?mergeBoxes([trashBoxes,...ft],MERGE_IOU):trashBoxes
+      const extra=lastItems.length?[...ft,lastItems]:ft
+      const merged=extra.length?mergeBoxes([trashBoxes,...extra],MERGE_IOU):trashBoxes
       let finalTrash=merged
-      if(humanDetectionRef.current){finalTrash=suppressByPerson(suppressByFace(merged,faceBoxes),personBoxes)}
+      if(humanDetectionRef.current){
+        const noFace=suppressByFace(merged,faceBoxes)
+        finalTrash=cam?suppressPersonBody(noFace,personBoxes):suppressByPerson(noFace,personBoxes)
+      }
       // Self-learning: score every box. 'show' = counted as before, 'explore' =
       // drawn with a '?' for the operator to answer (not counted), 'hide' = a
       // learned false alarm. Features are computed even with learning off, so
       // the operator can still teach it.
-      const el=srcElRef.current
+      const el=src
       const [fw,fh]=el?srcSize(el):[0,0]
       const lrn=learnerRef.current
       const scored=finalTrash.map(b=>{
@@ -515,25 +654,48 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
       if(answers.size){const live=new Set(tracked.map(b=>b.id));for(const id of answers.keys()){if(!live.has(id))answers.delete(id)}}
       boxesRef.current=tracked.filter(b=>b.rl!=='rejected'||showFilteredRef.current)
       const counted=tracked.filter(b=>b.cls!=='human'&&b.rl==='show')
-      recordTrashCount(counted.length) // share plastic-only count with the Detections tab
+      if(!demo)recordTrashCount(counted.length) // share plastic-only count with the Detections tab
       // Stamp plastic with the aircraft's live position (≤ 2x/sec) for the Detections tab + report,
       // and grab a photo of this frame (the boxed view, exactly what the operator saw).
-      if(counted.length>0&&now-lastGeoTagRef.current>=500){
+      // Real-world scale of this frame (drone feed with a known altitude only):
+      // the boxes are drawn with their size, and the sighting records it.
+      const fovH=getFovSettings().fovHorizontalDeg
+      const fp=shot?.pose
+      const g=sourceRef.current!=='webcam'&&fp&&Number.isFinite(fp.lat)&&Number.isFinite(fp.lng)
+        ?{...geoRef.current,pos:[fp.lat,fp.lng],posSource:'drone',alt:fp.alt,heading:fp.hdg,roll:fp.roll,pitch:fp.pitch}
+        :geoRef.current
+      mppRef.current=sourceRef.current!=='webcam'?metersPerPixel({frameW:fw,altitudeM:g.alt,fovHDeg:fovH}):null
+      if(!demo&&counted.length>0&&now-lastGeoTagRef.current>=500){
         lastGeoTagRef.current=now
-        const g=geoRef.current
-        // Rough real-world size of the biggest box for this frame.
-        let biggest=counted[0]
-        let bestArea=(biggest.x2-biggest.x1)*(biggest.y2-biggest.y1)
-        for(const b of counted){const a=(b.x2-b.x1)*(b.y2-b.y1);if(a>bestArea){bestArea=a;biggest=b}}
-        const size=g.alt?pixelBoxToRealSize({boxW:biggest.x2-biggest.x1,boxH:biggest.y2-biggest.y1,frameW:fw,frameH:fh,altitudeM:g.alt,fovDeg:{horizontal:getFovSettings().fovHorizontalDeg,vertical:getFovSettings().fovVerticalDeg}}):null
+        const biggestOf=(bs)=>bs.reduce((m,b)=>((b.x2-b.x1)*(b.y2-b.y1)>(m.x2-m.x1)*(m.y2-m.y1)?b:m))
+        const biggest=biggestOf(counted)
         const cls=biggest.label||'plastic'
-        recordTrashSighting({
-          lat:g.pos?g.pos[0]:null, lng:g.pos?g.pos[1]:null, alt:g.alt,
-          count:counted.length, confidence:Math.max(...counted.map(b=>Number(b.score)||0)),
-          source:sourceRef.current, posSource:g.posSource, accuracy:g.accuracy,
-          photo:capturePhoto(),
-          className:cls, estWidthM:size?.widthM??null, estHeightM:size?.heightM??null,
-        })
+        const photo=capturePhoto()
+        // Drone feed with a GPS fix, altitude and heading: place each item where it
+        // is on the water (from where it sits in the straight-down picture), one
+        // sighting per group of items within 5 m, so the boat goes to the plastic
+        // itself rather than to the point under the drone. Otherwise: the camera's position.
+        const cam=getFovSettings()
+        const groups=sourceRef.current!=='webcam'&&g.posSource!=='laptop'&&g.pos?projectBoxes(counted,{
+          frameW:fw,frameH:fh,lat:g.pos[0],lng:g.pos[1],altitudeM:g.alt,headingDeg:g.heading,rollDeg:g.roll,pitchDeg:g.pitch,
+          fovHDeg:fovH,rotationDeg:cam.cameraRotationDeg,levelled:cam.cameraGimbal,
+        }):null
+        const record=(bs,lat,lng,where)=>{
+          const big=biggestOf(bs)
+          // The drone's crop of the item: the boat later checks it collects this same piece.
+          const crop=sourceRef.current!=='webcam'?cropBox(big):null
+          const size=mppRef.current?pixelBoxToRealSize({boxW:big.x2-big.x1,boxH:big.y2-big.y1,frameW:fw,altitudeM:g.alt,fovDeg:{horizontal:fovH}}):null
+          recordTrashSighting({
+            lat, lng, alt:g.alt,
+            count:bs.length, confidence:Math.max(...bs.map(b=>Number(b.score)||0)),
+            source:sourceRef.current, posSource:g.posSource, posMethod:where, accuracy:g.accuracy,
+            photo, crop:crop?.url, cropW:crop?.w, cropH:crop?.h,
+            className:big.label||cls, estWidthM:size?.widthM??null, estHeightM:size?.heightM??null,
+            sizes:mppRef.current?summarizeSizes(bs,{frameW:fw,altitudeM:g.alt,fovHDeg:fovH}):null,
+          })
+        }
+        if(groups) for(const grp of groups) record(grp.boxes,grp.lat,grp.lng,'picture')
+        else record(counted,g.pos?g.pos[0]:null,g.pos?g.pos[1]:null,g.pos?'camera':null)
         // Big-dump auto alerts. Guarded by cooldown and per-channel toggles.
         const settings=getAlertSettings()
         if(counted.length>=Math.max(1,Number(settings.bigDumpThreshold)||8)&&Date.now()-lastAlertAtRef.current>ALERT_COOLDOWN_MS){
@@ -552,9 +714,35 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
 
   async function startWebcam(f){
     const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:f,width:{ideal:1280},height:{ideal:720}},audio:false})
+    // Left the page while the browser was still asking for the camera.
+    if(!mountedRef.current||!videoRef.current){stream.getTracks().forEach(t=>t.stop());throw new Error('closed')}
+    releaseCamera(); camStreamRef.current=stream
     const v=videoRef.current; v.srcObject=stream; await v.play(); srcElRef.current=v
   }
+  /** The drone camera: H.264 (camera module, browsers with WebCodecs), else MJPEG. */
   function startStream(){
+    return h264Supported()?startH264().catch(()=>startMjpeg()):startMjpeg()
+  }
+  async function startH264(){
+    const st=await api.cameraStatus().catch(()=>null)
+    if(st?.codec!=='h264') throw new Error('the camera sends MJPEG')
+    return new Promise((resolve,reject)=>{
+      const cv=streamCanvasRef.current
+      let started=false
+      const fail=(why)=>{if(started)return;started=true;h264Ref.current?.close();h264Ref.current=null;reject(new Error(why))}
+      const timer=setTimeout(()=>fail('no H.264 picture'),6000)
+      h264Ref.current=playH264({url:api.h264Url()+'?pose=1',canvas:cv,
+        onFirstFrame:()=>{if(started)return;started=true;clearTimeout(timer);srcElRef.current=cv;resolve()},
+        onFatal:(why)=>{
+          clearTimeout(timer)
+          if(!started){fail(why);return}
+          // The camera switched to MJPEG while running (e.g. a webcam was plugged in).
+          h264Ref.current=null
+          if(runningRef.current) startMjpeg().catch(()=>{})
+        }})
+    })
+  }
+  function startMjpeg(){
     return new Promise((resolve,reject)=>{
       const img=streamImgRef.current; img.crossOrigin='anonymous'
       const onLoad=()=>{img.removeEventListener('load',onLoad);srcElRef.current=img;resolve()}
@@ -564,15 +752,27 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
       setTimeout(()=>{if(img.naturalWidth){srcElRef.current=img;resolve()}},1500)
     })
   }
+  /** The drone's camera if it is streaming, else the laptop webcam. */
+  async function pickSource(){
+    try{const r=await api.cameraStatus();return r?.camera_connected?'drone':'webcam'}catch{return 'webcam'}
+  }
   async function start(src=source,f=facing){
     if(!detRef.current) return
     try{
-      if(src==='webcam')await startWebcam(f); else await startStream()
+      if(src==='webcam'){
+        try{await startWebcam(f)}
+        catch(e){
+          if(!mountedRef.current) return
+          // No laptop camera (or no permission): use the drone's if it is streaming.
+          if(defaultSource!=='auto'||(await pickSource())!=='drone')throw e
+          src='drone';setSource('drone');await startStream()
+        }
+      } else await startStream()
       fitCanvas(); runningRef.current=true; setStatus('running'); draw(); detectLoop()
       // Record the whole mission (the boxed view, exactly what the operator saw)
       // from Start to Stop, so a full video — not just still detections — is
       // available for the report.
-      try{startMissionRecording(canvasRef.current.captureStream(15))}catch(e){console.warn('[mission-video]',e)}
+      if(!demo)try{startMissionRecording(canvasRef.current.captureStream(15))}catch(e){console.warn('[mission-video]',e)}
     }catch(e){
       setStatus('error'); setMsg(src==='webcam'?'Camera unavailable: '+(e?.message??e)+' (needs HTTPS + permission)':'Drone stream unavailable: '+(e?.message??e))
     }
@@ -580,14 +780,24 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
   function stop(){
     runningRef.current=false; cancelAnimationFrame(rafRef.current)
     stopMissionRecording()
+    releaseCamera()
     const v=videoRef.current; if(v?.srcObject){v.srcObject.getTracks().forEach(t=>t.stop());v.srcObject=null}
-    if(streamImgRef.current)streamImgRef.current.src=''
+    releaseStream(streamImgRef.current)
+    h264Ref.current?.close(); h264Ref.current=null
     srcElRef.current=null; boxesRef.current=[]; tileBoxesRef.current.clear()
     tileGridRef.current=null; activeTileRef.current=null; trackerRef.current.reset()
-    answeredRef.current.clear(); xformRef.current=null; setAsk(null)
+    answeredRef.current.clear(); xformRef.current=null; mppRef.current=null; setAsk(null)
     emaRef.current=60; gridSizeRef.current=2; setStatus(s=>s==='running'?'ready':s)
   }
-  async function switchSource(next){if(next===source)return;const was=runningRef.current;stop();setSource(next);if(was)await start(next)}
+  async function switchSource(next){
+    if(next===source)return
+    // Start the new source if the old one was running, or if this view starts by
+    // itself (a failed webcam must not leave the drone feed waiting for Start).
+    const go=runningRef.current||autoStart
+    stop();setSource(next)
+    if(detRef.current){setStatus(s=>s==='error'?'ready':s);setMsg('')}
+    if(go)await start(next)
+  }
   async function flip(){const next=facing==='environment'?'user':'environment';setFacing(next);if(runningRef.current&&source==='webcam'){stop();await start('webcam',next)}}
 
   async function getSaveFolder(){
@@ -645,6 +855,22 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
     const ctx=fc.getContext('2d'); if(!ctx) return null
     ctx.drawImage(el,0,0,fc.width,fc.height)
     try{return fc.toDataURL('image/jpeg',0.85)}catch{return null}
+  }
+
+  // The clean frame around one box (with some water around it), at most 128 px:
+  // the drone's reference image of that item for the boat (droneTargets.js).
+  function cropBox(b){
+    const el=frameElRef.current||srcElRef.current; if(!el||!b) return null
+    const [vw,vh]=srcSize(el); if(!vw||!vh) return null
+    const bw=b.x2-b.x1, bh=b.y2-b.y1; if(bw<2||bh<2) return null
+    const x1=Math.max(0,b.x1-0.35*bw), y1=Math.max(0,b.y1-0.35*bh)
+    const x2=Math.min(vw,b.x2+0.35*bw), y2=Math.min(vh,b.y2+0.35*bh)
+    const k=Math.min(1,128/Math.max(x2-x1,y2-y1))
+    const cv=document.createElement('canvas')
+    cv.width=Math.max(1,Math.round((x2-x1)*k)); cv.height=Math.max(1,Math.round((y2-y1)*k))
+    const ctx=cv.getContext('2d'); if(!ctx) return null
+    try{ctx.drawImage(el,x1,y1,x2-x1,y2-y1,0,0,cv.width,cv.height);return {url:cv.toDataURL('image/jpeg',0.85),w:cv.width,h:cv.height}}
+    catch{return null} // a cross-origin stream can't be read back
   }
 
   function onCanvasTap(e){
@@ -761,12 +987,14 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
   useEffect(()=>{const f=()=>fitCanvas();window.addEventListener('resize',f);return()=>window.removeEventListener('resize',f)},[defaultSource,autoStart])
 
   const allModelsOn = trashDetection && humanDetection
+  const tryCard = webcamFirst && source === 'webcam' && status !== 'running'
   function toggleAllModels(){const next=!allModelsOn;setTrashDetection(next);setHumanDetection(next)}
 
   return (
-    <div className="relative h-full w-full overflow-hidden rounded-2xl bg-gradient-to-br from-slate-50 to-blue-50">
+    <div className="relative h-full w-full overflow-hidden rounded-2xl cam-stage">
       <video ref={videoRef} playsInline muted className="hidden" />
       <img   ref={streamImgRef} alt="" className="hidden" />
+      <canvas ref={streamCanvasRef} className="hidden" />
       <canvas ref={canvasRef} className="h-full w-full" onClick={onCanvasTap} />
 
       {/* ✔ / ✖ for the tapped box — the self-learning filter's reward. Rendered
@@ -803,7 +1031,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
       )}
 
       {/* status pill */}
-      <div className="absolute left-3 top-3 z-20 flex items-center gap-2 rounded-full bg-white/90 backdrop-blur px-3 py-1.5 shadow-lg"
+      <div className="absolute left-3 top-3 z-20 flex items-center gap-2 rounded-full chip-solid backdrop-blur px-3 py-1.5 shadow-lg"
         style={{border:'1px solid rgba(255,255,255,0.08)'}}>
         <StatusOrb level={status==='running'?'ok':status==='error'?'bad':'warn'} size={9} pulse={status!=='running'} />
         <span className="text-[11px] font-semibold text-white/90">
@@ -818,8 +1046,38 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
         </div>
       )}
 
+      {/* website: what this is, and one big button to start the webcam */}
+      {tryCard&&(
+        <div className="absolute inset-0 z-[25] flex items-center justify-center p-4"
+          style={{paddingBottom:controlsLift?controlsLift+70:undefined,background:'radial-gradient(ellipse at center,rgba(8,12,22,0.55),rgba(5,8,14,0.92))'}}>
+          <div className="w-full max-w-[420px] rounded-3xl p-6 text-center"
+            style={{background:'rgba(11,18,32,0.9)',border:'1px solid rgba(255,255,255,0.1)',boxShadow:'0 24px 60px rgba(0,0,0,0.5)',backdropFilter:'blur(14px)'}}>
+            <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl text-2xl"
+              style={{background:'linear-gradient(135deg,#5EEAD4,#6BB8FF 55%,#A78BFA)',color:'#04121f'}}>◉</div>
+            <div className="text-[18px] font-extrabold text-white">Try VARUNA's AI on your webcam</div>
+            <p className="mt-2 text-[13px] leading-relaxed text-white/65">
+              Hold up a plastic bottle, a wrapper or a bag. The AI draws a box round each piece of plastic it finds, live.
+            </p>
+            {status==='error'?(
+              <p className="mt-3 rounded-xl px-3 py-2 text-[12px] font-semibold" style={{background:'rgba(255,69,58,0.14)',color:'#FF8A80'}}>
+                {/permission|denied|notallowed/i.test(msg)?'The browser blocked the camera. Allow camera access for this site (the camera icon in the address bar), then try again.':msg}
+              </p>
+            ):null}
+            <button type="button" disabled={status==='init'||(status==='error'&&!detRef.current)}
+              onClick={()=>{setStatus('ready');setMsg('');start('webcam')}}
+              className="mt-5 w-full rounded-2xl px-6 py-3.5 text-[14px] font-extrabold text-[#04121f] transition-all active:scale-[0.98] disabled:opacity-50"
+              style={{background:'linear-gradient(135deg,#5EEAD4,#6BB8FF 55%,#A78BFA)',boxShadow:'0 10px 30px rgba(107,184,255,0.35)'}}>
+              {status==='init'?msg||'Loading the AI…':status==='error'?'Try again':'▶  Start webcam detection'}
+            </button>
+            <p className="mt-3 text-[11px] leading-relaxed text-white/45">
+              The AI runs inside your browser. Your video never leaves your device and nothing is saved.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* source toggle */}
-      <div className="absolute right-3 top-3 z-20 flex gap-1 rounded-xl p-0.5"
+      {!demo&&<div className="absolute right-3 top-3 z-20 flex gap-1 rounded-xl p-0.5"
         style={{background:'rgba(11,18,32,0.88)',border:'1px solid rgba(255,255,255,0.08)'}}>
         {[['webcam','Webcam'],['stream','Drone']].map(([id,label])=>(
           <button key={id} type="button" onClick={()=>switchSource(id)}
@@ -828,7 +1086,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
             {label}
           </button>
         ))}
-      </div>
+      </div>}
 
       {/* ALL MODELS master button */}
       {status!=='init'&&status!=='error'&&(
@@ -847,7 +1105,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
 
       {/* start/stop row */}
       <div className="absolute left-1/2 z-20 -translate-x-1/2 flex flex-wrap items-center justify-center gap-2" style={{bottom:80+controlsLift}}>
-        {status!=='running'?(
+        {tryCard?null:status!=='running'?(
           <button disabled={status==='init'} onClick={()=>start()}
             className="rounded-2xl px-6 py-2.5 text-sm font-bold text-white disabled:opacity-40 transition-all active:scale-95"
             style={{background:'linear-gradient(180deg,var(--accent2,#6BB8FF),var(--accent-hex,#3B9EFF))',boxShadow:'0 0 18px rgba(59,158,255,0.35)'}}>
@@ -881,12 +1139,14 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
         )}
       </div>
 
-      {/* settings gear — bottom right, hover reveals panel */}
-      <div className="group absolute bottom-5 right-4 z-30">
+      {/* settings gear — bottom right; a mouse hover or (touch) a tap reveals the panel */}
+      <div ref={gearRef} className="group absolute bottom-5 right-4 z-30">
         {/* slide-up settings panel */}
-        <div className="pointer-events-none mb-3 flex flex-col items-end gap-2
-          opacity-0 translate-y-3 scale-95
-          group-hover:pointer-events-auto group-hover:opacity-100 group-hover:translate-y-0 group-hover:scale-100"
+        <div className={`mb-3 flex flex-col items-end gap-2 ${gearOpen
+          ?'pointer-events-auto opacity-100 translate-y-0 scale-100'
+          :`pointer-events-none opacity-0 translate-y-3 scale-95
+          [@media(hover:hover)_and_(pointer:fine)]:group-hover:pointer-events-auto [@media(hover:hover)_and_(pointer:fine)]:group-hover:opacity-100
+          [@media(hover:hover)_and_(pointer:fine)]:group-hover:translate-y-0 [@media(hover:hover)_and_(pointer:fine)]:group-hover:scale-100`}`}
           style={{transition:'opacity 0.25s ease,transform 0.25s cubic-bezier(.34,1.56,.64,1)',transformOrigin:'bottom right'}}>
 
           {/* Detection model (the test one is marked) */}
@@ -985,8 +1245,10 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource = 'webcam',
         </div>
 
         {/* Gear icon */}
-        <button className="flex h-12 w-12 items-center justify-center rounded-full
-          transition-all duration-300 group-hover:rotate-90 group-hover:scale-110"
+        <button type="button" aria-label="Detection settings" aria-expanded={gearOpen}
+          onClick={()=>{ if(!canHover()) setGearOpen(o=>!o) }}
+          className={`flex h-12 w-12 items-center justify-center rounded-full
+          transition-all duration-300 ${gearOpen?'rotate-90 scale-110':'[@media(hover:hover)_and_(pointer:fine)]:group-hover:rotate-90 [@media(hover:hover)_and_(pointer:fine)]:group-hover:scale-110'}`}
           style={{background:'linear-gradient(135deg,rgba(59,65,255,0.6),rgba(107,184,255,0.3))',border:'1px solid rgba(107,184,255,0.35)',boxShadow:'0 0 20px rgba(59,158,255,0.3),0 4px 12px rgba(0,0,0,0.5)'}}>
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="12" cy="12" r="3"/>

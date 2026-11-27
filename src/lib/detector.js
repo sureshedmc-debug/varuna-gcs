@@ -89,7 +89,87 @@ function serialized(fn) {
 const sessions = new Map() // modelUrl -> { promise, refs, timer }
 const RELEASE_GRACE_MS = 15000
 
+// ── Running the models in a worker ──────────────────────────────────────────
+// On WebGPU, onnxruntime dispatches every layer from JavaScript, so a model run
+// on the page's own thread blocked it 60-90 ms per detection: video, map and
+// buttons stuttered on the Live tab. Sessions are built in ortWorker.js
+// instead and this file hands back a stand-in with the same inputNames /
+// outputNames / run() / release(), so the detectors don't change. If the
+// worker can't start, everything runs here as before.
+let worker = null
+let workerBroken = false
+let nextId = 0
+const waiting = new Map() // 'c<id>' (create) / 'r<rid>' (run) -> { resolve, reject }
+
+function getWorker() {
+  if (workerBroken || typeof Worker === 'undefined') return null
+  if (worker) return worker
+  try {
+    worker = new Worker(new URL('./ortWorker.js', import.meta.url), { type: 'module' })
+  } catch (e) {
+    console.warn('[ort] no worker, running the AI on the page:', e?.message ?? e)
+    workerBroken = true
+    return null
+  }
+  worker.onmessage = ({ data: m }) => {
+    const key = m.rid != null ? 'r' + m.rid : 'c' + m.id
+    const w = waiting.get(key)
+    if (!w) return
+    waiting.delete(key)
+    if (m.op === 'error') w.reject(new Error(m.message))
+    else w.resolve(m)
+  }
+  worker.onerror = (e) => {
+    console.warn('[ort] AI worker failed:', e?.message ?? e)
+    workerBroken = true
+    worker = null
+    sessions.clear() // sessions in the dead worker are gone: rebuild on next use
+    for (const w of waiting.values()) w.reject(new Error('AI worker stopped'))
+    waiting.clear()
+  }
+  return worker
+}
+
+function ask(w, key, msg) {
+  return new Promise((resolve, reject) => {
+    waiting.set(key, { resolve, reject })
+    w.postMessage(msg)
+  })
+}
+
+async function workerSession(w, modelUrl) {
+  const id = ++nextId
+  const info = await ask(w, 'c' + id, { op: 'create', id, url: new URL(modelUrl, location.href).href })
+  const session = {
+    inputNames: info.inputNames,
+    outputNames: info.outputNames,
+    async run(feeds) {
+      const rid = ++nextId
+      const f = {}
+      for (const [name, t] of Object.entries(feeds)) f[name] = { type: t.type, data: t.data, dims: t.dims }
+      const m = await ask(w, 'r' + rid, { op: 'run', id, rid, feeds: f }) // the input is copied, so callers may reuse it
+      const out = {}
+      for (const [name, o] of Object.entries(m.outputs)) out[name] = { ...o, getData: async () => o.data }
+      return out
+    },
+    release() {
+      w.postMessage({ op: 'release', id })
+    },
+  }
+  return { session, ep: info.ep }
+}
+
 function buildSession(ort, modelUrl, onProgress) {
+  const w = getWorker()
+  if (!w) return buildSessionHere(ort, modelUrl, onProgress)
+  onProgress && onProgress('Loading model…')
+  return workerSession(w, modelUrl).catch((e) => {
+    console.warn('[ort] worker could not load', modelUrl, '- loading it on the page:', e?.message ?? e)
+    return buildSessionHere(ort, modelUrl, onProgress)
+  })
+}
+
+function buildSessionHere(ort, modelUrl, onProgress) {
   return serialized(async () => {
   let session
   let ep = 'wasm'
@@ -363,6 +443,20 @@ export function suppressByPerson(trashBoxes, personBoxes) {
     }
     return true
   })
+}
+
+/**
+ * For a webcam, where the person holding the plastic is always in the picture.
+ * A trash box mostly on a person is removed when it IS the person (a large part
+ * of their size: their shirt, their body) or when it is unsure (below
+ * `minOnPerson`: a hand, a face), unless another model named it (`sure`, a
+ * COCO bottle). Something they hold up stays.
+ */
+export function suppressPersonBody(trashBoxes, personBoxes, minOnPerson = 0.5) {
+  if (!personBoxes || !personBoxes.length) return trashBoxes
+  const area = (b) => Math.max(0, b.x2 - b.x1) * Math.max(0, b.y2 - b.y1)
+  return trashBoxes.filter((t) => !personBoxes.some((p) =>
+    overlapRatio(t, p) > 0.6 && (area(t) > 0.3 * area(p) || (t.score < minOnPerson && !t.sure))))
 }
 
 function nms(boxes, iouThr) {

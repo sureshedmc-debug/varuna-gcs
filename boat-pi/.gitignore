@@ -1,0 +1,7 @@
+# Runtime state (current mission, history, test logs) — lives on the Pi only.
+data/
+boat_config.json
+__pycache__/
+*.pyc
+venv/
+.venv/

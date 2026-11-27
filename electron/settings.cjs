@@ -8,7 +8,12 @@ const { app } = require('electron')
 // its Groq keys, detection log, mission and settings in localStorage, which is
 // scoped to the origin (http://127.0.0.1:<port>). A new port = a new origin =
 // all of that appears wiped.
-const DEFAULTS = { piAddress: '', port: 47621, windowBounds: null }
+// boatAddress: the boat's own Pi (a second vehicle), proxied under /boat.
+// Both default to the vehicles' Netbird addresses so a fresh install connects
+// without typing them in; an address saved from System still wins.
+const DEFAULT_PI_ADDRESS = 'http://100.99.158.25:8000'
+const DEFAULT_BOAT_ADDRESS = 'http://100.99.71.176:8000'
+const DEFAULTS = { piAddress: DEFAULT_PI_ADDRESS, boatAddress: DEFAULT_BOAT_ADDRESS, port: 47621, windowBounds: null }
 
 let cache = null
 
@@ -23,6 +28,10 @@ function load() {
   } catch {
     cache = { ...DEFAULTS }
   }
+  // A blank saved address means "not set", so fall back to the default rather
+  // than leaving the vehicle unreachable.
+  if (!cache.piAddress) cache.piAddress = DEFAULT_PI_ADDRESS
+  if (!cache.boatAddress) cache.boatAddress = DEFAULT_BOAT_ADDRESS
   return cache
 }
 

@@ -1,0 +1,30 @@
+{
+  "_comment": "Default state/river list for Live Mission Plan. On first run it is copied to data/states.csv and data/rivers.csv; edit those files (Excel is fine) to add states or rivers - the app reads them every time the plan opens. center = approximate map centre [lat, lng] for the stretch usually surveyed.",
+  "version": 1,
+  "states": [
+    {
+      "id": "DL",
+      "name": "Delhi",
+      "rivers": [
+        { "id": "YAMUNA-DL", "name": "Yamuna", "center": [28.628, 77.256], "zoom": 13, "notes": "Delhi stretch, around ITO" },
+        { "id": "SAHIBI-DL", "name": "Sahibi (Najafgarh drain)", "center": [28.61, 77.02], "zoom": 12, "notes": "Najafgarh drain" }
+      ]
+    },
+    {
+      "id": "UP",
+      "name": "Uttar Pradesh",
+      "rivers": [
+        { "id": "GANGA-UP", "name": "Ganga", "center": [25.307, 83.011], "zoom": 14, "notes": "Opens at the Varanasi ghats" },
+        { "id": "YAMUNA-UP", "name": "Yamuna", "center": [27.177, 78.042], "zoom": 14, "notes": "Opens at Agra" },
+        { "id": "GOMTI-UP", "name": "Gomti", "center": [26.866, 80.946], "zoom": 14, "notes": "Opens at Lucknow" },
+        { "id": "GHAGHARA-UP", "name": "Ghaghara (Saryu)", "center": [26.803, 82.203], "zoom": 14, "notes": "Opens at Ayodhya" },
+        { "id": "HINDON-UP", "name": "Hindon", "center": [28.665, 77.405], "zoom": 13, "notes": "Opens near Ghaziabad" },
+        { "id": "RAMGANGA-UP", "name": "Ramganga", "center": [28.835, 78.78], "zoom": 13, "notes": "Opens at Moradabad" },
+        { "id": "RAPTI-UP", "name": "Rapti", "center": [26.765, 83.355], "zoom": 13, "notes": "Opens at Gorakhpur" },
+        { "id": "BETWA-UP", "name": "Betwa", "center": [25.955, 80.15], "zoom": 13, "notes": "Opens near Hamirpur" },
+        { "id": "VARUNA-UP", "name": "Varuna", "center": [25.335, 82.99], "zoom": 14, "notes": "Opens at Varanasi" },
+        { "id": "SAI-UP", "name": "Sai", "center": [26.23, 81.23], "zoom": 13, "notes": "Opens at Rae Bareli" }
+      ]
+    }
+  ]
+}

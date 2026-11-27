@@ -1,0 +1,174 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   HOME TAB — DARK THEME (same palette as the full-screen Direct Mission Plan)
+   Colours only: no sizes, spacing or layout change here. Scoped to the Home
+   tab's root (.varuna-home.vh-dark), so Login, Data and other pages that
+   share .varuna-home keep their own look.
+   ═══════════════════════════════════════════════════════════════════════ */
+html:not([data-look='classic']) .varuna-home.vh-dark {
+  --d-bg: #070b18;
+  --d-card: rgba(255, 255, 255, 0.045);
+  --d-card-hi: rgba(255, 255, 255, 0.075);
+  --d-line: rgba(255, 255, 255, 0.1);
+  --d-line-hi: rgba(94, 234, 212, 0.45);
+  --d-text: #fff;
+  --d-muted: rgba(255, 255, 255, 0.68);
+  --d-faint: rgba(255, 255, 255, 0.45);
+  --d-teal: #5eead4;
+  --d-cyan: #a5f3fc;
+  --d-violet: #c4b5fd;
+
+  color: var(--d-text);
+  background:
+    radial-gradient(70% 50% at 0% 100%, rgba(20, 184, 166, 0.16), rgba(20, 184, 166, 0) 60%),
+    radial-gradient(60% 40% at 100% 30%, rgba(109, 40, 217, 0.22), rgba(109, 40, 217, 0) 60%),
+    var(--d-bg);
+}
+
+/* ── Hero: fade into the dark page instead of the light one ── */
+html:not([data-look='classic']) .varuna-home.vh-dark .vl-hero { background: var(--d-bg); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vl-hero-scrim {
+  background:
+    linear-gradient(180deg, rgba(7, 11, 24, 0.5) 0%, rgba(7, 11, 24, 0) 22%),
+    radial-gradient(120% 70% at 0% 100%, rgba(7, 11, 24, 0.8) 0%, rgba(7, 11, 24, 0.35) 45%, rgba(7, 11, 24, 0) 70%),
+    linear-gradient(0deg, #070b18 0%, rgba(7, 11, 24, 0) 9%);
+}
+html:not([data-look='classic']) .varuna-home.vh-dark .vl-hero-eyebrow { color: var(--d-teal); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vl-hero-sub { color: rgba(255, 255, 255, 0.82); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vl-hero-badge { background: rgba(7, 11, 24, 0.45); border-color: rgba(255, 255, 255, 0.2); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vl-hero-roles { background: rgba(7, 11, 24, 0.5); border-color: rgba(255, 255, 255, 0.16); }
+
+/* account buttons: glass stays glass; Login takes the plan page's teal */
+html:not([data-look='classic']) .varuna-home.vh-dark .vl-glass-btn { background: rgba(7, 11, 24, 0.35); border-color: rgba(255, 255, 255, 0.32); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vl-glass-btn:hover { background: rgba(7, 11, 24, 0.55); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vl-solid-btn {
+  color: #062925; border-color: transparent; background: linear-gradient(90deg, #5eead4, #a5f3fc);
+  box-shadow: 0 8px 26px rgba(45, 212, 191, 0.35);
+}
+html:not([data-look='classic']) .varuna-home.vh-dark .vl-solid-btn:hover { box-shadow: 0 12px 32px rgba(45, 212, 191, 0.5); }
+
+/* Direct Mission Plan card: dark glass with a teal edge */
+html:not([data-look='classic']) .varuna-home.vh-dark .vl-float-plan {
+  color: var(--d-text); background: rgba(7, 11, 24, 0.62); border-color: rgba(94, 234, 212, 0.35);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(94, 234, 212, 0.08) inset;
+}
+html:not([data-look='classic']) .varuna-home.vh-dark .vl-float-plan:hover { background: rgba(7, 11, 24, 0.78); border-color: rgba(94, 234, 212, 0.6); box-shadow: 0 22px 52px rgba(0, 0, 0, 0.5), 0 0 30px rgba(45, 212, 191, 0.18); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vl-float-plan-icon { background: linear-gradient(135deg, #0d9488, #6d28d9); box-shadow: 0 6px 18px rgba(45, 212, 191, 0.3); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vl-float-plan-text b { color: #fff; }
+html:not([data-look='classic']) .varuna-home.vh-dark .vl-float-plan-text small { color: var(--d-teal); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vl-float-plan > svg { color: var(--d-teal); }
+
+html:not([data-look='classic']) .varuna-home.vh-dark .vl-hero-scroll {
+  background: rgba(7, 11, 24, 0.7); border-color: rgba(255, 255, 255, 0.2); color: #fff;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+/* ── Drone / boat link cards ── */
+html:not([data-look='classic']) .varuna-home.vh-dark .vl-ready { background: var(--d-card); border-color: var(--d-line); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vl-ready.ok { background: rgba(74, 222, 128, 0.07); border-color: rgba(74, 222, 128, 0.32); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vl-ready.warn { background: rgba(251, 191, 36, 0.07); border-color: rgba(251, 191, 36, 0.32); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vl-ready.ok .vl-ready-dot { background: #4ade80; box-shadow: 0 0 10px #4ade80; }
+html:not([data-look='classic']) .varuna-home.vh-dark .vl-ready.warn .vl-ready-dot { background: #fbbf24; box-shadow: 0 0 10px rgba(251, 191, 36, 0.7); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vl-ready-title { color: #fff; }
+html:not([data-look='classic']) .varuna-home.vh-dark .vl-ready-text,
+html:not([data-look='classic']) .varuna-home.vh-dark .vl-ready-help { color: var(--d-muted); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vl-link { color: var(--d-teal); }
+
+/* ── Summary line and its switch ── */
+html:not([data-look='classic']) .varuna-home.vh-dark .vl-summary-line { background: var(--d-card); border-color: var(--d-line); color: #fff; }
+html:not([data-look='classic']) .varuna-home.vh-dark .vl-step-btn { background: transparent; border-color: rgba(94, 234, 212, 0.45); color: var(--d-teal); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vl-step-btn:hover { background: rgba(94, 234, 212, 0.1); border-color: var(--d-teal); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vl-step-btn:focus-visible { outline-color: var(--d-teal); }
+
+/* ── Cards and panels ── */
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-panel,
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-kpi-card,
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-telem-card {
+  background: var(--d-card); border-color: var(--d-line); color: #fff;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28), 0 1px 0 rgba(255, 255, 255, 0.05) inset;
+}
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-panel:hover,
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-kpi-card:hover,
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-telem-card:hover {
+  background: var(--d-card-hi); border-color: var(--d-line-hi);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.36), 0 0 28px rgba(45, 212, 191, 0.12), 0 1px 0 rgba(255, 255, 255, 0.07) inset;
+}
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-kpi-icon,
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-kpi-icon.teal { background: linear-gradient(135deg, #0d9488, #5eead4); box-shadow: 0 6px 18px rgba(45, 212, 191, 0.28); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-kpi-icon.blue { background: linear-gradient(135deg, #4c1d95, #7c3aed); box-shadow: 0 6px 18px rgba(124, 58, 237, 0.3); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-kpi-icon.green { background: linear-gradient(135deg, #0e7490, #22d3ee); box-shadow: 0 6px 18px rgba(34, 211, 238, 0.25); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-kpi-icon.amber { background: linear-gradient(135deg, #6d28d9, #a78bfa); box-shadow: 0 6px 18px rgba(167, 139, 250, 0.28); }
+
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-kpi-label,
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-telem-label { color: var(--d-teal); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-kpi-value,
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-ring-val,
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-donut-num,
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-panel-title,
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-mission-name,
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-legend-count { color: #fff; }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-kpi-delta.neu,
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-panel-sub,
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-mission-meta,
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-donut-label,
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-ring-unit,
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-telem-sub { color: var(--d-faint); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-kpi-delta.up { color: #4ade80; }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-kpi-delta.down { color: #f87171; }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-legend-left { color: var(--d-muted); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-ring-track { stroke: rgba(255, 255, 255, 0.1); }
+
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-period-btn { background: transparent; border-color: var(--d-line); color: var(--d-teal); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-period-btn:hover { background: rgba(94, 234, 212, 0.08); border-color: var(--d-line-hi); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-view-all { color: var(--d-teal); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-view-all:hover { color: var(--d-cyan); }
+
+/* charts: the light grid lines and labels drawn in the SVGs */
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-barchart line { stroke: rgba(255, 255, 255, 0.08); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-barchart text { fill: var(--d-faint); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-donut-svg circle[stroke="#f0ecff"] { stroke: rgba(255, 255, 255, 0.08); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-barchart,
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-donut-svg,
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-ring-wrap svg,
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-sparkline { filter: drop-shadow(0 4px 14px rgba(45, 212, 191, 0.18)); }
+
+/* mission progress + tiles */
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-wp-bar-label { color: var(--d-muted); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-wp-bar-track { background: rgba(255, 255, 255, 0.08); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-wp-bar-fill { background: linear-gradient(90deg, #14b8a6, #5eead4, #a5f3fc); box-shadow: 0 0 12px rgba(45, 212, 191, 0.45); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-mission-tile { background: rgba(255, 255, 255, 0.04); border-color: var(--d-line); box-shadow: none; }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-mission-tile small { color: var(--d-faint); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-mission-tile b { color: var(--d-teal); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-no-mission { color: var(--d-faint); }
+
+/* tables (inline row colours need !important) */
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-table th { color: var(--d-teal); border-bottom-color: var(--d-line); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-table td { color: #fff; border-bottom-color: rgba(255, 255, 255, 0.06); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-table td span[style] { color: #fff !important; }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-table td[style] { color: var(--d-muted) !important; }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-table td:last-child { color: var(--d-faint) !important; }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-table tr:hover td { background: rgba(94, 234, 212, 0.04); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-row-thumb { background: rgba(94, 234, 212, 0.12); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-drone-thumb { background: rgba(255, 255, 255, 0.05); border-color: var(--d-line); color: var(--d-teal); }
+
+/* status pills */
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-link-pill.live,
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-link-pill.sim,
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-pill.running { background: rgba(94, 234, 212, 0.12); color: var(--d-teal); border-color: rgba(94, 234, 212, 0.3); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-pill.running .vh-pill-dot { background: var(--d-teal); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-link-pill.polling,
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-pill.scheduled,
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-pill.maintenance { background: rgba(251, 191, 36, 0.12); color: #fcd34d; }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-link-pill.connecting { background: rgba(255, 255, 255, 0.06); color: var(--d-muted); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-pill.completed,
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-pill.online { background: rgba(74, 222, 128, 0.12); color: #86efac; }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-pill.inprogress { background: rgba(96, 165, 250, 0.14); color: #93c5fd; }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-pill.offline,
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-pill.armed { background: rgba(248, 113, 113, 0.14); color: #fca5a5; }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-pill.disarmed { background: rgba(255, 255, 255, 0.05); color: var(--d-violet); border-color: var(--d-line); }
+
+/* battery bars */
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-battery-bar { background: rgba(255, 255, 255, 0.08); box-shadow: none; }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-battery-fill.high { background: linear-gradient(90deg, #14b8a6, #5eead4); box-shadow: 0 0 8px rgba(45, 212, 191, 0.4); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-battery-fill.medium { background: linear-gradient(90deg, #6d28d9, #c4b5fd); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-battery-fill.dead { background: rgba(255, 255, 255, 0.12); }
+html:not([data-look='classic']) .varuna-home.vh-dark .vh-no-mission button { color: var(--d-teal) !important; border-color: rgba(94, 234, 212, 0.45) !important; }

@@ -213,7 +213,21 @@ const CMD_ICON = {
       <path d="M9 9h6v6H9z" fill="currentColor" />
     </g>
   ),
+  hold: (
+    <g {...stroke}>
+      <path d="M9 6v12M15 6v12" />
+    </g>
+  ),
 }
+// The boat's commands reuse the same icons (same look, boat wording below).
+Object.assign(CMD_ICON, {
+  boatArm: CMD_ICON.arm,
+  boatDisarm: CMD_ICON.disarm,
+  boatHold: CMD_ICON.hold,
+  boatRth: CMD_ICON.rth,
+  boatStop: CMD_ICON.stop,
+  boatMission: CMD_ICON.mission,
+})
 
 // color = button icon/border; accent = pop-up circle, knob and fill (defaults to color).
 export const FLIGHT_CMD = {
@@ -224,13 +238,20 @@ export const FLIGHT_CMD = {
   land: { caption: 'LAND', color: '#2F8FFF', title: 'Land', message: 'The aircraft will descend and land at its current position. Make sure the ground below is clear.', swipe: 'Slide to land' },
   mission: { caption: 'START', color: '#2F8FFF', title: 'Start Mission', message: 'The aircraft will fly the uploaded mission. Make sure the flight path is clear.', swipe: 'Slide to start mission' },
   stop: { caption: 'STOP', color: '#FF3B30', title: 'Emergency Stop', message: 'Cancels the mission and all movement immediately, then lands at the current position. Make sure the ground below is clear.', swipe: 'Slide to stop & land' },
+  // Boat (second vehicle, ArduRover). Same buttons, boat-specific wording.
+  boatArm: { caption: 'ARM', color: '#22B865', title: 'Arm Boat', message: 'The boat motors become live. Keep hands clear of the propellers or paddles.', swipe: 'Slide to arm boat' },
+  boatDisarm: { caption: 'DISARM', color: '#FFFFFF', accent: '#2F8FFF', title: 'Disarm Boat', message: 'The boat motors switch off. The boat will drift with the water.', swipe: 'Slide to disarm boat' },
+  boatHold: { caption: 'HOLD', color: '#2F8FFF', title: 'Hold Position', message: 'The boat stops and holds where it is. A running collection pauses and can be resumed.', swipe: 'Slide to hold' },
+  boatRth: { caption: 'RTH', color: '#F5B400', title: 'Boat Return Home', message: 'The boat stops collecting and drives straight back to its launch point.', swipe: 'Slide to bring boat home' },
+  boatStop: { caption: 'STOP', color: '#FF3B30', title: 'Boat Emergency Stop', message: 'Stops the boat immediately and disarms its motors. Any collection mission is halted.', swipe: 'Slide to stop boat' },
+  boatMission: { caption: 'START', color: '#2F8FFF', title: 'Start Collection', message: 'The boat will drive to each selected plastic item, pause to collect it, then return home. Make sure the water is clear.', swipe: 'Slide to start collecting' },
 }
 
 /** Dark panel that groups flight-command buttons. */
-export function CommandPanel({ children, className = '' }) {
+export function CommandPanel({ children, className = '', title = 'FLIGHT COMMANDS' }) {
   return (
     <div className={className} style={{ background: '#0E1013', borderRadius: 18, padding: 16 }}>
-      <div style={{ color: '#AEB3BA', fontSize: 12, fontWeight: 700, letterSpacing: '1.2px', marginBottom: 12 }}>FLIGHT COMMANDS</div>
+      <div style={{ color: '#AEB3BA', fontSize: 12, fontWeight: 700, letterSpacing: '1.2px', marginBottom: 12 }}>{title}</div>
       <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', columnGap: 18, rowGap: 14 }}>{children}</div>
     </div>
   )

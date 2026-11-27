@@ -39,7 +39,7 @@ export function RadialLaunch({ armed, busy, onArm, label = 'LAUNCH SITE', tone =
         <CommandButton cmd={armed ? 'disarm' : 'arm'} disabled={busy} onConfirm={onArm} />
       </div>
       {/* label chip */}
-      <div className="absolute -bottom-1 flex items-center gap-1.5 rounded-full bg-white/90 backdrop-blur px-2.5 py-1 shadow-lg border border-line">
+      <div className="absolute -bottom-1 flex items-center gap-1.5 rounded-full chip-solid backdrop-blur px-2.5 py-1 shadow-lg border border-line">
         <StatusOrb level={armed ? 'warn' : 'ok'} size={7} pulse={armed} />
         <span className="text-[10px] font-semibold tracking-wider text-ink">{label}</span>
       </div>

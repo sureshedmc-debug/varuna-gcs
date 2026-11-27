@@ -1,0 +1,445 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* =============================================================================
+   VARUNA AI — GOLD & BLACK THEME
+   ─────────────────────────────────────────────────────────────────────────────
+   Base:     Pure black  #000000
+   Panels:   Deep charcoal-black  #0A0A0A / #111111
+   Accent:   Rich gold   #D4A017  →  bright gold  #F5C842
+   Borders:  Gold-glow lines
+   Text:     Warm cream-white
+   Ambient:  Deep gold halos sweeping across the void
+   ============================================================================= */
+
+:root {
+  color-scheme: dark;
+
+  /* ── Backgrounds ── */
+  --base:   #000000;          /* pure black                                      */
+  --panel:  #0C0C0C;          /* near-black panel surface                        */
+
+  /* ── Text ── */
+  --ink:    255 245 210;      /* warm cream-white — easy on the eyes             */
+  --muted:  #8C7A50;          /* warm gold-brown muted text                      */
+  --faint:  #3D3320;          /* deep dark-brown tertiary                        */
+
+  /* ── Borders & chips ── */
+  --line:   rgba(212, 160, 23, 0.25);   /* gold border glow                      */
+  --chip:   rgba(212, 160, 23, 0.08);   /* gold-tinted chip bg                   */
+  --chip2:  rgba(212, 160, 23, 0.15);   /* gold hover chip                       */
+
+  /* ── Glass panels ── */
+  --glass-bg:     rgba(12, 10, 4, 0.90);        /* near-black warm glass          */
+  --glass-soft:   rgba(12, 10, 4, 0.70);
+  --glass-border: rgba(212, 160, 23, 0.28);     /* rich gold border               */
+
+  /* ── Inputs ── */
+  --inp-bg:     rgba(212, 160, 23, 0.06);
+  --inp-border: rgba(212, 160, 23, 0.30);
+  --inp-ph:     #3D3320;
+
+  /* ── PRIMARY ACCENT: RICH GOLD ── */
+  --accent:      212 160 23;     /* #D4A017  rgb channels                       */
+  --accent-hex:  #D4A017;
+  --accent2:     #F5C842;        /* bright gold highlight                       */
+
+  /* ── Scrollbar ── */
+  --scroll: rgba(212, 160, 23, 0.30);
+
+  /* ── Ambient glow — deep gold halos ── */
+  --amb1: rgba(212, 160, 23, 0.12);    /* top-left gold sweep                   */
+  --amb2: rgba(180, 120, 10, 0.08);    /* top-right deeper gold                 */
+  --amb3: rgba(245, 200, 66, 0.06);    /* bottom-centre bright gold             */
+  --amb4: rgba(212, 160, 23, 0.05);    /* bottom-right warm ember               */
+}
+
+/* ── Light theme ── */
+:root[data-theme='light'] {
+  color-scheme: light;
+  
+  /* ── Backgrounds ── */
+  --base:   #ffffff;          /* white background (gradient applied to body)      */
+  --panel:  #ffffff;          /* white panel surface                             */
+
+  /* ── Text ── */
+  --ink:    15 23 42;         /* #0f172a - dark text for excellent readability   */
+  --muted:  71 85 105;        /* #475569 - muted text                            */
+  --faint:  100 116 139;      /* #64748b - faint text                            */
+
+  /* ── Borders & chips ── */
+  --line:   rgba(14, 165, 164, 0.25);   /* teal border glow                     */
+  --chip:   rgba(14, 165, 164, 0.08);   /* teal tinted chip bg                  */
+  --chip2:  rgba(14, 165, 164, 0.15);   /* teal hover chip                      */
+
+  /* ── Glass panels ── */
+  --glass-bg:     rgba(255, 255, 255, 0.95);    /* clean white glass               */
+  --glass-soft:   rgba(240, 249, 255, 0.90);    /* #f0f9ff soft teal glass        */
+  --glass-border: rgba(14, 165, 164, 0.25);     /* teal border                    */
+
+  /* ── Inputs ── */
+  --inp-bg:     rgba(255, 255, 255, 1);
+  --inp-border: rgba(14, 165, 164, 0.3);
+  --inp-ph:     #94A3B8;
+
+  /* ── PRIMARY ACCENT: TEAL ── */
+  --accent:      14 165 164;     /* #0EA5A4  teal rgb channels                     */
+  --accent-hex:  #0ea5a4;
+  --accent2:     #06b6d4;        /* brighter teal highlight                        */
+
+  /* ── Status Colors ── */
+  --ok:     #10b981;          /* green for OK status                             */
+  --warn:   #f59e0b;          /* orange/yellow for warning                      */
+  --bad:    #ef4444;          /* red for bad/error                              */
+  --info:   #3b82f6;          /* blue for info                                  */
+
+  /* ── Scrollbar ── */
+  --scroll: rgba(14, 165, 164, 0.4);
+
+  /* ── Ambient glow — vibrant teal halos ── */
+  --amb1: rgba(14, 165, 164, 0.12);     /* top-left teal sweep                  */
+  --amb2: rgba(6, 182, 212, 0.08);      /* top-right brighter teal             */
+  --amb3: rgba(14, 165, 164, 0.06);     /* bottom-centre bright teal           */
+  --amb4: rgba(6, 182, 212, 0.05);      /* bottom-right subtle teal            */
+}
+
+/* ── Base layout ── */
+html, body, #root { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--base);
+  color: rgb(var(--ink));
+  font-family: 'Inter', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
+  transition: background 0.4s ease;
+}
+
+/* Dark theme background gradients — only for true dark, not green */
+:root:not([data-theme='light']):not([data-theme='green']) body {
+  /* deep gold radial glow baked into the page itself */
+  background-image:
+    radial-gradient(ellipse 90% 50% at 50% -5%,  rgba(212,160,23,0.07), transparent 65%),
+    radial-gradient(ellipse 60% 40% at 100% 0%,   rgba(180,120,10,0.05), transparent 60%),
+    radial-gradient(ellipse 55% 35% at 0%   100%, rgba(212,160,23,0.04), transparent 60%);
+}
+
+/* Light theme background gradients */
+:root[data-theme='light'] body {
+  /* attractive vibrant teal/blue gradient background */
+  background: linear-gradient(135deg, #e0f2fe 0%, #f0f9ff 50%, #dbeafe 100%);
+  background-attachment: fixed;
+}
+
+/* ── Full-screen ambient gold halos ── */
+.ambient {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(65% 55% at 10% 0%,    var(--amb1), transparent 70%),
+    radial-gradient(50% 40% at 95% 5%,    var(--amb2), transparent 65%),
+    radial-gradient(75% 55% at 50% 110%,  var(--amb3), transparent 70%),
+    radial-gradient(45% 35% at 100% 100%, var(--amb4), transparent 60%);
+}
+
+/* ── Glass panels ── */
+@layer components {
+  .glass {
+    background: var(--glass-bg);
+    backdrop-filter: blur(14px) saturate(1.2);
+    -webkit-backdrop-filter: blur(14px) saturate(1.2);
+    border: 2px solid var(--line);
+    border-radius: 1rem;
+    box-shadow:
+      0 4px 16px rgba(14, 165, 164, 0.15),
+      0 8px 24px rgba(14, 165, 164, 0.1),
+      /* subtle inner highlight */
+      inset 0 1px 0 rgba(255, 255, 255, 0.8);
+    transition: all 0.3s ease;
+  }
+  .glass:hover {
+    transform: translateY(-4px);
+    box-shadow: 
+      0 8px 24px rgba(14, 165, 164, 0.2),
+      0 12px 32px rgba(14, 165, 164, 0.15),
+      inset 0 1px 0 rgba(255, 255, 255, 0.9);
+    border-color: var(--accent-hex);
+  }
+
+  .glass-soft {
+    background: var(--glass-soft);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid var(--line);
+    border-radius: 0.9rem;
+    box-shadow:
+      0 4px 12px rgba(14, 165, 164, 0.1),
+      0 2px 8px rgba(14, 165, 164, 0.08);
+  }
+
+  .tnum {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1;
+  }
+
+  .touch {
+    min-height: 48px;
+    touch-action: manipulation;
+    user-select: none;
+  }
+
+  .inp {
+    background: var(--inp-bg);
+    border: 1px solid var(--inp-border);
+    color: rgb(var(--ink));
+    border-radius: 0.6rem;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .inp::placeholder { color: var(--inp-ph); }
+  .inp:focus {
+    outline: none;
+    border-color: var(--accent-hex);
+    box-shadow:
+      0 0 0 3px rgba(14, 165, 164, 0.18),
+      0 0 14px rgba(14, 165, 164, 0.14);
+  }
+
+  .eyebrow {
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 700;
+  }
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--scroll);
+  border-radius: 5px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(14, 165, 164, 0.6);
+  box-shadow: 0 0 6px rgba(14, 165, 164, 0.4);
+}
+
+/* Light theme scrollbar hover */
+:root[data-theme='light'] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(14, 165, 164, 0.7);
+  box-shadow: 0 0 6px rgba(14, 165, 164, 0.5);
+}
+
+/* -- Pastel Green Forest theme -- */
+:root[data-theme='green'] {
+  color-scheme: light;
+
+  /* -- Backgrounds -- */
+  --base:   #0d1a12;          /* very deep forest green-black                    */
+  --panel:  #132019;          /* dark forest panel                               */
+
+  /* -- Text -- */
+  --ink:    220 252 231;      /* #dcfce7 � pale mint white                       */
+  --muted:  #6ee7b7;          /* emerald-300 muted text                          */
+  --faint:  #166534;          /* deep green tertiary                             */
+
+  /* -- Borders & chips -- */
+  --line:   rgba(134, 239, 172, 0.22);  /* pastel green border                   */
+  --chip:   rgba(134, 239, 172, 0.08);  /* pastel chip bg                        */
+  --chip2:  rgba(134, 239, 172, 0.16);  /* hover chip                            */
+
+  /* -- Glass panels -- */
+  --glass-bg:     rgba(13, 26, 18, 0.92);
+  --glass-soft:   rgba(13, 26, 18, 0.75);
+  --glass-border: rgba(134, 239, 172, 0.28);
+
+  /* -- Inputs -- */
+  --inp-bg:     rgba(134, 239, 172, 0.06);
+  --inp-border: rgba(134, 239, 172, 0.30);
+  --inp-ph:     #166534;
+
+  /* -- PRIMARY ACCENT: PASTEL GREEN -- */
+  --accent:      134 239 172;    /* #86efac  rgb channels                        */
+  --accent-hex:  #86efac;
+  --accent2:     #4ade80;        /* green-400 brighter highlight                 */
+
+  /* -- Scrollbar -- */
+  --scroll: rgba(134, 239, 172, 0.35);
+
+  /* -- Ambient glow � deep forest halos -- */
+  --amb1: rgba(134, 239, 172, 0.10);
+  --amb2: rgba(74, 222, 128, 0.07);
+  --amb3: rgba(134, 239, 172, 0.06);
+  --amb4: rgba(74, 222, 128, 0.04);
+}
+
+/* Green theme body background */
+:root[data-theme='green'] body {
+  background: linear-gradient(135deg, #0a1a0f 0%, #0d2218 40%, #081a10 100%);
+  background-attachment: fixed;
+}
+
+/* Green theme ambient halos */
+:root[data-theme='green'] .ambient {
+  background:
+    radial-gradient(65% 55% at 10% 0%,   rgba(134,239,172,0.10), transparent 70%),
+    radial-gradient(50% 40% at 95% 5%,   rgba(74,222,128,0.07),  transparent 65%),
+    radial-gradient(75% 55% at 50% 110%, rgba(134,239,172,0.06), transparent 70%),
+    radial-gradient(45% 35% at 100% 100%,rgba(74,222,128,0.04),  transparent 60%);
+}
+
+/* Green theme scanline */
+:root[data-theme='green'] body::after {
+  background: linear-gradient(90deg, transparent 0%, rgba(134,239,172,0.35) 50%, transparent 100%);
+}
+
+/* Green theme glass panels */
+:root[data-theme='green'] .glass {
+  background: rgba(13, 26, 18, 0.92);
+  border: 2px solid rgba(134, 239, 172, 0.20);
+  box-shadow:
+    0 4px 16px rgba(134, 239, 172, 0.08),
+    0 8px 24px rgba(134, 239, 172, 0.05),
+    inset 0 1px 0 rgba(134, 239, 172, 0.12);
+}
+
+/* Green theme scrollbar */
+:root[data-theme='green'] ::-webkit-scrollbar-thumb {
+  background: rgba(134, 239, 172, 0.35);
+}
+:root[data-theme='green'] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(134, 239, 172, 0.6);
+}
+
+/* Green theme TopBar */
+:root[data-theme='green'] header {
+  background: rgba(10, 20, 14, 0.95) !important;
+  border-bottom-color: rgba(134, 239, 172, 0.20) !important;
+}
+
+/* Green theme sidebar */
+:root[data-theme='green'] nav[aria-label="Main navigation"] {
+  background: #091510 !important;
+  border-right-color: rgba(134, 239, 172, 0.18) !important;
+}
+
+/* Green theme focus ring */
+:root[data-theme='green'] button:focus-visible {
+  outline: 2px solid rgba(134, 239, 172, 0.7);
+}
+
+/* ── Leaflet ── */
+.leaflet-container {
+  background: var(--base);
+  font-family: 'Inter', sans-serif;
+}
+.leaflet-bar a,
+.leaflet-control-attribution {
+  background: var(--glass-soft) !important;
+  color: var(--muted) !important;
+  border-color: var(--line) !important;
+}
+.leaflet-control-attribution a { color: var(--muted) !important; }
+
+/* ── Status-orb pulse ── */
+@keyframes orb-pulse {
+  from { opacity: 0.5; transform: scale(1);   }
+  to   { opacity: 0;   transform: scale(2.4); }
+}
+.orb-pulse {
+  animation: orb-pulse 1.6s cubic-bezier(0, 0, 0.58, 1) infinite;
+  will-change: transform, opacity;
+}
+@media (prefers-reduced-motion: reduce) {
+  .orb-pulse { animation-duration: 1.6s !important; }
+}
+
+/* ── Live map: ring around plastic seen in the last few seconds ── */
+@keyframes plastic-ping {
+  from { opacity: 0.9; transform: scale(0.7); }
+  to   { opacity: 0;   transform: scale(1.6); }
+}
+
+/* ── Subtle scan-line sweep ── */
+@keyframes scanline {
+  0%   { transform: translateY(-100vh); opacity: 0; }
+  8%   { opacity: 0.05; }
+  92%  { opacity: 0.05; }
+  100% { transform: translateY(100vh);  opacity: 0; }
+}
+body::after {
+  content: '';
+  position: fixed;
+  inset-inline: 0;
+  top: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent 0%, rgba(14,165,164,0.4) 50%, transparent 100%);
+  animation: scanline 20s linear infinite;
+  pointer-events: none;
+  z-index: 9999;
+}
+
+/* Dark theme scanline — only for true dark, not green */
+:root:not([data-theme='light']):not([data-theme='green']) body::after {
+  background: linear-gradient(90deg, transparent 0%, rgba(212,160,23,0.8) 50%, transparent 100%);
+}
+
+/* ── Focus ring ── */
+button:focus-visible {
+  outline: 2px solid rgba(14, 165, 164, 0.7);
+  outline-offset: 2px;
+}
+
+/* Dark theme focus ring — only for true dark, not green */
+:root:not([data-theme='light']):not([data-theme='green']) button:focus-visible {
+  outline: 2px solid rgba(212, 160, 23, 0.7);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+/* ── Auto-hide navigation rail ─────────────────────────────────────────── */
+.rail-edge {
+  position: fixed; left: 0; top: 0; bottom: 0; z-index: 45;
+  width: 18px; padding: 0; border: 0; background: transparent; cursor: pointer;
+  display: flex; align-items: center;
+}
+.rail-spine {
+  margin-left: 5px; padding: 10px 3px; border-radius: 999px;
+  display: flex; flex-direction: column; gap: 9px; align-items: center;
+  background: rgba(255,255,255,0.7);
+  border: 1px solid rgba(167,139,250,0.35);
+  box-shadow: 0 4px 14px rgba(109,40,217,0.14);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  transition: transform .25s cubic-bezier(.16,1,.3,1), box-shadow .25s ease, background .25s ease;
+}
+.rail-spine-dot {
+  width: 4px; height: 4px; border-radius: 2px; background: rgba(139,92,246,0.35);
+  transition: height .25s cubic-bezier(.16,1,.3,1), background .25s ease;
+}
+.rail-spine-dot.on { height: 14px; background: linear-gradient(#7c3aed, #22d3ee); box-shadow: 0 0 8px rgba(124,58,237,0.6); }
+.rail-edge:hover .rail-spine, .rail-edge:focus-visible .rail-spine {
+  transform: translateX(3px) scale(1.08);
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(167,139,250,0.18), 0 6px 22px rgba(109,40,217,0.3);
+}
+.rail-edge:hover .rail-spine-dot { background: rgba(139,92,246,0.6); }
+.rail-edge:focus-visible { outline: none; }
+.rail-iconbtn {
+  width: 30px; height: 30px; display: grid; place-items: center; border-radius: 9px;
+  border: 1px solid rgba(167,139,250,0.25); background: rgba(245,243,255,0.8); color: #8b5cf6; cursor: pointer;
+  transition: transform .25s cubic-bezier(.16,1,.3,1), background .2s ease, color .2s ease;
+}
+.rail-iconbtn:hover { background: #ede9fe; color: #6d28d9; }
+@media (prefers-reduced-motion: reduce) {
+  .rail-spine, .rail-spine-dot, .rail-iconbtn { transition: none; }
+}

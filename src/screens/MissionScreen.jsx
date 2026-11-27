@@ -15,7 +15,10 @@ import { homeIcon, Drone3DMarker } from '../components/MapCanvas'
 import { cmd, isOk } from '../lib/commands'
 import { planKey, useActiveMission, getActiveMission, missionFor } from '../lib/missionStore'
 import { usePlanDraft, consumePlanDraft, setMissionMapView } from '../lib/planDraftStore'
-import { MAX_ALT, MAX_SPEED } from '../lib/missionPatterns'
+import { MAX_ALT, MAX_SPEED, distanceM } from '../lib/missionPatterns'
+import SavePlanMapButton from '../components/SavePlanMapButton'
+import MissionFenceLayer from '../components/MissionFenceLayer'
+import { useLivePlan, setActiveSection, endLivePlan, claimPlanName, isSectionUploaded } from '../lib/liveMissionPlan'
 
 const DEFAULT_HOME = [17.385, 78.4867]
 const HoloDrone   = lazy(() => import('../components/HoloDrone'))
@@ -31,6 +34,9 @@ function cachedIcon(key, make) {
 }
 const PATH_STYLE = { color: BLUE, weight: 2.5, opacity: 0.9, dashArray: '2 8' }
 const RING_STYLE = { color: BLUE, weight: 1.2, opacity: 0.6, dashArray: '4 6', fillColor: BLUE, fillOpacity: 0.05 }
+// Live Mission Plan: the whole planned area, and the sections not being edited.
+const AREA_STYLE = { color: '#a78bfa', weight: 2, opacity: 0.9, dashArray: '8 6', fillColor: '#a78bfa', fillOpacity: 0.06 }
+const OTHER_SECTION_STYLE = { color: '#a78bfa', weight: 3, opacity: 0.55, dashArray: '4 6', bubblingMouseEvents: false }
 const LAKE_STYLE = { color: '#5AC8FA', weight: 1.5, opacity: 0.8, fillColor: '#5AC8FA', fillOpacity: 0.08, dashArray: '6 6' }
 
 function wpIcon(n) {
@@ -74,12 +80,45 @@ function ReportMapView() {
   useEffect(() => { setMissionMapView([map.getCenter().lat, map.getCenter().lng]) }, [map])
   return null
 }
+// A Live Mission Plan first shows its whole planned area, then each section.
+const areaShown = new Set()
+// Keep the planned-area circle clear of the flight-plan panel on the right.
+const areaPadding = (map) => ({ paddingTopLeft: [40, 40], paddingBottomRight: [Math.min(420, map.getSize().x * 0.4), 40] })
 function FitToDraft({ draft }) {
   const map = useMap()
   useEffect(() => {
     if (!draft?.waypoints?.length) return
+    if (draft.area && !areaShown.has(draft.planId)) {
+      areaShown.add(draft.planId)
+      map.fitBounds(L.latLng(draft.area.center).toBounds(draft.area.radius * 2), areaPadding(map))
+      return
+    }
     map.fitBounds(L.latLngBounds(draft.waypoints), { padding: [60, 60], maxZoom: 18 })
   }, [draft?.id, map]) // eslint-disable-line react-hooks/exhaustive-deps
+  return null
+}
+// Circle around every auto-planned section of a Live Mission Plan.
+function planArea(plan) {
+  const pts = plan?.sectionPlans?.flatMap((p) => p.waypoints) || []
+  if (!pts.length) return null
+  const lats = pts.map((p) => p[0])
+  const lngs = pts.map((p) => p[1])
+  const center = [(Math.min(...lats) + Math.max(...lats)) / 2, (Math.min(...lngs) + Math.max(...lngs)) / 2]
+  return { center, radius: Math.max(...pts.map((p) => distanceM(center, p))) + 60 }
+}
+// A Live Mission Plan opens the map on its river — once per plan, so coming
+// back to this tab later doesn't throw away where the operator had panned to.
+const flownToPlan = new Set()
+function FlyToRiver({ plan }) {
+  const map = useMap()
+  useEffect(() => {
+    const c = plan?.river?.center
+    if (!c || flownToPlan.has(plan.missionId)) return
+    flownToPlan.add(plan.missionId)
+    const area = planArea(plan)
+    if (area) map.fitBounds(L.latLng(area.center).toBounds(area.radius * 2), areaPadding(map))
+    else map.setView(c, plan.river.zoom || 14, { animate: true })
+  }, [plan?.missionId, map]) // eslint-disable-line react-hooks/exhaustive-deps
   return null
 }
 
@@ -241,6 +280,24 @@ export default function MissionScreen() {
     setOpen(true)
   }, [draft])
 
+  // Live Mission Plan (Home → Direct Mission Plan): name each section's upload.
+  const livePlan = useLivePlan()
+  useEffect(() => {
+    if (!livePlan) return
+    const fresh = claimPlanName(livePlan)
+    const sp = livePlan.sectionPlans?.[livePlan.activeSection - 1]
+    const reload = sp?.waypoints?.length && (fresh || !wps.length || !isSectionUploaded(livePlan))
+    if (fresh || reload) setName(`${livePlan.name} · Section ${livePlan.activeSection}/${livePlan.sections}`)
+    // Auto-planned section: load its waypoints for review (also after a
+    // reload, when the unsaved path is gone but the plan is still open).
+    if (reload) {
+      setWps(sp.waypoints.map(([lat, lng]) => ({ id: wpid++, lat, lng, action: 'waypoint' })))
+      setAiDraft({ id: `live-${livePlan.missionId}-${livePlan.activeSection}`, planId: livePlan.missionId, area: planArea(livePlan), waypoints: sp.waypoints, name: `Section ${livePlan.activeSection}`,
+        summary: `Auto-planned along the ${livePlan.river.name}: ${sp.waypoints.length} waypoints, ${sp.lengthM} m, about ${sp.minutes} min.`, live: true, warnings: sp.warnings })
+    }
+    if (fresh) setOpen(true)
+  }, [livePlan?.missionId, livePlan?.activeSection]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const live        = useLivePosition(telemetry.data)
   const homePoint   = useHomePoint(telemetry.data, live, simulated)
   const home        = homePoint || DEFAULT_HOME
@@ -256,6 +313,21 @@ export default function MissionScreen() {
   const moveWp   = useCallback((id, ll) => setWps((s) => s.map((w) => (w.id === id ? { ...w, lat: ll.lat, lng: ll.lng } : w))), [])
   const patchWp  = useCallback((id, p)  => setWps((s) => s.map((w) => (w.id === id ? { ...w, ...p } : w))), [])
   const removeWp = useCallback((id)     => setWps((s) => s.filter((w) => w.id !== id)), [])
+  // Delete every waypoint: first tap arms it (3 s), second tap clears. Only the
+  // plan on this screen — a mission already uploaded to the drone is untouched.
+  const [confirmClear, setConfirmClear] = useState(false)
+  useEffect(() => {
+    if (!confirmClear) return undefined
+    const t = setTimeout(() => setConfirmClear(false), 3000)
+    return () => clearTimeout(t)
+  }, [confirmClear])
+  function clearAllWps() {
+    if (!confirmClear) return setConfirmClear(true)
+    setConfirmClear(false)
+    setWps([])
+    setAiDraft(null)
+    toast.push({ level: 'ok', title: 'All waypoints deleted', msg: 'Tap the map to start a new plan.' })
+  }
   const reorder  = useCallback((id, d)  => setWps((s) => {
     const i = s.findIndex((w) => w.id === id), j = i + d
     if (i < 0 || j < 0 || j >= s.length) return s
@@ -314,6 +386,7 @@ export default function MissionScreen() {
     )
   }, [home, wps, moveWp])
 
+  const area = useMemo(() => planArea(livePlan), [livePlan?.missionId]) // eslint-disable-line react-hooks/exhaustive-deps
   const lakePositions = useMemo(
     () => aiDraft?.polygon?.geometry.coordinates.map((ring) => ring.map(([lng, lat]) => [lat, lng])),
     [aiDraft],
@@ -337,12 +410,19 @@ export default function MissionScreen() {
           style={{ height: '100%', width: '100%', background: '#0E1116' }}>
           <CachedTileLayer url={SAT_URL} maxZoom={19} />
           <ClickToAdd onAdd={addWp} />
-          <RecenterOnSource center={home} source={live.source} />
+          <RecenterOnSource center={home} source={livePlan?.river?.center ? null : live.source} />
           <ReportMapView />
           <FitToDraft draft={aiDraft} />
+          <FlyToRiver plan={livePlan} />
+          {area && <Circle center={area.center} radius={area.radius} pathOptions={AREA_STYLE} interactive={false} />}
+          {livePlan?.sectionPlans?.map((p, i) => i + 1 !== livePlan.activeSection && (
+            <Polyline key={`sec${i}`} positions={p.waypoints} pathOptions={OTHER_SECTION_STYLE}
+              eventHandlers={{ click: () => setActiveSection(i + 1) }} />
+          ))}
           {aiDraft?.polygon && <Polygon positions={lakePositions} pathOptions={LAKE_STYLE} interactive={false} />}
           {live.source && <Marker position={home} icon={homeIcon()} interactive={false} />}
           {dronePos && <Drone3DMarker position={dronePos} size={64} />}
+          <MissionFenceLayer home={home} waypoints={wps} />
           {planLayers}
         </MapContainer>
       </div>
@@ -392,6 +472,40 @@ export default function MissionScreen() {
             <button onClick={() => setOpen((o) => !o)} className="text-xs text-accent">{open ? 'Hide' : 'Show'}</button>
           </div>
 
+          {/* Live Mission Plan banner */}
+          {open && livePlan && (
+            <div
+              className="mb-3 rounded-xl p-3 text-[11px]"
+              style={{ background: 'rgba(139,92,246,0.10)', border: '1px solid rgba(167,139,250,0.35)' }}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <span className="font-bold" style={{ color: '#a78bfa' }}>Live Mission Plan</span>
+                <button
+                  onClick={() => endLivePlan()}
+                  title="Stop planning this mission (its saved records stay)"
+                  className="text-[11px] font-semibold text-muted transition-colors hover:text-bad"
+                >
+                  Close plan
+                </button>
+              </div>
+              <div className="mt-1 text-ink">{livePlan.state.name} · {livePlan.river.name}</div>
+              <label className="mt-1.5 flex items-center gap-2 text-muted">
+                Section
+                <select
+                  value={livePlan.activeSection}
+                  onChange={(e) => setActiveSection(e.target.value)}
+                  className="rounded-md border border-line bg-transparent px-1.5 py-0.5 font-bold text-ink"
+                >
+                  {Array.from({ length: livePlan.sections }, (_, i) => (
+                    <option key={i + 1} value={i + 1} style={{ color: '#111' }}>{i + 1} of {livePlan.sections}</option>
+                  ))}
+                </select>
+              </label>
+              <div className="mt-1 text-muted">{livePlan.missionId} · each upload is saved as this section</div>
+              <SavePlanMapButton area={area} />
+            </div>
+          )}
+
           {/* AI draft banner */}
           {open && aiDraft && (
             <div
@@ -399,7 +513,7 @@ export default function MissionScreen() {
               style={{ background: 'rgba(59,158,255,0.08)', border: '1px solid rgba(59,158,255,0.25)' }}
             >
               <div className="flex items-start justify-between gap-2">
-                <span className="font-bold text-accent">✨ AI draft</span>
+                <span className="font-bold text-accent">{aiDraft.live ? 'Planned route' : '✨ AI draft'}</span>
                 <button
                   onClick={() => { setWps([]); setAiDraft(null) }}
                   className="text-[11px] font-semibold text-muted transition-colors hover:text-bad"
@@ -434,6 +548,25 @@ export default function MissionScreen() {
                 <Slider label="Speed"    value={speed} set={setSpeed} min={1} max={MAX_SPEED} step={0.5} unit="km/h" />
                 <div className="text-[10px] text-faint">All waypoints · altitude capped at {MAX_ALT} m</div>
               </div>
+
+              {/* Waypoint count + delete all */}
+              {wps.length > 0 && (
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-semibold text-muted">
+                    {wps.length} waypoint{wps.length === 1 ? '' : 's'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={clearAllWps}
+                    className="rounded-lg px-3 py-1.5 text-[11.5px] font-bold transition-all active:scale-95"
+                    style={confirmClear
+                      ? { background: 'rgba(255,69,58,0.9)', color: '#fff', border: '1px solid rgba(255,69,58,0.9)' }
+                      : { background: 'rgba(255,69,58,0.10)', color: '#FF8A80', border: '1px solid rgba(255,69,58,0.35)' }}
+                  >
+                    {confirmClear ? `Tap again to delete all ${wps.length}` : '🗑 Clear all waypoints'}
+                  </button>
+                </div>
+              )}
 
               {/* Waypoint list */}
               <WaypointRows wps={wps} onPatch={patchWp} onReorder={reorder} onRemove={removeWp} />

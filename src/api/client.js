@@ -65,7 +65,12 @@ function url(path) {
  * Note: the backend returns HTTP 200 with {success:false, message} on logical
  * failure for mutating calls — callers MUST inspect `success`, not HTTP status.
  */
-async function request(path, { method = 'GET', body, signal, timeout = 12000 } = {}) {
+async function request(path, opts) {
+  return requestUrl(url(path), opts)
+}
+
+/** Same as request(), for a full URL — the boat client (boatClient.js) uses it. */
+export async function requestUrl(fullUrl, { method = 'GET', body, signal, timeout = 12000 } = {}) {
   const ctrl = new AbortController()
   const t = setTimeout(() => ctrl.abort(), timeout)
   const onAbort = () => ctrl.abort()
@@ -75,7 +80,7 @@ async function request(path, { method = 'GET', body, signal, timeout = 12000 } =
     // (OPTIONS) before every single request. Content-Type on a body is enough.
     const headers = {}
     if (body) headers['Content-Type'] = 'application/json'
-    const res = await fetch(url(path), {
+    const res = await fetch(fullUrl, {
       method,
       headers,
       body: body ? JSON.stringify(body) : undefined,
@@ -127,6 +132,8 @@ export const api = {
   // snapshot & stream are <img> URLs, not fetched here (absolute, so the browser
   // loads them cross-origin directly from the configured backend):
   streamUrl: () => url('/video_feed'),
+  // H.264 frames for the WebCodecs player (lib/h264Stream.js), when the camera module sends them:
+  h264Url: () => url('/api/camera/h264'),
   snapshotUrl: () => url(`/api/camera/snapshot?t=${Date.now()}`),
 
   // --- AI ---
@@ -150,6 +157,9 @@ export const api = {
   takeoff: (altitude) =>
     request('/api/mavlink/takeoff', { method: 'POST', body: { altitude } }),
   rtl: () => request('/api/mavlink/rtl', { method: 'POST' }),
+  // Keyboard flight (Control tab): GUIDED, holding position / back to LOITER.
+  controlTake: () => request('/api/control/take', { method: 'POST', timeout: 15000 }),
+  controlRelease: () => request('/api/control/release', { method: 'POST', timeout: 15000 }),
   land: () => request('/api/mavlink/land', { method: 'POST' }),
   // Emergency stop: abort any running mission and land at the current position.
   // Switching the flight controller into LAND overrides AUTO/mission mode. Tries
@@ -169,9 +179,13 @@ export const api = {
   setPrefer: (mode) => request('/api/mavlink/prefer', { method: 'POST', body: { mode } }),
 
   // --- Missions ---
+  // Upload waits for every item over the telemetry link (the Pi allows 30 s);
+  // Start switches to GUIDED, arms, then switches to AUTO, each waiting for the
+  // Pixhawk to confirm. A shorter timeout here would report "failed" while the
+  // drone is in fact taking off.
   missionUpload: (name, waypoints) =>
-    request('/api/mission/upload', { method: 'POST', body: { name, waypoints } }),
-  missionStart: () => request('/api/mission/start', { method: 'POST' }),
+    request('/api/mission/upload', { method: 'POST', body: { name, waypoints }, timeout: 40000 }),
+  missionStart: () => request('/api/mission/start', { method: 'POST', timeout: 25000 }),
   missionList: () => request('/api/mission/list'),
 
   // --- Live config / tuning ---
@@ -192,6 +206,11 @@ export function wsUrl() {
   if (base) return base.replace(/^http/i, 'ws') + '/api/ws'
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   return `${proto}//${window.location.host}/api/ws`
+}
+
+/** The Control tab's keyboard socket (keys → drone), next to the telemetry one. */
+export function controlWsUrl() {
+  return wsUrl().replace(/\/api\/ws$/, '/api/control')
 }
 
 /**

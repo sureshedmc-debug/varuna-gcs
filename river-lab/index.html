@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>VARUNA River Lab</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; font-family: ui-monospace, monospace; color: #cffafe; }
+  #stage { position: fixed; inset: 0; cursor: pointer; }
+  #hint { position: fixed; left: 50%; bottom: 40px; transform: translateX(-50%); font-size: 11px; letter-spacing: .28em; opacity: .7; pointer-events: none; }
+  #done { position: fixed; inset: 0; display: none; place-items: center; background: #0b1015; font-size: 13px; letter-spacing: .2em; cursor: pointer; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="hint">RIVER LAB · CLICK TO LAUNCH</div>
+<div id="done">REVEALED · CLICK TO REPLAY</div>
+<script type="module">
+  import { createDroneIntro } from './droneIntroRiver.js'
+  const stage = document.getElementById('stage')
+  const api = createDroneIntro(stage, {
+    onReveal() {
+      document.getElementById('done').style.display = 'grid'
+    },
+  })
+  window.__intro = api
+  stage.addEventListener('click', () => {
+    document.getElementById('hint').style.display = 'none'
+    api.go()
+  })
+  document.getElementById('done').addEventListener('click', () => location.reload())
+</script>
+</body>
+</html>
