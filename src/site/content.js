@@ -7,6 +7,7 @@ export const NAV = [
   ['Overview', '/#story'],
   ['Achievements', '/#achievements'],
   ['How it works', '/#how'],
+  ['The boat', '/#boat'],
   ['Technology', '/#tech'],
   ['Gallery', '/#gallery'],
   ['Team', '/#team'],
@@ -35,7 +36,7 @@ export const STEPS = [
     n: '03',
     kicker: 'Collect',
     title: 'The boat drives there and collects it',
-    body: 'Nirmal Dhara Jalyan, a solar-powered autonomous boat, follows the points by GPS. Its front ramp and intake roller lift the waste out of the water into its collection net.',
+    body: 'Nirmal Dhara Jalyan, a solar-powered autonomous boat, drives to each point by GPS. Close in, its own camera confirms the plastic, then the intake roller ramp lifts it out of the water into the bin.',
     video: 'boat',
     tag: 'Nirmal Dhara Jalyan · collecting',
   },
@@ -52,7 +53,7 @@ export const MACHINES = [
     name: 'Nirmal Dhara Jalyan',
     role: 'Autonomous collector boat',
     img: 'p-boat-top',
-    specs: ['Thermocol (EPS) floating body', 'Pixhawk 1 and Raspberry Pi Zero', '2 BLDC thrusters with ESCs', 'Intake roller and collection net', 'Front ramp, GPS, USB camera, solar power'],
+    specs: ['Thermocol (EPS) floating body', 'Pixhawk autopilot running ArduRover', 'On-board Android phone: camera, GPS and link', 'BLDC motor with rudder steering', 'Intake roller ramp, collection bin, solar power'],
   },
   {
     name: 'VARUNA GCS',
@@ -64,7 +65,7 @@ export const MACHINES = [
 
 export const STACK = [
   'Python', 'FastAPI', 'React', 'Vite', 'Electron', 'YOLO', 'ONNX Runtime', 'OpenCV', 'pymavlink',
-  'ArduCopter', 'ArduRover', 'Pixhawk', 'Raspberry Pi', 'Three.js', 'Leaflet', 'face-api',
+  'ArduCopter', 'ArduRover', 'Pixhawk', 'Raspberry Pi', 'Android', 'ESP32', 'NetBird', 'Three.js', 'Leaflet', 'face-api',
 ]
 
 export const COMPARE = [
@@ -91,6 +92,52 @@ export const GALLERY = [
   { type: 'video', src: 'boat-night', poster: 'boat-night', title: 'After dark', sub: 'The boat with its lights on' },
   { type: 'img', src: 'award-trophy', title: 'Position I', sub: 'The 1st-place trophy' },
 ]
+
+// How the boat works today. Taken from the boat's own code, settings and test
+// notes (boat-vision branch), so keep it in step with the boat when it changes.
+export const BOAT_LINKS = [
+  { k: 'Ground station', name: 'VARUNA app', text: 'Runs the plastic-detection AI and the boat’s control software on the laptop, and shows the live camera and map.' },
+  { k: 'On the boat', name: 'VARUNA Boat Link', text: 'An Android phone on board streams the camera, gives the autopilot its GPS position and carries every command to it over USB.' },
+  { k: 'Autopilot', name: 'Pixhawk · ArduRover', text: 'Steers to each point and drives the motor, the rudder and the intake roller.' },
+]
+export const BOAT_LINK_VIA = ['NetBird · mobile data or Wi-Fi', 'USB cable']
+export const BOAT_PARTS = [
+  ['BLDC motor', 'Forward drive'],
+  ['Rudder servo', 'Steering'],
+  ['Roller ramp + bin', 'Collection'],
+  ['FS-i6 transmitter', 'Manual control at any time'],
+]
+
+export const BOAT_RUN = [
+  ['Points arrive', 'Each piece of plastic the drone found becomes a GPS point. The app sends the points to the boat, nearest first.'],
+  ['Autopilot drives', 'ArduRover steers the boat to the next point, using the GPS position from the phone on board.'],
+  ['Camera confirms', 'Close in, the boat’s own camera has to see real plastic: a plastic class only, in two frames running or once at 80% confidence. Birds, people, logs and reflections are refused.'],
+  ['Measures and locks on', 'It works out the distance to the item from the camera’s height and angle, keeps tracking it as the hull rocks, and locks onto that one item.'],
+  ['Approaches and scoops', 'The motor drives it forward. Inside scoop range the motor stops and the intake roller ramp lifts the plastic into the bin.'],
+  ['Logs it, moves on', 'The app records the item as collected, with time and position, clears the target and sends the boat to the next point.'],
+]
+
+export const BOAT_SAFETY = [
+  ['Never starts itself', 'A detection can never arm the boat or change its mode. Only the operator can.'],
+  ['Stops when it loses sight', 'If the target disappears, the motor stops.'],
+  ['Stops if the app goes quiet', 'A watchdog cuts the motor if the app stops sending, so a frozen picture can never hold it on.'],
+  ['The operator wins', 'Disarm, STOP, pause or a flick of the transmitter switch stops the motor at once.'],
+  ['Holds for wildlife', 'If a bird, a dog or a person is in front of it, the boat waits until the way is clear.'],
+  ['Every limit adjustable', 'Confidence, distances and speeds are settings in the app, not fixed in the code.'],
+]
+
+// Newest first. Dates are when each change was finished.
+export const BOAT_CHANGES = [
+  { date: '19 Nov 2026', title: 'Moves only for confirmed plastic', text: 'The motor used to start for anything the camera reported. Now each item is checked for class, repeat sightings and distance before the boat moves, with the safety cut-outs above. Covered by 68 automated checks and tested end to end: detect, drive, scoop, collected.' },
+  { date: '19 Nov 2026', title: 'Works from anywhere', text: 'The app finds the boat’s phone over NetBird first, so the live video, the AI and the scoop all work over mobile data, with no shared Wi-Fi needed.' },
+  { date: '17 Nov 2026', title: 'A phone becomes the boat’s computer', text: 'The Raspberry Pi is replaced by an Android phone running the VARUNA Boat Link app: camera, GPS and the Pixhawk link in one device. An ESP32 Wi-Fi bridge is kept as a backup link.' },
+  { date: '17 Nov 2026', title: 'Boat Ops screen', text: 'A new screen in the app for running the boat: live alerts, the boat’s status and a mini-map of the drone.' },
+  { date: '6 Nov 2026', title: 'One motor, rudder steering', text: 'The drive was rebuilt around a single BLDC motor with a rudder servo for steering.' },
+]
+export const BOAT_NEXT = {
+  title: 'Air-propeller drive',
+  text: 'An air propeller above the water, so floating plastic and weeds can never wrap around it. It leads into the VARUNA AI Pod, an enclosed solar hull with room for water-quality sensors, now at the design stage.',
+}
 
 // The competition win. Wording follows the certificate and the trophy.
 export const AWARD = {
@@ -162,6 +209,10 @@ export const FAQ = [
   {
     q: 'What is VARUNA GCS?',
     a: 'VARUNA GCS is the ground-control app of VARUNA AI, made by Aditya Gautam and Samar Garg. It plans missions, shows the drone’s live camera with AI plastic detection, and sends the boat to collect what the drone finds. It runs in the browser, on Windows and on Android.',
+  },
+  {
+    q: 'How does the Nirmal Dhara Jalyan boat collect plastic?',
+    a: 'The boat drives to each plastic point by GPS under its Pixhawk autopilot. Close in, its own camera confirms the item is plastic and measures how far away it is, then the boat drives onto it and an intake roller ramp lifts it into the bin. An Android phone on board streams the camera, supplies the GPS position and links the autopilot to the VARUNA app over a secure connection, so it works over mobile data. The motor stops if the target is lost, if the app goes quiet or when the operator says so.',
   },
   {
     q: 'How does VARUNA AI find plastic?',

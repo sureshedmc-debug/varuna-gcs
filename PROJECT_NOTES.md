@@ -2,7 +2,7 @@
 
 A summary of the VARUNA work gathered from past Claude sessions, saved so later
 sessions (cloud or laptop) can pick up where things were left. Last updated
-2026-10-15.
+2026-11-27.
 
 ## What the project is
 
@@ -70,6 +70,31 @@ tilt, ramp line, motion sensitivity and turbidity calibration.
   rebuild the desktop app?
 - The "varuna ai boat" session asked for the phase 2 goals and an F1 score
   target of 0.99. Neither has been defined yet.
+
+## Boat status (late November 2026)
+
+From the boat chat's work on the `boat-vision` branch (8 commits not yet on
+`main`) and the boat's Pixhawk parameter backups:
+
+- **Name:** Nirmal Dhara Jalyan, thermocol (EPS) hull, tricolour.
+- **On-board computer:** an Android phone (vivo Y11 5G) running the
+  **VARUNA Boat Link** app (`boat-phone/`) replaces the Raspberry Pi. It streams
+  the camera (MJPEG, port 8080), sends its GPS to the Pixhawk (`GPS1_TYPE 14`)
+  and bridges MAVLink to the Pixhawk over USB OTG (TCP port 5760). An ESP32
+  Wi-Fi bridge (`boat-esp32/`) is the other link.
+- **Boat backend:** `boat-pi/` now runs on the operator's laptop and reaches the
+  phone over NetBird first, so everything works over mobile data.
+- **Drive:** one forward-only BLDC motor (`SERVO3_FUNCTION 70`) with a rudder
+  servo (`SERVO1_FUNCTION 26`); FlySky FS-i6 transmitter for manual control.
+  The user reports the submerged BLDC is not working and is moving to an air
+  propeller (see `boat-design/`, VARUNA AI Pod with air-prop drive).
+- **Camera-guided collection (19 Nov):** the motor runs only for verified
+  plastic (plastic class, 2 frames running or once at 80%, tracking, distance
+  from camera geometry, target lock), stops inside scoop range, then the intake
+  roller ramp lifts the item into the bin. Safety: stops on target loss, app
+  watchdog, disarm, mode change, STOP/pause; a detection never arms the boat.
+- **Website:** `src/site/` (Vercel). The "The boat" section and FAQ describe the
+  above; keep them in step when the boat changes.
 
 ## Other branches on GitHub
 
