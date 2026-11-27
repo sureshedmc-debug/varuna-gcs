@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { navigate } from './router'
 import { EASE, Icon, LoopVideo, Nav, Footer, Reveal, useActiveSection } from './parts'
-import { M, STEPS, MACHINES, STACK, COMPARE, GALLERY, TEAM, FAQ, AWARD, AWARD_MEDIA, BOAT_REELS, MATCH_CLIP, CONTACT } from './content'
+import { M, STEPS, MACHINES, STACK, COMPARE, GALLERY, TEAM, FAQ, AWARD, AWARD_MEDIA, BOAT_REELS, MATCH_CLIP, CONTACT, BOAT_LINKS, BOAT_LINK_VIA, BOAT_PARTS, BOAT_RUN, BOAT_SAFETY, BOAT_CHANGES, BOAT_NEXT } from './content'
 import Feedback from './Feedback'
 import { openDownloads } from './downloads'
 
@@ -329,6 +329,67 @@ export default function Explore() {
                 <span className="vs-frame-in"><LoopVideo name="app-match" /><span className="vs-frame-tag">VARUNA app · Waste matched</span></span>
               </button>
             </Reveal>
+          </div>
+        </div>
+      </section>
+
+      {/* ── inside the boat ── */}
+      <section id="boat" className="vs-sec vs-boat">
+        <div className="vs-wrap">
+          <Head center kicker="Inside the boat" title={<>How Nirmal Dhara Jalyan <span className="vs-grad">works.</span></>}
+            lead="Three parts share the job: the app on the laptop does the thinking, a phone on board does the seeing and talking, and the autopilot does the driving." />
+
+          <Reveal className="vs-arch" aria-label="How the boat's parts connect">
+            {BOAT_LINKS.map((n, i) => (
+              <div className="vs-arch-cell" key={n.name}>
+                <div className="vs-arch-node">
+                  <small>{n.k}</small>
+                  <b>{n.name}</b>
+                  <span>{n.text}</span>
+                </div>
+                {i < BOAT_LINKS.length - 1 && <div className="vs-arch-link"><i />{BOAT_LINK_VIA[i]}<i /></div>}
+              </div>
+            ))}
+          </Reveal>
+          <Reveal className="vs-arch-parts">
+            {BOAT_PARTS.map(([t, d]) => <div key={t}><b>{t}</b><span>{d}</span></div>)}
+          </Reveal>
+
+          <div className="vs-boat-block">
+            <Head kicker="Start to finish" title={<>From a pin on the map to <span className="vs-grad">plastic in the bin.</span></>} />
+            <ol className="vs-run">
+              {BOAT_RUN.map(([t, d], i) => (
+                <Reveal as="li" key={t} delay={0.05 * i} className="vs-run-step">
+                  <i>{String(i + 1).padStart(2, '0')}</i><b>{t}</b><span>{d}</span>
+                </Reveal>
+              ))}
+            </ol>
+          </div>
+
+          <div className="vs-boat-block">
+            <Head kicker="Safety" title={<>A person is <span className="vs-grad">always in charge.</span></>} />
+            <div className="vs-safe">
+              {BOAT_SAFETY.map(([t, d], i) => (
+                <Reveal key={t} delay={0.05 * i} className="vs-safe-item"><b>{t}</b><span>{d}</span></Reveal>
+              ))}
+            </div>
+          </div>
+
+          <div className="vs-boat-block">
+            <Head kicker="What's changed" title={<>The boat, <span className="vs-grad">this month.</span></>}
+              lead="Recent work on Nirmal Dhara Jalyan, newest first." />
+            <ol className="vs-log">
+              <Reveal as="li" className="vs-log-item next">
+                <time>Next</time>
+                <div><b>{BOAT_NEXT.title}</b><span>{BOAT_NEXT.text}</span></div>
+              </Reveal>
+              {BOAT_CHANGES.map((c, i) => (
+                <Reveal as="li" key={c.title} delay={0.04 * i} className="vs-log-item">
+                  <time>{c.date}</time>
+                  <div><b>{c.title}</b><span>{c.text}</span></div>
+                </Reveal>
+              ))}
+            </ol>
           </div>
         </div>
       </section>

@@ -811,3 +811,50 @@ textarea.vs-input { resize: vertical; min-height: 130px; line-height: 1.55; }
 .vs-drawer a.big { font-size: clamp(22px, 6.6vw, 34px); padding: 8px 0; }
 .vs .vs-contact-call .acts .go { white-space: nowrap; }
 @media (max-width: 640px) { .vs .vs-contact-call .acts .go { padding: 11px 12px; font-size: 13.5px; } }
+
+/* ── inside the boat ── */
+.vs-boat .vs-arch { margin-top: 56px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; }
+.vs-arch-cell { display: flex; align-items: stretch; }
+.vs-arch-node { flex: 1; padding: 22px 22px 24px; border-radius: 22px; background: var(--bg2); border: 1px solid var(--line); display: grid; gap: 6px; align-content: start; }
+.vs-arch-node small { font-family: 'JetBrains Mono', monospace; font-size: 10.5px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--cyan); }
+.vs-arch-node b { font-size: 20px; font-weight: 800; letter-spacing: -0.02em; }
+.vs-arch-node span { font-size: 14px; color: var(--ink2); line-height: 1.5; }
+.vs-arch-link { width: 92px; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 0 8px; text-align: center; font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.08em; color: var(--ink3); line-height: 1.4; }
+.vs-arch-link i { width: 1px; height: 26px; background: linear-gradient(180deg, transparent, var(--cyan)); }
+.vs-arch-link i:last-child { background: linear-gradient(180deg, var(--cyan), transparent); }
+.vs-arch-cell:last-child .vs-arch-node { border-color: rgba(103, 232, 249, 0.35); }
+.vs-arch-parts { margin-top: 14px; margin-left: auto; width: calc((100% - 184px) / 3 + 0px); display: grid; gap: 8px; }
+.vs-arch-parts div { display: flex; justify-content: space-between; gap: 12px; padding: 11px 16px; border-radius: 14px; background: var(--glass); border: 1px solid var(--line); font-size: 13.5px; }
+.vs-arch-parts b { font-weight: 700; }
+.vs-arch-parts span { color: var(--ink3); text-align: right; }
+.vs-boat-block { margin-top: clamp(80px, 10vw, 130px); }
+.vs-run { list-style: none; margin: 40px 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; counter-reset: none; }
+.vs-run-step { padding: 20px 22px 22px; border-radius: 20px; background: var(--bg2); border: 1px solid var(--line); display: grid; gap: 6px; align-content: start; }
+.vs-run-step i { font-style: normal; font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.12em; color: var(--cyan); }
+.vs-run-step b { font-size: 17px; font-weight: 800; letter-spacing: -0.02em; }
+.vs-run-step span { font-size: 14px; color: var(--ink2); line-height: 1.55; }
+.vs-safe { margin-top: 40px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.vs-safe-item { padding: 18px 20px; border-radius: 18px; background: var(--glass); border: 1px solid var(--line); border-left: 2px solid var(--teal); display: grid; gap: 4px; }
+.vs-safe-item b { font-size: 16px; }
+.vs-safe-item span { font-size: 14px; color: var(--ink2); line-height: 1.5; }
+.vs-log { list-style: none; margin: 40px 0 0; padding: 0; border-left: 1px solid var(--line2); }
+.vs-log-item { position: relative; display: grid; grid-template-columns: 130px 1fr; gap: 20px; padding: 0 0 26px 26px; }
+.vs-log-item::before { content: ''; position: absolute; left: -5px; top: 6px; width: 9px; height: 9px; border-radius: 50%; background: var(--bg); border: 1px solid var(--cyan); }
+.vs-log-item.next::before { background: var(--grad); border: 0; }
+.vs-log-item time { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--ink3); padding-top: 3px; letter-spacing: 0.04em; }
+.vs-log-item.next time { color: var(--violet); }
+.vs-log-item b { display: block; font-size: 17px; margin-bottom: 4px; }
+.vs-log-item span { font-size: 14.5px; color: var(--ink2); line-height: 1.55; max-width: 68ch; display: block; }
+@media (max-width: 1080px) {
+  .vs-run, .vs-safe { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 860px) {
+  .vs-boat .vs-arch { grid-template-columns: 1fr; }
+  .vs-arch-cell { flex-direction: column; }
+  .vs-arch-link { width: auto; padding: 8px 0; }
+  .vs-arch-parts { width: 100%; }
+}
+@media (max-width: 640px) {
+  .vs-run, .vs-safe { grid-template-columns: 1fr; }
+  .vs-log-item { grid-template-columns: 1fr; gap: 4px; padding-left: 20px; }
+}
