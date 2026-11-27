@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  createPlasticDetector, mergeBoxes, makeTileGrid, overlapRatio, suppressByPerson, suppressPersonBody,
+  createPlasticDetector, mergeBoxes, makeTileGrid, overlapRatio, suppressPersonBody,
   DETECT_MODELS, DEFAULT_DETECT_MODEL, getDetectModel, setDetectModel,
 } from '../lib/detector'
 import { BoxTracker } from '../lib/track'
@@ -20,6 +20,8 @@ import { getAlertSettings } from '../lib/alertSettings'
 import { sendBigDumpEmail } from '../lib/alerts/email'
 import { releaseStream } from './StreamImg'
 import { h264Supported, playH264 } from '../lib/h264Stream'
+import { setDroneCanvas, markDroneFrame } from '../lib/droneView'
+import { droneBoatPass } from '../lib/droneBoatTrigger'
 import {
   createLearner, boxFeatures, cropInfo, saveFeedback, deleteFeedback, feedbackCount, clearFeedback, exportFeedback,
   learnerEnabled, setLearnerEnabled, showFilteredEnabled, setShowFilteredEnabled,
@@ -179,6 +181,12 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource: sourceProp
     mountedRef.current = true
     return () => { mountedRef.current = false; releaseCamera() }
   }, [])
+  // The off-screen drone detector shares its picture (video + AI boxes) with the Boat tab.
+  useEffect(() => {
+    if (!background) return undefined
+    setDroneCanvas(canvasRef.current)
+    return () => setDroneCanvas(null)
+  }, [background])
   function releaseCamera() {
     camStreamRef.current?.getTracks().forEach((t) => t.stop())
     camStreamRef.current = null
@@ -275,6 +283,20 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource: sourceProp
   const [conf, setConf] = useState(confThr)
   useEffect(() => { setConf(confThr) }, [confThr])
   confRef.current = conf
+
+  // Settings panel: a mouse opens it by hovering the gear. A touch screen has no
+  // hover — a tap there left the panel "stuck" open and it kept reappearing —
+  // so on touch the gear is a plain open / close button, and a tap anywhere
+  // else closes it.
+  const [gearOpen, setGearOpen] = useState(false)
+  const gearRef = useRef(null)
+  useEffect(() => {
+    if (!gearOpen) return
+    const off = (e) => { if (!gearRef.current?.contains(e.target)) setGearOpen(false) }
+    document.addEventListener('pointerdown', off)
+    return () => document.removeEventListener('pointerdown', off)
+  }, [gearOpen])
+  const canHover = () => typeof window !== 'undefined' && !!window.matchMedia?.('(hover: hover) and (pointer: fine)').matches
 
   // Position for geotagging trash, matched to where the camera actually is:
   //  - Drone mode: the drone GPS streamed over the WebSocket (telemetry), or
@@ -648,6 +670,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource: sourceProp
       const now=performance.now(), dt=lastDrawRef.current?Math.min(100,now-lastDrawRef.current):16
       lastDrawRef.current=now
       drawBoxes(ctx,cw,ch,vw,vh,ox,oy,dw,dh,smoothBoxes(dt))
+      if(background) markDroneFrame()   // the Boat tab mirrors this canvas (lib/droneView.js)
     }
     if(runningRef.current) rafRef.current=requestAnimationFrame(draw)
   }
@@ -737,6 +760,9 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource: sourceProp
       else{lastFaces=[];lastPersons=[];if(!wantItems)humanAt=-Infinity}
       if(!wantItems)lastItems=[]
       let runTile=false
+      // Webcam: close-up bottles are only found zoomed in, so a tile runs every pass.
+      // Drone: the whole picture every pass (the plastic boxes update twice as
+      // often); its zoomed tiles are what Long Range is for.
       if(cam&&!longRangeRef.current){runTile=true;gridSizeRef.current=2}
       else if(longRangeRef.current){
         if(emaRef.current<=BUDGET_MS){runTile=true;if(emaRef.current<=BUDGET_MS*0.4)gridSizeRef.current=3;else if(emaRef.current>BUDGET_MS*0.7)gridSizeRef.current=2}
@@ -746,7 +772,7 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource: sourceProp
       if(runTile){
         const tiles=ensureTileGrid(),idx=tileIndexRef.current%tiles.length,rect=tiles[idx]
         activeTileRef.current=rect
-        try{const tc=cam&&!longRangeRef.current?Math.max(CAM_TILE_CONF,confRef.current):Math.max(DETECT_CONF_FLOOR,confRef.current*TILE_CONF_FACTOR),tb=await detRef.current.detect(src,{confThr:tc,iouThr:0.40,rect});tileBoxesRef.current.set(idx,{boxes:tb,ts:performance.now()})}catch{}
+        try{const tc=!longRangeRef.current?Math.max(CAM_TILE_CONF,confRef.current):Math.max(DETECT_CONF_FLOOR,confRef.current*TILE_CONF_FACTOR),tb=await detRef.current.detect(src,{confThr:tc,iouThr:0.40,rect});tileBoxesRef.current.set(idx,{boxes:tb,ts:performance.now()})}catch{}
         tileIndexRef.current=idx+1
       } else { activeTileRef.current=null }
       const now=performance.now()
@@ -757,7 +783,10 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource: sourceProp
       let finalTrash=merged
       if(humanDetectionRef.current){
         const noFace=suppressByFace(merged,faceBoxes)
-        finalTrash=cam?suppressPersonBody(noFace,personBoxes):suppressByPerson(noFace,personBoxes)
+        // Only boxes that ARE a person go, for every source: the strict filter
+        // (any overlap) also deleted every bottle a person held up to the
+        // drone phone's camera.
+        finalTrash=suppressPersonBody(noFace,personBoxes)
       }
       // Self-learning: score every box. 'show' = counted as before, 'explore' =
       // drawn with a '?' for the operator to answer (not counted), 'hide' = a
@@ -801,6 +830,8 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource: sourceProp
       lastDetRef.current=now
       const counted=tracked.filter(b=>b.cls!=='human'&&b.rl==='show')
       if(!demo)recordTrashCount(counted.length) // share plastic-only count with the Detections tab
+      // Drone feed: one plastic box = boat motor + buzzer at once (lib/droneBoatTrigger.js).
+      if(!demo&&sourceRef.current!=='webcam')droneBoatPass(counted.length)
       // Stamp plastic with the aircraft's live position (≤ 2x/sec) for the Detections tab + report,
       // and grab a photo of this frame (the boxed view, exactly what the operator saw).
       // Real-world scale of this frame (drone feed with a known altitude only):
@@ -1303,12 +1334,14 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource: sourceProp
         )}
       </div>
 
-      {/* settings gear — bottom right, hover reveals panel */}
-      <div className="group absolute bottom-5 right-4 z-30">
+      {/* settings gear — bottom right; a mouse hover or (touch) a tap reveals the panel */}
+      <div ref={gearRef} className="group absolute bottom-5 right-4 z-30">
         {/* slide-up settings panel */}
-        <div className="pointer-events-none mb-3 flex flex-col items-end gap-2
-          opacity-0 translate-y-3 scale-95
-          group-hover:pointer-events-auto group-hover:opacity-100 group-hover:translate-y-0 group-hover:scale-100"
+        <div className={`mb-3 flex flex-col items-end gap-2 ${gearOpen
+          ?'pointer-events-auto opacity-100 translate-y-0 scale-100'
+          :`pointer-events-none opacity-0 translate-y-3 scale-95
+          [@media(hover:hover)_and_(pointer:fine)]:group-hover:pointer-events-auto [@media(hover:hover)_and_(pointer:fine)]:group-hover:opacity-100
+          [@media(hover:hover)_and_(pointer:fine)]:group-hover:translate-y-0 [@media(hover:hover)_and_(pointer:fine)]:group-hover:scale-100`}`}
           style={{transition:'opacity 0.25s ease,transform 0.25s cubic-bezier(.34,1.56,.64,1)',transformOrigin:'bottom right'}}>
 
           {/* Detection model (the test one is marked) */}
@@ -1407,8 +1440,10 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource: sourceProp
         </div>
 
         {/* Gear icon */}
-        <button className="flex h-12 w-12 items-center justify-center rounded-full
-          transition-all duration-300 group-hover:rotate-90 group-hover:scale-110"
+        <button type="button" aria-label="Detection settings" aria-expanded={gearOpen}
+          onClick={()=>{ if(!canHover()) setGearOpen(o=>!o) }}
+          className={`flex h-12 w-12 items-center justify-center rounded-full
+          transition-all duration-300 ${gearOpen?'rotate-90 scale-110':'[@media(hover:hover)_and_(pointer:fine)]:group-hover:rotate-90 [@media(hover:hover)_and_(pointer:fine)]:group-hover:scale-110'}`}
           style={{background:'linear-gradient(135deg,rgba(59,65,255,0.6),rgba(107,184,255,0.3))',border:'1px solid rgba(107,184,255,0.35)',boxShadow:'0 0 20px rgba(59,158,255,0.3),0 4px 12px rgba(0,0,0,0.5)'}}>
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="12" cy="12" r="3"/>

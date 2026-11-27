@@ -239,11 +239,14 @@ export async function createSession(ort, modelUrl, onProgress) {
  * model = replacing those two files; no code change needed.
  */
 export const DETECT_MODELS = [
-  { key: 'plastic', label: 'TACO groups', test: false }, // default: trained on TACO in Colab
+  // The default: YOLO11s trained on TACO in Colab, the one that found plastic on
+  // the drone feed reliably. plastic_v3 (YOLO26n, 8x smaller) missed plastic there
+  // and called a plain sheet of paper a "plastic bag" (2026-11-25).
+  { key: 'plastic', label: 'TACO groups', test: false },
+  { key: 'plastic_v3', label: 'Plastic v3', test: true }, // Ultralytics YOLO26n: bag, bottle, container (+ OTHERS), under test
   { key: 'plastic_detection', label: 'Plastic v2', test: true }, // single-class model, under test
-  { key: 'plastic_v3', label: 'Plastic v3', test: true }, // new Ultralytics model
 ]
-export const DEFAULT_DETECT_MODEL = 'plastic_v3'
+export const DEFAULT_DETECT_MODEL = 'plastic'
 const MODEL_PREF_KEY = 'varuna.detectModel'
 
 export function getDetectModel() {

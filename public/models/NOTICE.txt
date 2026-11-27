@@ -39,3 +39,11 @@ Single-class "plastic" model (Ultralytics YOLO, 640x640), supplied by the
 project owner. TEST ONLY: selectable on the Live view (gear -> Model), never
 the default. No evaluation metrics were supplied; the recommended confidence
 in its JSON is the Ultralytics default (0.25).
+
+plastic_v3.onnx (+ plastic_v3.json)
+-----------------------------------
+Custom-trained model (Ultralytics YOLO26n, 640x640) supplied by the project
+owner: plastic bag, plastic bottle, plastic container (+ OTHERS, never
+reported). TEST ONLY: selectable on the Live view (gear -> Model), not the
+default: on the drone feed it missed plastic and marked plain areas as a
+plastic bag, where plastic.onnx did not. Not covered by the notices above.
