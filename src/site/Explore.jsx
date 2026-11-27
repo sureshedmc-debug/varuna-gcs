@@ -5,11 +5,11 @@ import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { navigate } from './router'
 import { EASE, Icon, LoopVideo, Nav, Footer, Reveal, useActiveSection } from './parts'
-import { M, STEPS, MACHINES, STACK, COMPARE, GALLERY, TEAM, FAQ, AWARD, AWARD_MEDIA, BOAT_REELS, MATCH_CLIP, CONTACT, BOAT_LINKS, BOAT_LINK_VIA, BOAT_PARTS, BOAT_RUN, BOAT_SAFETY, BOAT_CHANGES, BOAT_NEXT } from './content'
+import { M, STEPS, MACHINES, STACK, COMPARE, GALLERY, TEAM, FAQ, AWARD, AWARD_MEDIA, BOAT_REELS, MATCH_CLIP, CONTACT, BOAT_LINKS, BOAT_LINK_VIA, BOAT_PARTS, BOAT_RUN, BOAT_SAFETY, BOAT_CHANGES, BOAT_NEXT, BOAT2 } from './content'
 import Feedback from './Feedback'
 import { openDownloads } from './downloads'
 
-const SECTIONS = ['achievements', 'story', 'how', 'water', 'tech', 'gallery', 'team', 'feedback']
+const SECTIONS = ['achievements', 'story', 'how', 'boat2', 'water', 'boat', 'tech', 'gallery', 'team', 'feedback']
 
 const toSection = (id) => (e) => {
   e.preventDefault()
@@ -294,11 +294,67 @@ export default function Explore() {
         </div>
       </section>
 
+      {/* ── Nirmal Dhara Jalyan 2.0 ── */}
+      <section id="boat2" className="vs-sec vs-b2">
+        <div className="vs-wrap">
+          <Head center kicker="Nirmal Dhara Jalyan 2.0" title={<>The air boat with <span className="vs-grad">an AI captain.</span></>}
+            lead="The second-generation collector boat: pushed by air, steered by twin fins, and built around a scoop ramp that drops plastic into its own bin." />
+          <div className="vs-match vs-b2-top">
+            <Reveal y={60} style={{ position: 'relative' }}>
+              <div className="vs-frame-glow" />
+              <button type="button" className="vs-frame vs-b2-frame" onClick={() => setView({ items: [{ type: 'img', src: 'p-boat2-model', title: 'Nirmal Dhara Jalyan 2.0', sub: 'Scoop ramp with brushes, open bin, motors on raised posts and a steering fin behind each' }], index: 0 })} aria-label="Nirmal Dhara Jalyan 2.0: open the picture big">
+                <span className="vs-frame-in"><img src={M('p-boat2-model.jpg')} alt="3D model of Nirmal Dhara Jalyan 2.0 with its scoop ramp lowered" loading="lazy" /><span className="vs-frame-tag">3D model · ramp lowered</span></span>
+              </button>
+            </Reveal>
+            <div className="vs-match-txt">
+              <Reveal className="vs-b2-stats">
+                {BOAT2.stats.map(([v, k]) => <div key={k}><b>{v}</b><span>{k}</span></div>)}
+              </Reveal>
+              <div className="vs-b2-feats">
+                {BOAT2.features.map(([t, d], i) => (
+                  <Reveal key={t} delay={0.05 * i} className="vs-b2-feat"><b>{t}</b><span>{d}</span></Reveal>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="vs-match vs-b2-ai">
+            <div className="vs-match-txt">
+              <Reveal><span className="vs-kicker">Sim-to-real AI</span></Reveal>
+              <Reveal delay={0.05}><h3>Trained on <span className="vs-grad">thousands of boats</span> before it touches water.</h3></Reveal>
+              <Reveal delay={0.1}>
+                <p>Like modern robots, the boat learns in simulation first. Its AI captain practises on thousands of virtual ponds, each with its own wind, currents, weed and sensor errors, so what it learns holds up on the real river.</p>
+              </Reveal>
+              <Reveal delay={0.15} className="vs-match-stats">
+                {BOAT2.simStats.map(([v, k]) => <div key={k}><b className={v === '2,048' ? 'vs-grad' : undefined}>{v}</b><span>{k}</span></div>)}
+              </Reveal>
+            </div>
+            <Reveal y={60} style={{ position: 'relative' }}>
+              <div className="vs-frame-glow" />
+              <button type="button" className="vs-frame vs-b2-frame" onClick={() => setView({ items: [{ type: 'img', src: 'p-boat2-fleet', title: 'The training ground', sub: 'Each pond is one virtual boat practising with its own physics and weather' }, { type: 'img', src: 'p-boat2-sim', title: 'The virtual twin', sub: 'A simulated boat tipping its catch into the bin' }], index: 0 })} aria-label="The training ground: open the pictures big">
+                <span className="vs-frame-in"><img src={M('p-boat2-fleet.jpg')} alt="Rows of virtual ponds, each with a simulated boat in training" loading="lazy" /><span className="vs-frame-tag">Training world · 2,048 boats</span></span>
+              </button>
+            </Reveal>
+          </div>
+
+          <div className="vs-b2-pipe">
+            {BOAT2.pipeline.map(([t, d], i) => (
+              <Reveal key={t} delay={0.07 * i} className="vs-b2-step"><i>0{i + 1}</i><b>{t}</b><span>{d}</span></Reveal>
+            ))}
+          </div>
+          <Reveal className="vs-b2-skills">
+            <span className="vs-kicker">What the AI captain learns</span>
+            <div>{BOAT2.skills.map((k) => <span key={k} className="vs-b2-skill">{k}</span>)}</div>
+            <p>The AI captain is in training now. Next it is tuned on logs from the real boat, then tested on the water with the radio in hand.</p>
+          </Reveal>
+        </div>
+      </section>
+
       {/* ── the boat on the water ── */}
       <section id="water" className="vs-sec vs-water">
         <div className="vs-wrap">
           <Head center kicker="On the water" title={<>The boat, <span className="vs-grad">in action.</span></>}
-            lead="New footage of Nirmal Dhara Jalyan, the tricolour collector boat: scooping up plastic, working under the drone, and running after dark." />
+            lead="Footage of the first Nirmal Dhara Jalyan, the tricolour collector boat: scooping up plastic, working under the drone, and running after dark." />
           <div className="vs-reels">
             {BOAT_REELS.map((r, i) => (
               <Reveal key={r.src} delay={0.08 * i} y={60} as="button" type="button" className="vs-reel"
@@ -336,7 +392,7 @@ export default function Explore() {
       {/* ── inside the boat ── */}
       <section id="boat" className="vs-sec vs-boat">
         <div className="vs-wrap">
-          <Head center kicker="Inside the boat" title={<>How Nirmal Dhara Jalyan <span className="vs-grad">works.</span></>}
+          <Head center kicker="Inside the first boat" title={<>How Nirmal Dhara Jalyan <span className="vs-grad">works.</span></>}
             lead="Three parts share the job: the app on the laptop does the thinking, a phone on board does the seeing and talking, and the autopilot does the driving." />
 
           <Reveal className="vs-arch" aria-label="How the boat's parts connect">
@@ -466,7 +522,7 @@ export default function Explore() {
               <div><small>School</small><b>{TEAM.school}</b></div>
               <div><small>Theme</small><b>{TEAM.theme}</b></div>
               <div><small>Drone</small><b>Varuna · AI aerial scout</b></div>
-              <div><small>Boat</small><b>Nirmal Dhara Jalyan</b></div>
+              <div><small>Boat</small><b>Nirmal Dhara Jalyan 2.0</b></div>
               <a className="vs-team-award" href="#achievements" onClick={toSection('achievements')}>
                 <span className="ic"><Icon name="trophy" size={18} stroke={2} /></span>
                 <span><small>Award</small><b>1st place · DoE Science Centre No. 4 · Selected for Skill Expo</b></span>

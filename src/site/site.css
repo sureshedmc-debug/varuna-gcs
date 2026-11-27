@@ -858,3 +858,34 @@ textarea.vs-input { resize: vertical; min-height: 130px; line-height: 1.55; }
   .vs-run, .vs-safe { grid-template-columns: 1fr; }
   .vs-log-item { grid-template-columns: 1fr; gap: 4px; padding-left: 20px; }
 }
+
+/* ── Nirmal Dhara Jalyan 2.0 ── */
+.vs-b2 { background: radial-gradient(60% 45% at 50% 20%, rgba(139, 92, 246, 0.08), transparent 70%); }
+.vs-b2-top { margin-top: clamp(50px, 7vw, 80px); grid-template-columns: 1.3fr 1fr; }
+.vs-b2-frame { display: block; width: 100%; cursor: zoom-in; text-align: left; }
+.vs-b2-frame .vs-frame-in { display: block; aspect-ratio: 16 / 9; }
+.vs-b2-frame .vs-frame-in img { display: block; }
+.vs-b2-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.vs-b2-stats div { padding: 12px 10px; border-radius: 14px; background: var(--glass); border: 1px solid var(--line); }
+.vs-b2-stats b { display: block; font-size: clamp(15px, 1.5vw, 19px); font-weight: 800; letter-spacing: -0.02em; }
+.vs-b2-stats span { font-size: 11.5px; color: var(--ink3); }
+.vs-b2-feats { margin-top: 14px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.vs-b2-feat { padding: 14px 16px; border-radius: 16px; background: var(--glass); border: 1px solid var(--line); }
+.vs-b2-feat b { display: block; font-size: 14.5px; margin-bottom: 4px; }
+.vs-b2-feat span { font-size: 13px; color: var(--ink2); line-height: 1.5; }
+.vs-b2-ai { grid-template-columns: 0.9fr 1.3fr; }
+.vs-b2-pipe { margin-top: clamp(40px, 6vw, 64px); display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.vs-b2-step { padding: 20px; border-radius: 20px; background: var(--glass); border: 1px solid var(--line); }
+.vs-b2-step i { display: block; font-style: normal; font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.1em; color: #67e8f9; margin-bottom: 10px; }
+.vs-b2-step b { display: block; font-size: 16px; margin-bottom: 6px; }
+.vs-b2-step span { font-size: 13.5px; color: var(--ink2); line-height: 1.55; }
+.vs-b2-skills { margin-top: 28px; padding: 22px 24px; border-radius: 22px; border: 1px solid var(--line2); background: linear-gradient(160deg, rgba(255,255,255,0.05), rgba(255,255,255,0.01)); }
+.vs-b2-skills > div { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 8px; }
+.vs-b2-skill { font-size: 13px; padding: 7px 12px; border-radius: 999px; background: rgba(255,255,255,0.05); border: 1px solid var(--line2); color: var(--ink2); }
+.vs-b2-skills p { margin: 14px 0 0; font-size: 13.5px; color: var(--ink3); }
+@media (max-width: 1080px) { .vs-b2-pipe { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 860px) { .vs-b2-top, .vs-b2-ai { grid-template-columns: 1fr; } }
+@media (max-width: 640px) {
+  .vs-b2-stats { grid-template-columns: 1fr 1fr; }
+  .vs-b2-feats, .vs-b2-pipe { grid-template-columns: 1fr; }
+}
