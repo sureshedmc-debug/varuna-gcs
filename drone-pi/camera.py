@@ -9,9 +9,11 @@ out of a Raspberry Pi 3:
     third of MJPEG's bandwidth and half its CPU. The app decodes it in the
     browser (WebCodecs) from /api/camera/h264. camera_codec = mjpeg makes
     rpicam-vid encode MJPEG instead.
-  * USB webcam  → with camera_codec = h264, its raw 640x480 picture goes
-    straight into the Pi's hardware H.264 encoder (ffmpeg h264_v4l2m2m): no CPU
-    encoding, low bandwidth, and the same low-delay player as the camera module.
+  * USB webcam  → with camera_codec = h264, 640x480 @ 30 fps into the Pi's
+    hardware H.264 encoder: GStreamer's v4l2h264enc fed by the webcam's MJPEG
+    when gst-launch-1.0 is installed, else ffmpeg h264_v4l2m2m on its raw YUYV.
+    ~1000 kbit/s, no B-frames, SPS/PPS + IDR every 15 frames. No CPU encoding,
+    low bandwidth, and the same low-delay player as the camera module.
     Without that encoder, or with camera_codec = mjpeg, ffmpeg asks the camera
     for its own MJPEG at 1280x720/30 and copies the frames through untouched;
     if it can't do MJPEG at that size, raw YUYV that ffmpeg encodes (heavier),
@@ -26,6 +28,10 @@ out of a Raspberry Pi 3:
     (see phone-link/README.md).
   * test → a generated test picture (laptop testing / no camera), in H.264 or
     MJPEG like the camera module.
+
+Every H.264 frame also goes, as it is, to the ground station PC as RTP over
+UDP port 5000 (RtpSender below; the PC subscribes by saying hello), so the
+app's feed and the PC's detector share one hardware encode.
 
 With H.264, /video_feed and /api/camera/snapshot still get JPEGs: while
 someone watches /video_feed (browsers without WebCodecs) ffmpeg decodes the
@@ -59,11 +65,15 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 
 import stabilize
+from config import video_settings
 
 log = logging.getLogger("drone.camera")
 
 SOI, EOI = b"\xff\xd8", b"\xff\xd9"
-STALL_S = 10          # restart a capture process that sends nothing for this long
+STALL_S = 10          # restart a capture process that sends nothing for this long (while starting)
+PROC_STALL_S = 1.0    # ...or, once its frames were flowing, that goes quiet this long
+RETRY_S = 0.5         # a capture that ended: start it again after this
+NO_CAMERA_RETRY_S = 1.0  # no camera / every setting failed: look again after this
 IDLE_S = 30           # camera off this long after the last viewer left (less heat); back on in ~2 s
 START_WAIT_S = 8      # how long a snapshot waits for the camera to come out of standby
 PHONE_PROBE_S = 1.0   # the phone camera's server must accept a connection this fast
@@ -547,6 +557,19 @@ def find_usb_camera():
     return None
 
 
+def usb_steady_rate(dev):
+    """Keep a USB webcam at its full frame rate in dim light: by default most
+    halve it (longer exposures) when the light drops, and the video stutters.
+    Best effort: v4l2-ctl may be missing, or the camera may not have the control."""
+    if not dev or not shutil.which("v4l2-ctl"):
+        return
+    for ctrl in ("exposure_dynamic_framerate=0", "exposure_auto_priority=0"):
+        try:
+            subprocess.run(["v4l2-ctl", "-d", dev, "-c", ctrl], capture_output=True, timeout=3)
+        except Exception:                                          # noqa: BLE001
+            pass
+
+
 def find_csi_tool():
     for name in ("rpicam-vid", "libcamera-vid"):
         p = shutil.which(name)
@@ -573,6 +596,258 @@ def csi_camera_present(max_age=CSI_CHECK_S):
             present = False
     _csi_cache.update(at=time.time(), present=present)
     return present
+
+
+# ---------------------------------------------------------------- RTP to the ground station
+# The same hardware-encoded H.264 frames the app gets from /api/camera/h264 also
+# go out as RTP over UDP (RFC 6184, payload type 96, 90 kHz clock) to the ground
+# station PC's detector (drone-pi/ground_station.py), with nothing encoded twice.
+#
+# Who gets them:
+#   * any PC that says hello: it sends RTP_HELLO to this Pi's UDP RTP_PORT from
+#     the socket it receives on (port 5000), every RTP_HELLO_EVERY_S; it keeps
+#     getting the stream for RTP_HELLO_KEEP_S after its last hello. Works over
+#     Tailscale and the Wi-Fi alike, and resumes within a hello of a link drop.
+#   * VARUNA_RTP_TARGETS="host:port,host:port" (environment): always sent, for a
+#     receiver that can't say hello (e.g. gst-launch-1.0 udpsrc port=5000 ...).
+# A subscriber keeps the camera out of standby, like a viewer in the app.
+#
+# Each frame's first packet carries a header extension (RFC 8285 one-byte form,
+# id 1) with the frame's capture time in µs (this Pi's clock), so the ground
+# station can look up the drone's GPS fix at the moment the picture was taken.
+# Receivers that don't know the extension (gstreamer's rtph264depay) skip it.
+RTP_PORT = int(os.environ.get("VARUNA_RTP_PORT", "5000"))
+RTP_HELLO = b"VARUNA_RTP_HELLO"
+RTP_HELLO_KEEP_S = 5.0
+RTP_HELLO_EVERY_S = 0.5      # what the ground station sends at (documentation; its side)
+RTP_MAX_PAYLOAD = 1200       # fits Tailscale's 1280-byte MTU with IP/UDP/RTP headers
+RTP_PT = 96
+RTP_EXT_ID = 1
+RTP_RESOLVE_EVERY_S = 10.0
+_START_RE = None             # compiled lazily (re is only needed here)
+
+
+def split_annexb(data):
+    """The NAL units of an Annex-B buffer (3- or 4-byte start codes), without them."""
+    global _START_RE
+    if _START_RE is None:
+        import re
+        _START_RE = re.compile(b"\x00\x00\x01")
+    out = []
+    starts = [m.end() for m in _START_RE.finditer(data)]
+    for i, s in enumerate(starts):
+        e = (starts[i + 1] - 3) if i + 1 < len(starts) else len(data)
+        nal = data[s:e].rstrip(b"\x00") if i + 1 < len(starts) else data[s:e]
+        if nal:
+            out.append(nal)
+    return out
+
+
+def rtp_packets(data, seq, ts90, ssrc, capture_us=None, mtu=RTP_MAX_PAYLOAD):
+    """RTP packets for one H.264 access unit (Annex-B). Returns (packets, next seq).
+
+    Single NAL unit packets when a NAL fits, FU-A fragments when it doesn't. The
+    marker bit is set on the frame's last packet."""
+    import struct
+    nals = split_annexb(data)
+    payloads = []
+    for nal in nals:
+        if len(nal) <= mtu:
+            payloads.append(nal)
+            continue
+        hdr, body = nal[0], nal[1:]
+        fu_ind = (hdr & 0xE0) | 28
+        kind = hdr & 0x1F
+        step = mtu - 2
+        for off in range(0, len(body), step):
+            start = off == 0
+            end = off + step >= len(body)
+            fu_hdr = (0x80 if start else 0) | (0x40 if end else 0) | kind
+            payloads.append(bytes((fu_ind, fu_hdr)) + body[off:off + step])
+    packets = []
+    for i, p in enumerate(payloads):
+        last = i == len(payloads) - 1
+        ext = i == 0 and capture_us is not None
+        b0 = 0x80 | (0x10 if ext else 0)
+        b1 = (0x80 if last else 0) | RTP_PT
+        head = struct.pack("!BBHII", b0, b1, seq & 0xFFFF, ts90 & 0xFFFFFFFF, ssrc)
+        if ext:
+            # 0xBEDE, 3 words: [id 1, len 8] + 8-byte µs + 3 bytes padding
+            head += struct.pack("!HH", 0xBEDE, 3) + bytes(((RTP_EXT_ID << 4) | 7,)) \
+                + struct.pack("!Q", int(capture_us) & 0xFFFFFFFFFFFFFFFF) + b"\x00\x00\x00"
+        packets.append(head + p)
+        seq += 1
+    return packets, seq & 0xFFFF
+
+
+# USB webcam → hardware H.264 (ground-station spec).
+USB_FPS = 30
+USB_KBPS = 1000
+USB_IDR_EVERY = 15
+
+
+def gst_usb_h264(gst, dev, jpeg_decoder="jpegdec"):
+    """gst-launch-1.0: the webcam's 640x480/30 MJPEG → decoded → the Pi's hardware
+    H.264 encoder (v4l2h264enc) → Annex-B byte stream on stdout, one access unit
+    at a time, SPS/PPS in front of every IDR (every USB_IDR_EVERY frames).
+    Baseline profile: no B-frames, so no frame waits for a later one."""
+    controls = (f"controls,repeat_sequence_header=1,h264_i_frame_period={USB_IDR_EVERY},"
+                f"video_bitrate={USB_KBPS * 1000},video_bitrate_mode=1")
+    return [gst, "-q",
+            "v4l2src", f"device={dev}", "do-timestamp=true", "!",
+            f"image/jpeg,width=640,height=480,framerate={USB_FPS}/1", "!",
+            "jpegparse", "!", jpeg_decoder, "!", "videoconvert", "!", "video/x-raw,format=I420", "!",
+            "v4l2h264enc", f"extra-controls={controls}", "!",
+            "video/x-h264,profile=(string)baseline,level=(string)4", "!",
+            "h264parse", "config-interval=-1", "!",
+            "video/x-h264,stream-format=(string)byte-stream,alignment=(string)au", "!",
+            "fdsink", "fd=1", "sync=false"]
+
+
+def _parse_targets(text, default_port):
+    out = []
+    for part in (text or "").replace(";", ",").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        host, _, port = part.rpartition(":") if ":" in part else (part, "", "")
+        if not host:
+            host, port = part, ""
+        try:
+            out.append((host, int(port) if port else default_port))
+        except ValueError:
+            log.warning("RTP: bad target %r (use host:port)", part)
+    return out
+
+
+class UdpFanout:
+    """A UDP socket on `port` that sends to every subscriber: PCs that said
+    `hello` within `keep_s`, plus fixed `targets` from the environment. Used for
+    the RTP video (here) and the GPS JSON (mav_link.py)."""
+
+    def __init__(self, name, port, hello, static_env, keep_s=RTP_HELLO_KEEP_S, on_hello=None):
+        self.name, self.port, self.hello, self.keep_s = name, port, hello, keep_s
+        self.on_hello = on_hello
+        self._static = _parse_targets(os.environ.get(static_env, ""), port)
+        self._resolved = []          # [(ip, port)] of the static targets
+        self._subs = {}              # (ip, port) -> last hello time
+        self._lock = threading.Lock()
+        self._sock = None
+        self._started = False
+        self.sent = 0
+        self.errors = 0
+
+    def start(self):
+        if self._started:
+            return
+        self._started = True
+        threading.Thread(target=self._run, name=f"{self.name}-hello", daemon=True).start()
+
+    def _bind(self):
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 1 << 20)
+        except OSError:
+            pass
+        s.bind(("0.0.0.0", self.port))
+        s.settimeout(1.0)
+        return s
+
+    def _run(self):
+        resolved_at = 0.0
+        while True:
+            if self._sock is None:
+                try:
+                    self._sock = self._bind()
+                    log.info("%s: UDP %d ready (subscribers say hello here)", self.name, self.port)
+                except OSError as exc:
+                    log.warning("%s: cannot open UDP %d: %s (retrying)", self.name, self.port, exc)
+                    time.sleep(1.0)
+                    continue
+            now = time.time()
+            if self._static and now - resolved_at > RTP_RESOLVE_EVERY_S:
+                resolved_at = now
+                res = []
+                for host, port in self._static:
+                    try:
+                        res.append((socket.gethostbyname(host), port))
+                    except OSError:
+                        pass                     # not on the tailnet / Wi-Fi right now
+                self._resolved = res
+            try:
+                data, addr = self._sock.recvfrom(256)
+            except socket.timeout:
+                continue
+            except OSError:
+                continue                         # ICMP "unreachable" from a gone subscriber
+            if data.strip().startswith(self.hello):
+                with self._lock:
+                    new = addr not in self._subs
+                    self._subs[addr] = time.time()
+                if new:
+                    log.info("%s: sending to %s:%d", self.name, addr[0], addr[1])
+                if self.on_hello:
+                    try:
+                        self.on_hello()
+                    except Exception:
+                        pass
+
+    def targets(self):
+        now = time.time()
+        with self._lock:
+            for a in [a for a, t in self._subs.items() if now - t > self.keep_s]:
+                del self._subs[a]
+                log.info("%s: %s:%d stopped saying hello", self.name, a[0], a[1])
+            subs = list(self._subs)
+        return subs + [t for t in self._resolved if t not in subs]
+
+    def active(self):
+        return bool(self.targets())
+
+    def send_all(self, packets):
+        s = self._sock
+        if s is None:
+            return
+        for addr in self.targets():
+            for p in packets:
+                try:
+                    s.sendto(p, addr)
+                    self.sent += 1
+                except OSError:
+                    self.errors += 1             # link down / buffer full: UDP drops it, like the network would
+                    break
+
+    def view(self):
+        return {"port": self.port, "subscribers": [f"{a[0]}:{a[1]}" for a in self.targets()],
+                "packets_sent": self.sent, "send_errors": self.errors}
+
+
+class RtpSender:
+    """H.264 access units → RTP packets → every ground station subscribed."""
+
+    def __init__(self, on_viewer=None):
+        import random
+        self.out = UdpFanout("RTP video", RTP_PORT, RTP_HELLO, "VARUNA_RTP_TARGETS", on_hello=on_viewer)
+        self.ssrc = random.getrandbits(32)
+        self.seq = random.getrandbits(16)
+        self.frames = 0
+
+    def start(self):
+        self.out.start()
+
+    def send(self, data, capture_us):
+        try:
+            if not self.out.active():
+                return
+            packets, self.seq = rtp_packets(data, self.seq, capture_us * 9 // 100, self.ssrc, capture_us)
+            self.out.send_all(packets)
+            self.frames += 1
+        except Exception:                        # never let the copy break the app's video
+            log.exception("RTP send")
+
+    def view(self):
+        return dict(self.out.view(), frames=self.frames)
 
 
 class CameraManager:
@@ -614,9 +889,12 @@ class CameraManager:
         self._phone_scan_at = 0.0
         self._ask_at = 0.0
         self._sweep_at = 0.0
+        # The ground station's copy of the video (RTP over UDP): a subscriber is a viewer.
+        self.rtp = RtpSender(on_viewer=self.touch)
 
     # ------------------------------------------------------------------ lifecycle
     def start(self):
+        self.rtp.start()
         # The thread runs even when the camera is "off", so turning it on from
         # the app later needs no restart.
         self._thread = threading.Thread(target=self._run, name="camera", daemon=True)
@@ -662,9 +940,12 @@ class CameraManager:
         # viewer join or recover from a lost frame quickly without spending much
         # of the bitrate on keyframes (they are several times bigger).
         h264 = self.cfg["camera_codec"] == "h264"
-        sfps = max(1, min(fps, self.cfg["stream_fps"]))
+        # H.264 size, rate and bitrate: the phone app's preset (video_preset),
+        # so the Pi's video is as smooth as VARUNA Cam's; "custom" = the old knobs.
+        vw, vh, sfps, kbps = video_settings(self.cfg)
         intra = max(5, sfps)
-        kbps = self.cfg["video_bitrate_kbps"]
+        # Short exposures against propeller vibration (the phone's fast shutter).
+        fast = ["--exposure", "sport"] if self.cfg.get("camera_fast_shutter", "on") == "on" else []
         source = self.cfg["camera_source"]
         if source == "auto":
             source = self._auto_source()
@@ -687,8 +968,8 @@ class CameraManager:
             if not h264:
                 return "test", "testsrc", [mjpeg]
             return "test", "testsrc", [
-                ("test pattern H.264", f"{w}x{h}",
-                 base + ["-re", "-f", "lavfi", "-i", f"testsrc2=size={w}x{h}:rate={sfps}", "-c:v", "libx264",
+                ("test pattern H.264", f"{vw}x{vh}",
+                 base + ["-re", "-f", "lavfi", "-i", f"testsrc2=size={vw}x{vh}:rate={sfps}", "-c:v", "libx264",
                          "-preset", "ultrafast", "-tune", "zerolatency", "-profile:v", "high", "-g", str(intra),
                          "-bf", "0", "-b:v", f"{kbps}k", "-x264-params", "repeat-headers=1",
                          "-f", "h264", "-flush_packets", "1", "pipe:1"], "h264"),
@@ -704,17 +985,22 @@ class CameraManager:
                     + extra + ["--flush", "-o", "-"]
 
             h264_args = ["--framerate", str(sfps), "--bitrate", str(kbps * 1000), "--intra", str(intra),
-                         "--inline", "--profile", "high", "--level", "4.1"]
+                         "--inline", "--profile", "high", "--level", "4.1"] + fast
             mjpegs = [
                 ("camera module MJPEG", f"{w}x{h}",
-                 vid("mjpeg", w, h, ["--framerate", str(fps), "--quality", str(q)]), "mjpeg"),
+                 vid("mjpeg", w, h, ["--framerate", str(fps), "--quality", str(q)] + fast), "mjpeg"),
                 ("camera module MJPEG", "640x480", vid("mjpeg", 640, 480, ["--framerate", str(fps)]), "mjpeg"),
             ]
             if not h264:
                 return "csi", "camera module", mjpegs
-            # If the hardware encoder won't start, MJPEG still works.
-            return "csi", "camera module", [
-                ("camera module H.264", f"{w}x{h}", vid("h264", w, h, h264_args), "h264"),
+            # If the hardware encoder won't start at the preset's size, 640x480;
+            # then MJPEG, which always works. An older camera stack without the
+            # "sport" exposure mode gets the same settings without it.
+            first = [("camera module H.264", f"{vw}x{vh}", vid("h264", vw, vh, h264_args), "h264")]
+            if fast:
+                first.append(("camera module H.264", f"{vw}x{vh}",
+                              vid("h264", vw, vh, [a for a in h264_args if a not in fast]), "h264"))
+            return "csi", "camera module", first + [
                 ("camera module H.264", "640x480", vid("h264", 640, 480, h264_args), "h264"),
             ] + mjpegs
         dev = self.cfg["camera_device"]
@@ -728,12 +1014,22 @@ class CameraManager:
         # webcam's own MJPEG (whose JPEG size the Pi can't change). 640x480 is
         # about the detector's input size anyway. Without the encoder (Pi 5, an
         # ffmpeg without it) it falls through to the MJPEG settings below.
-        usb_h264 = [
-            ("USB camera → hardware H.264", "640x480",
-             v4l + ["-input_format", "yuyv422", "-video_size", "640x480", "-framerate", str(sfps), "-i", dev,
-                    "-c:v", "h264_v4l2m2m", "-pix_fmt", "yuv420p", "-b:v", f"{kbps}k", "-g", str(intra), "-bf", "0",
-                    "-bsf:v", "dump_extra", "-f", "h264", "-flush_packets", "1", "pipe:1"], "h264"),
-        ] if h264 else []
+        # The ground-station spec: 640x480 at 30 fps, ~1000 kbit/s, no B-frames,
+        # SPS/PPS repeated with an IDR every 15 frames (a lost packet heals in
+        # half a second). First GStreamer's v4l2h264enc fed by the webcam's MJPEG
+        # (gst-launch-1.0, if installed); then ffmpeg's h264_v4l2m2m on the
+        # webcam's raw YUYV, which drives the same hardware encoder block.
+        usb_h264 = []
+        if h264:
+            gst = shutil.which("gst-launch-1.0")
+            if gst:
+                for dec in ("v4l2jpegdec", "jpegdec"):     # the Pi's JPEG decoder if the kernel has it, else the CPU's
+                    usb_h264.append((f"USB camera MJPEG → GStreamer v4l2h264enc ({dec})", "640x480", gst_usb_h264(gst, dev, dec), "h264"))
+            usb_h264.append(
+                ("USB camera → hardware H.264", "640x480",
+                 v4l + ["-input_format", "yuyv422", "-video_size", "640x480", "-framerate", str(USB_FPS), "-i", dev,
+                        "-c:v", "h264_v4l2m2m", "-pix_fmt", "yuv420p", "-b:v", f"{USB_KBPS}k", "-g", str(USB_IDR_EVERY),
+                        "-bf", "0", "-bsf:v", "dump_extra", "-f", "h264", "-flush_packets", "1", "pipe:1"], "h264"))
         # Otherwise MJPEG: the webcam's own JPEGs pass through with no work on the
         # Pi; the Pi 3 couldn't keep up with re-encoding them.
         return "usb", dev, usb_h264 + [
@@ -795,7 +1091,7 @@ class CameraManager:
                     "usb": "No USB camera found.",
                     "url": "camera_source is url but no camera_url is set (e.g. http://<phone IP>:8080/video).",
                 }.get(source, "No camera found.")
-                self._stop.wait(5)
+                self._stop.wait(NO_CAMERA_RETRY_S)
                 continue
             if source == "url" and not self._phone_ready():
                 # The phone's server is not up (VARUNA Cam stopped, the phone off
@@ -822,14 +1118,14 @@ class CameraManager:
                         _csi_cache["present"] = None   # re-check: maybe it was unplugged
                     self._was_ok = False
                     self.status_text = "ERROR"
-                    self._stop.wait(1 if source == "url" else 5)   # all failed: wait, then start over
+                    self._stop.wait(NO_CAMERA_RETRY_S)   # all failed: wait, then start over
             else:
                 _csi_cache["present"] = None       # it was streaming and stopped: re-check, retry
                 # The phone's MJPEG backup ran: next time try its H.264 again first
                 # (it was only missing while the app restarted).
                 if fmt == "mjpeg" and attempts[0][3] == "h264":
                     attempt_index = 0
-                self._stop.wait(2)
+                self._stop.wait(RETRY_S)
 
     def _phone_ready(self):
         """Whether the phone camera's server accepts a connection now. If it has
@@ -916,9 +1212,10 @@ class CameraManager:
 
     def _setting_key(self):
         key = (self.cfg["camera_source"], self.cfg["camera_quality"], self.cfg["camera_codec"],
-               self.cfg["camera_url"], self.cfg.get("video_stabilize", "on"))
+               self.cfg["camera_url"], self.cfg.get("video_stabilize", "on"),
+               self.cfg.get("camera_fast_shutter", "on"))
         if self.codec == "h264":
-            key += (self.cfg["video_bitrate_kbps"], self.cfg["stream_fps"])
+            key += (self.cfg.get("video_preset", "nb540"), self.cfg["video_bitrate_kbps"], self.cfg["stream_fps"])
         return key
 
     def _setting_changed(self):
@@ -931,6 +1228,8 @@ class CameraManager:
         if cmd and cmd[0] == URL_H264_CMD:
             return self._capture_url_h264(name, cmd[1])
         log.info("Camera: starting %s at %s", name, res)
+        if name.startswith("USB camera"):
+            usb_steady_rate(self.device)
         self.pipeline, self.resolution = name, res
         self.status_text = "STARTING"
         try:
@@ -952,7 +1251,7 @@ class CameraManager:
                 self._h264.clear()             # frames of an earlier stream can't be mixed in
             # A frame is complete only when the next one starts arriving (one frame
             # period later), and it reached the pipe ENCODE_LAG_S after its exposure.
-            self._capture_lag = 1.0 / max(1, min(self.cfg["camera_fps"], self.cfg["stream_fps"])) + ENCODE_LAG_S
+            self._capture_lag = 1.0 / max(1, video_settings(self.cfg)[2]) + ENCODE_LAG_S
             splitter = H264Splitter(self._publish_h264)
             while not self._stop.is_set():
                 chunk = stream.read(65536)
@@ -1140,7 +1439,7 @@ class CameraManager:
         """Kill the capture process if it stops delivering frames (STALL_S), so
         _capture's blocking read returns and the camera is restarted."""
         while proc.poll() is None and not self._stop.is_set():
-            time.sleep(1)
+            time.sleep(0.25)
             if self._idle():
                 try:
                     proc.kill()
@@ -1155,9 +1454,13 @@ class CameraManager:
                     pass
                 return
             last = self._stamps[-1] if self._stamps else 0.0
-            if time.time() - max(last, self.started_at or 0.0) > STALL_S:
-                log.warning("Camera: no frames for %d s — restarting the capture", STALL_S)
-                self.last_error = f"The camera stopped sending pictures for {STALL_S} s (unplugged?)."
+            started = self.started_at or 0.0
+            # Starting up may take a few seconds; once frames flow, a second of
+            # silence means the camera or encoder is gone: restart at once.
+            limit = PROC_STALL_S if last > started else STALL_S
+            if time.time() - max(last, started) > limit:
+                log.warning("Camera: no frames for %g s — restarting the capture", limit)
+                self.last_error = f"The camera stopped sending pictures for {limit:g} s (unplugged?)."
                 try:
                     proc.kill()
                 except Exception:
@@ -1206,8 +1509,10 @@ class CameraManager:
                 self.h264_codec = h264_codec_string(sps)
             self.h264_seq += 1
             # Stamped with when it was taken (estimated), to look up the drone's pose then.
-            self._h264.append((self.h264_seq, keyframe, int((now - self._capture_lag) * 1e6), data))
+            cap_us = int((now - self._capture_lag) * 1e6)
+            self._h264.append((self.h264_seq, keyframe, cap_us, data))
             self._cond.notify_all()
+        self.rtp.send(data, cap_us)          # the ground station's copy: same frame, no second encode
         self._jpegs.offer(data, keyframe)
 
     # ------------------------------------------------------------------ consumers
@@ -1286,6 +1591,12 @@ class CameraManager:
         """Cameras the Pi can see right now (the camera-module answer is the cached one)."""
         return {"usb": find_usb_camera(), "csi": bool(_csi_cache["present"])}
 
+    def _target(self):
+        if self.cfg["camera_codec"] == "h264" and self.source != "url":
+            w, h, fps, kbps = video_settings(self.cfg)
+            return f"{w}x{h} @ {fps} fps, {kbps / 1000:g} Mbit/s ({self.cfg.get('video_preset', 'nb540')})"
+        return f"{self.cfg['camera_width']}x{self.cfg['camera_height']} @ {self.cfg['camera_fps']} fps"
+
     def get_status(self):
         connected = bool(self.connected)
         return {
@@ -1293,7 +1604,7 @@ class CameraManager:
             "status_text": "STREAMING" if self._live() else self.status_text,
             "standby": self.status_text == "STANDBY",
             "measured_fps": self.measured_fps(),
-            "target": f"{self.cfg['camera_width']}x{self.cfg['camera_height']} @ {self.cfg['camera_fps']} fps",
+            "target": self._target(),
             "resolution": self.resolution,
             "pipeline": self.pipeline,
             "codec": self.codec,
@@ -1307,4 +1618,5 @@ class CameraManager:
             "frames_captured": self.frames_captured,
             "frame_bytes": len(self.frame) if self.frame else 0,
             "last_error": None if connected else self.last_error,
+            "rtp": self.rtp.view(),        # the ground station's RTP copy (UDP RTP_PORT)
         }

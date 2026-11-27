@@ -38,7 +38,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from pydantic import BaseModel, Field
 
 from camera import CameraManager
-from config import DATA_DIR, HERE, ConfigStore
+from config import DATA_DIR, HERE, ConfigStore, video_settings
 from control import KeyboardControl
 from mav_link import DroneLink, LinkError
 from mission import ACTIVE, MissionManager
@@ -412,7 +412,7 @@ def h264_frames(with_pose=False):
     latest keyframe on. A viewer that falls behind (slow link) or misses frames
     skips ahead to the newest keyframe instead of piling up delay. with_pose:
     each frame carries the drone's position and attitude when it was taken."""
-    max_lag = max(2, int(cfg["stream_fps"]) // 2)
+    max_lag = max(2, video_settings(cfg)[2] // 2)  # about half a second of frames
     seq, need_key = -1, True
     last_frame = time.time()
     # None: the camera hasn't started yet (the phone not found): wait for it here

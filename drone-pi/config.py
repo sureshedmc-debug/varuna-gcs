@@ -43,6 +43,16 @@ DEFAULTS = {
     "camera_quality": 55,             # JPEG quality when the Pi has to encode (CSI / fallback); ~33 KB frames at 720p
     "camera_codec": "h264",           # h264 (Pi hardware encoder: camera module, and USB webcams at 640x480) | mjpeg
     "video_bitrate_kbps": 3000,       # H.264 bitrate; 3 Mbit/s is clear 720p at 15 fps and keeps the delay low on 4G
+    # The phone app's (VARUNA Cam) video presets, so the Pi streams as smoothly:
+    # H.264 at 25-30 fps in a lean bitrate. nb540 (the phone's default) = 960x540
+    # at 25 fps in 1.8 Mbit/s - the detector resizes every frame to 640 wide, so
+    # it loses nothing, and the lean stream stays smooth over NetBird / 4G.
+    # "custom" uses camera_width/height, stream_fps and video_bitrate_kbps instead.
+    "video_preset": "nb540",          # 480p | nb540 | 720p | 1080p | custom
+    # Short exposures against the drone's vibration (the phone's "fast shutter"):
+    # the camera module prefers a short shutter and more gain (rpicam "sport"
+    # exposure), so propeller shake doesn't smear the picture.
+    "camera_fast_shutter": "on",      # on | off
     "ffmpeg_path": "ffmpeg",
     # Phone camera (H.264): steadied on this computer (stabilize.py) before the app
     # gets it. It waits stabilize_delay_ms for later frames to smooth against.
@@ -87,6 +97,14 @@ TUNABLE = {
     "camera_quality": {"type": "int", "min": 30, "max": 95,
                        "description": "Video picture quality (JPEG). Lower = smaller frames: smoother, less delay on "
                                       "weak Wi-Fi. Applies to the Pi camera module (and webcams the Pi has to encode)."},
+    "video_preset": {"type": "str", "options": ["480p", "nb540", "720p", "1080p", "custom"],
+                     "description": "Video quality, the same presets as the VARUNA Cam phone app: 480p (25 fps, 1 Mbit/s, "
+                                    "weak 4G), nb540 (960x540, 25 fps, 1.8 Mbit/s: NetBird / 4G, the default), 720p "
+                                    "(30 fps, 2.8 Mbit/s: strong link or Wi-Fi), 1080p (30 fps, 5 Mbit/s: 5 GHz Wi-Fi only) "
+                                    "or custom (camera size, stream_fps and video_bitrate_kbps)."},
+    "camera_fast_shutter": {"type": "str", "options": ["on", "off"],
+                            "description": "Short exposures against the drone's vibration (camera module): a sharper "
+                                           "picture in flight, a little more grain in dim light."},
     "camera_codec": {"type": "str", "options": ["h264", "mjpeg"],
                      "description": "Video format: h264 (made by the Pi's hardware encoder: cool, low delay, about a "
                                     "third of the bandwidth of mjpeg; USB webcams send it at 640x480) or mjpeg."},
@@ -149,10 +167,31 @@ _CHOICES = {
     "camera_source": ("auto", "usb", "csi", "url", "test", "off"),
     "camera_codec": ("h264", "mjpeg"),
     "video_stabilize": ("on", "off"),
+    "video_preset": ("480p", "nb540", "720p", "1080p", "custom"),
+    "camera_fast_shutter": ("on", "off"),
     "position_source": ("auto", "phone", "pixhawk"),
     "operator_lost_action": ("none", "rtl", "land"),
     "kb_lost_action": ("rtl", "land", "hover"),
 }
+
+
+# The VARUNA Cam phone app's presets (Quality.java): width, height, fps, kbit/s.
+VIDEO_PRESETS = {
+    "480p": (640, 480, 25, 1000),
+    "nb540": (960, 540, 25, 1800),
+    "720p": (1280, 720, 30, 2800),
+    "1080p": (1920, 1080, 30, 5000),
+}
+
+
+def video_settings(cfg):
+    """(width, height, fps, kbit/s) of the H.264 stream: the preset's, or with
+    video_preset = custom, camera_width/height, stream_fps and video_bitrate_kbps."""
+    preset = VIDEO_PRESETS.get(str(cfg.get("video_preset", "nb540")))
+    if preset:
+        return preset
+    fps = max(1, min(int(cfg["camera_fps"]), int(cfg["stream_fps"])))
+    return int(cfg["camera_width"]), int(cfg["camera_height"]), fps, int(cfg["video_bitrate_kbps"])
 
 
 def coerce(key, value):

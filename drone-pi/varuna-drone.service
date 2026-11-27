@@ -1,14 +1,27 @@
 [Unit]
-Description=VARUNA drone backend (FastAPI + pymavlink + camera)
-After=network.target
+Description=VARUNA drone backend (FastAPI + pymavlink + camera, RTP video 5000 + GPS 5001 to the ground station)
+# Start once the network (and Tailscale, when installed) is up, so the
+# ground station's hello over Tailscale is answered from the first second.
+Wants=network-online.target
+After=network-online.target tailscaled.service
+# Never give up restarting (no "start request repeated too quickly").
 StartLimitIntervalSec=0
 
 [Service]
 User=pi
+# The Pixhawk's TELEM2 UART (/dev/serial0) and the USB webcam (/dev/video0).
+SupplementaryGroups=dialout video
 WorkingDirectory=/home/pi/varuna-drone
 ExecStart=/home/pi/varuna-drone/venv/bin/python main.py
+# Back within 1 s if the backend dies. (A dropped camera or Wi-Fi link is
+# recovered inside the backend itself, also within about a second.)
 Restart=always
-RestartSec=3
+RestartSec=1
+# Don't wait long for a hung process when restarting; the camera's
+# gst-launch / ffmpeg children go with it (same control group).
+TimeoutStopSec=3
+# The video path ahead of other background work on the Pi 3B+.
+Nice=-5
 Environment=PYTHONUNBUFFERED=1
 
 [Install]

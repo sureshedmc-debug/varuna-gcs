@@ -15,6 +15,7 @@ by the reader thread, so no two threads ever read from the connection.
 """
 
 import glob
+import json
 import logging
 import math
 import os
@@ -69,6 +70,36 @@ ACK_TEXT = {
 }
 
 MISSION_PROTOCOL = ("MISSION_REQUEST", "MISSION_REQUEST_INT", "MISSION_ACK", "MISSION_COUNT")
+
+# ---------------------------------------------------------------- GPS JSON over UDP
+# Every GLOBAL_POSITION_INT / GPS_RAW_INT from the Pixhawk (TELEM2 or USB) also
+# goes out at once as one JSON datagram on UDP GPS_PORT (5001) to the ground
+# station PC (drone-pi/ground_station.py), which tags each plastic detection
+# with where the drone was when that frame was taken. Subscribers say hello
+# (GPS_HELLO) to this Pi's UDP 5001 from the socket they receive on, like the
+# RTP video (camera.py UdpFanout); VARUNA_GPS_TARGETS="host:port,..." adds fixed
+# ones. The app's backend (main.py) keeps reading the same state in-process.
+#   {"type": "gps", "t": <Pi time, s>, "lat", "lng", "alt_rel" (m), "alt_msl" (m),
+#    "hdg" (deg), "vn", "ve", "vd" (m/s), "fix", "sats", "hdop", "armed", "mode", "src"}
+GPS_PORT = int(os.environ.get("VARUNA_GPS_PORT", "5001"))
+GPS_HELLO = b"VARUNA_GPS_HELLO"
+
+
+def gps_datagram(state, now, src, vel=None):
+    """The JSON bytes sent for one position update (None without a fix yet)."""
+    if state.get("lat") is None or state.get("lng") is None:
+        return None
+    msg = {
+        "type": "gps", "t": round(now, 3), "src": src,
+        "lat": round(state["lat"], 7), "lng": round(state["lng"], 7),
+        "alt_rel": round(float(state.get("relative_alt") or 0.0), 2),
+        "alt_msl": None if state.get("alt_msl") is None else round(state["alt_msl"], 2),
+        "hdg": state.get("heading"),
+        "vn": vel[0] if vel else None, "ve": vel[1] if vel else None, "vd": vel[2] if vel else None,
+        "fix": state.get("gps_fix"), "sats": state.get("satellites"), "hdop": state.get("hdop"),
+        "armed": bool(state.get("armed")), "mode": state.get("flight_mode"),
+    }
+    return json.dumps(msg, separators=(",", ":")).encode()
 
 
 def haversine_m(lat1, lng1, lat2, lng2):
@@ -151,6 +182,8 @@ class DroneLink:
         self._worked_key = None                # the port/baud the Pixhawk last answered on
         self._reconnect = threading.Event()
         self.baud = None
+        self.gps_out = None                    # GPS JSON to the ground station (UDP GPS_PORT)
+        self._gps_vel = None                   # (north, east, down) m/s from GLOBAL_POSITION_INT
 
         self.link_name = None                  # "usb" | "telem2" | "custom"
         self.connection = None
@@ -179,8 +212,26 @@ class DroneLink:
 
     # ------------------------------------------------------------------ lifecycle
     def start(self):
+        try:
+            from camera import UdpFanout       # the same hello/fan-out the RTP video uses
+            self.gps_out = UdpFanout("GPS JSON", GPS_PORT, GPS_HELLO, "VARUNA_GPS_TARGETS")
+            self.gps_out.start()
+        except Exception as exc:               # noqa: BLE001 - the link must run without it
+            log.warning("GPS over UDP unavailable: %s", exc)
+            self.gps_out = None
         self._thread = threading.Thread(target=self._run, name="mavlink", daemon=True)
         self._thread.start()
+
+    def _cast_gps(self, now):
+        """Send the latest position to every ground station subscribed (UDP GPS_PORT)."""
+        out = self.gps_out
+        if out is None or not out.active():
+            return
+        with self._state_lock:
+            s = dict(self.state)
+        data = gps_datagram(s, now, self.link_name, self._gps_vel)
+        if data:
+            out.send_all([data])
 
     def stop(self):
         self._stop.set()
@@ -517,6 +568,7 @@ class DroneLink:
                 if msg.hdg != 65535:
                     s["heading"] = msg.hdg / 100.0
                 s["groundspeed"] = math.hypot(msg.vx, msg.vy) / 100.0
+                self._gps_vel = (msg.vx / 100.0, msg.vy / 100.0, msg.vz / 100.0)
                 if msg.lat or msg.lon:
                     self._positions.append((now, msg.lat / 1e7, msg.lon / 1e7, msg.relative_alt / 1000.0))
                 if s["lat"] is not None and now - self._last_track >= 1.0:
@@ -551,6 +603,12 @@ class DroneLink:
                 s["mission_seq"] = msg.seq
             elif t == "EXTENDED_SYS_STATE":
                 s["landed_state"] = LANDED.get(msg.landed_state, "unknown")
+
+        if t in ("GLOBAL_POSITION_INT", "GPS_RAW_INT"):
+            try:
+                self._cast_gps(now)            # to the ground station the moment it arrives
+            except Exception:                  # noqa: BLE001 - never break the reader
+                log.exception("GPS cast")
 
         if t == "STATUSTEXT":
             text = (msg.text or "").replace("\x00", "").strip()
