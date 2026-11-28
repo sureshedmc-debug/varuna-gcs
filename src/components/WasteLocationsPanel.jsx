@@ -22,7 +22,7 @@ function clock(ms) {
   return ms ? new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : ''
 }
 
-export default function WasteLocationsPanel({ show }) {
+export default function WasteLocationsPanel({ show, inline = false }) {
   const log = useTrashLog()
   // Re-render every 2 s so the "new" highlight fades on its own.
   const [, tick] = useState(0)
@@ -44,18 +44,15 @@ export default function WasteLocationsPanel({ show }) {
           animate={{ opacity: 1, x: 0 }}
           exit={{ opacity: 0, x: 24 }}
           transition={{ type: 'spring', stiffness: 260, damping: 26 }}
-          className="absolute bottom-20 right-3 z-20 flex max-h-[38%] w-[min(320px,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-2xl"
-          style={{
-            background: 'rgba(13,17,26,0.9)',
-            border: '1px solid rgba(255,255,255,0.08)',
-            backdropFilter: 'blur(16px)',
-            boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
-          }}
+          className={inline
+            ? 'flex max-h-[360px] min-h-0 flex-col overflow-hidden rounded-[14px]'
+            : 'absolute bottom-20 right-3 z-20 flex max-h-[38%] w-[min(320px,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-2xl sx-glass'}
+          style={inline ? { background: 'var(--sx-card)', border: '1px solid var(--sx-line)', boxShadow: 'var(--sx-shadow)' } : undefined}
           aria-label="Waste detected at these locations"
         >
-          <header className="flex items-center justify-between gap-2 px-4 pb-2 pt-3">
+          <header className={`flex items-center justify-between gap-2 px-4 ${inline ? 'border-b py-3' : 'pb-2 pt-3'}`} style={inline ? { borderColor: 'var(--sx-line)' } : undefined}>
             <div className="min-w-0">
-              <div className="eyebrow">Waste detected at</div>
+              {inline ? <div className="text-[14px] font-semibold text-ink">Waste locations</div> : <div className="eyebrow">Waste detected at</div>}
               <div className="text-[11px] text-muted">
                 {spots.length ? `${spots.length} location${spots.length === 1 ? '' : 's'}` : 'No located waste yet'}
               </div>
@@ -68,9 +65,9 @@ export default function WasteLocationsPanel({ show }) {
             </span>
           </header>
 
-          <ol className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-3 pb-3">
+          <ol className={`min-h-0 flex-1 space-y-1.5 overflow-y-auto px-3 pb-3 ${inline ? 'pt-3' : ''}`}>
             {spots.length === 0 && (
-              <li className="rounded-lg px-3 py-2.5 text-[11.5px] leading-snug text-muted" style={{ background: 'rgba(255,255,255,0.04)' }}>
+              <li className="rounded-lg px-3 py-2.5 text-[12.5px] leading-snug text-muted" style={{ background: inline ? 'var(--sx-card2)' : 'rgba(255,255,255,0.04)' }}>
                 When the AI spots waste, its GPS coordinates appear here, taken from the drone's telemetry or the laptop's location.
               </li>
             )}
@@ -87,8 +84,8 @@ export default function WasteLocationsPanel({ show }) {
                     exit={{ opacity: 0 }}
                     className="rounded-lg px-2.5 py-2"
                     style={{
-                      background: fresh ? 'rgba(45,212,191,0.10)' : 'rgba(255,255,255,0.04)',
-                      border: `1px solid ${fresh ? 'rgba(45,212,191,0.35)' : 'rgba(255,255,255,0.06)'}`,
+                      background: fresh ? 'rgba(45,212,191,0.10)' : inline ? 'var(--sx-card2)' : 'rgba(255,255,255,0.04)',
+                      border: `1px solid ${fresh ? 'rgba(45,212,191,0.35)' : inline ? 'var(--sx-line)' : 'rgba(255,255,255,0.06)'}`,
                       transition: 'background 0.6s, border-color 0.6s',
                     }}
                   >

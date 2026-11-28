@@ -1,11 +1,11 @@
 # VARUNA boat backend (boat Raspberry Pi)
 
 Runs on the **boat's** Raspberry Pi — a separate device from the drone's Pi.
-The VARUNA app (Boat and Collect tabs) talks to it over NetBird; it talks to
+The VARUNA app (Boat and Collect tabs) talks to it over Tailscale; it talks to
 the boat's Pixhawk (ArduRover, boat frame) with **pymavlink**.
 
 ```
- VARUNA app (laptop)  ──NetBird──▶  boat Pi: this service  ──MAVLink (TELEM2)──▶  Pixhawk + GPS
+ VARUNA app (laptop)  ─Tailscale─▶  boat Pi: this service  ──MAVLink (TELEM2)──▶  Pixhawk + GPS
    Collect tab: pick plastic         turns the points into        drives to each point in AUTO,
    → Upload → Start                  an ArduRover mission,        holds there, returns home
    Boat tab: live status, commands   uploads + starts it,         (MISSION_ITEM_REACHED → app
@@ -18,20 +18,22 @@ wildlife-safe mode, a catch counter on the intake ramp, and water turbidity
 along the route.
 
 
-## The boat phone over NetBird
+## The boat phone over Tailscale
 
 The boat's phone (VARUNA Boat Link) and this laptop no longer need to share a
-Wi-Fi or a hotspot. Put both on your NetBird network — install the NetBird app
-on the phone, sign in, wait for Connected — and `start_boat.bat` finds the phone
-by asking NetBird which peers it knows, then follows it if its address changes.
-Wi-Fi and the laptop hotspot still work exactly as before; NetBird is tried
-first, the local network second.
+Wi-Fi or a hotspot. Log both in to the same Tailscale account — install the
+Tailscale app on the phone, sign in, wait for Connected — and name the phone
+**varuna-boat** in the Tailscale admin console. `start_boat.bat` then finds the
+phone by that name (then any other Tailscale device), and follows it if its
+address changes. Wi-Fi and the laptop hotspot still work exactly as before;
+Tailscale is tried first, the local network second.
 
-    py netbird.py                      what NetBird can see from here
-    set VARUNA_BOAT_PHONE=100.x.x.x    pin one address (or boat_phone_ip.txt)
+    py tailscale.py                    what Tailscale can see from here
+    set VARUNA_BOAT_PHONE=varuna-boat  pin one name or 100.x address (or boat_phone_ip.txt)
+    set VARUNA_BOAT_NAME=my-boat       if you named the phone something else
 
-The phone's camera (port 8080) and the Pixhawk's MAVLink (port 5760) both travel
-over the same NetBird link, so the live view, the AI and the scoop work from
+The phone's camera (port 8080) and the boat brain's MAVLink (port 5760) both travel
+over the same Tailscale link, so the live view, the AI and the scoop work from
 anywhere with mobile data.
 
 ## Easiest way: the VARUNA Boat Pi Tool
@@ -42,7 +44,7 @@ Double-click **VARUNA Boat Pi Tool.exe**. Build it with `boat-installer\build.ba
 - sets up the Pixhawk serial port
 - sets up the USB camera (ffmpeg) and I2C (turbidity sensor)
 - installs the auto-start service
-- optionally joins NetBird
+- optionally joins a VPN (the tool still offers the old NetBird step; skip it and use Tailscale, §5)
 
 When it's done, it prints the address to enter in the app. The same tool can also:
 - update the boat code
@@ -253,12 +255,19 @@ journalctl -u varuna-boat -f       # live log
 
 If your Pi's user isn't `pi`, change `User=` and the paths in `varuna-boat.service`.
 
-## 5. NetBird
+## 5. Tailscale
 
-Join the boat Pi to the **same** NetBird network as the laptop and the drone Pi
-(see `RASPI_BACKEND_GUIDE.md` §5). Then `netbird status` shows its `100.x.x.x` IP.
-In the app: System → **Boat connection** → `http://100.x.x.x:8000` → Test
-connection → Save & reconnect.
+Join the boat Pi to the **same** Tailscale account as the laptop:
+
+```bash
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up --hostname varuna-boat-pi --ssh     # opens a login link; or --authkey tskey-...
+tailscale ip -4                                         # its 100.x.x.x address
+```
+
+In the admin console turn **off key expiry** for it. In the app: System →
+**Boat connection** → `http://varuna-boat-pi:8000` → Test connection → Save &
+reconnect.
 
 The app only unlocks boat commands when that address answers as the boat
 backend (`"vehicle": "boat"`), so a mistyped address can never send boat
@@ -287,7 +296,7 @@ also be set as an environment variable `BOAT_<KEY>`, e.g. `BOAT_MAV_CONNECTION=/
 | Part | How it's fitted |
 |---|---|
 | **USB webcam** (one that outputs MJPEG) | Above the intake ramp, pointing forward and about **15° down**. The ramp fills the bottom ~20 % of the picture; the horizon sits near the top. On a Pi Zero plug it into the micro-USB port marked **USB** (not PWR) through an OTG adapter. Set its horizontal field of view (`camera_hfov_deg`, from the spec sheet) in Boat Vision → Settings. |
-| **Or an Android phone** (Android 14+, USB webcam mode) | Mounted where the webcam would go. Connect it to the Pi through a **powered USB hub**: a Pi Zero cannot charge a phone and browns out. On the phone, choose USB preferences → **Webcam**. Set `"camera_source": "phone"` (Boat Pi Tool → 14. Boat camera). The boat captures the phone's MJPEG at **1920×1080, 30 fps** (`phone_width`, `phone_height`, `phone_fps`) and passes it straight through, with no re-encoding. If the phone refuses that size, it falls back to 720p, then 640×480. The app gets `stream_fps` of those frames (10 on a Pi Zero). Real 1080p frames are about 150–300 KB, so even 10 a second is 12–24 Mbit/s over Wi-Fi and NetBird. If the video lags, send fewer frames or choose 720p. `/api/camera/status` reports the data rate. |
+| **Or an Android phone** (Android 14+, USB webcam mode) | Mounted where the webcam would go. Connect it to the Pi through a **powered USB hub**: a Pi Zero cannot charge a phone and browns out. On the phone, choose USB preferences → **Webcam**. Set `"camera_source": "phone"` (Boat Pi Tool → 14. Boat camera). The boat captures the phone's MJPEG at **1920×1080, 30 fps** (`phone_width`, `phone_height`, `phone_fps`) and passes it straight through, with no re-encoding. If the phone refuses that size, it falls back to 720p, then 640×480. The app gets `stream_fps` of those frames (10 on a Pi Zero). Real 1080p frames are about 150–300 KB, so even 10 a second is 12–24 Mbit/s over Wi-Fi and Tailscale. If the video lags, send fewer frames or choose 720p. `/api/camera/status` reports the data rate. |
 | **Phone without USB webcam mode** (e.g. vivo) | Same cable and hub. On the phone: Developer options → **USB debugging** on, install the free **IP Webcam** app, and tap Allow on "Allow USB debugging?" the first time. With `camera_source` "phone" and no webcam-mode phone, the boat uses `adb` (installed by the Boat Pi Tool) to forward the app's port (`phone_app_port`, 8080) over USB, opens the app's server, sets it to `phone_width`×`phone_height` at `camera_quality`, and reads its MJPEG with curl. The phone encodes and the Pi only copies, at about 25 fps for 1080p on a Pi Zero. Nothing goes over Wi-Fi. Keep the phone charged and set IP Webcam to keep running with the screen off. |
 | **Turbidity sensor** (analog module, e.g. DFRobot SEN0189) | Probe below the waterline; its board in the dry. |
 | **ADS1115 ADC** (the Pi has no analog input) | VDD → 3.3 V (pin 1), GND → pin 6, SDA → pin 3, SCL → pin 5. Sensor VCC → 5 V, signal → 10 kΩ → A0, A0 → 20 kΩ → GND (keeps A0 under 3.3 V; `turb_divider` 1.5 undoes it). |
@@ -390,6 +399,34 @@ collect → Start**. It needs a GPS fix on the boat (GUIDED mode).
   run together. The queue survives a Pi restart; live collect itself restarts
   off.
 - **The roller** (`collector.py`): see below.
+
+## AI captain feed (boat phone, Boat Link 2.4+)
+
+The trained AI captain (`boat-r4/ai`) runs on the boat phone. The phone has
+its own GPS and compass, but it can't see the plastic. `boat_extras.py` sends
+it the world once a second: `POST http://<phone>:8080/captain/world`, using
+`BOAT_PHONE_URL`.
+
+What it sends:
+
+- the drone finds that are still pending or active, as lat/lng. Finds older
+  than 2 h are left out.
+- what the boat camera sees now, as metres ahead and to the right (`fwd_m`,
+  `right_m`), from the same camera model the homing uses. Items already on the
+  ramp are left out.
+- home (the Pixhawk/brain home, or else the first good boat position).
+- the bin, scaled to the captain's 30-item bin. `go_home` is set when the bin
+  is full or live collect is returning.
+
+What the laptop can do:
+
+- It can never switch the captain to full control; that is only on the phone
+  screen.
+- It can only stop it: `POST /api/ops/captain {"action":"stop"}`. In the app,
+  this is the **STOP CAPTAIN** button on the Boat tab.
+- `GET /api/ops/captain` (also in `/api/ops/status` as `captain`) shows the
+  feed and the phone's `/captain.json`.
+- Set `VARUNA_CAPTAIN_FEED=0` to turn the feed off.
 
 ## Collector scoop (digital servo)
 

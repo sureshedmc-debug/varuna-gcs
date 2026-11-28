@@ -1,7 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Pixhawk-family boards (3DR / ArduPilot / CubePilot / Holybro) and any
-         USB serial device (CDC ACM): Android offers to open the app when one is plugged in. -->
+    <!-- The UNO R4 boat brain (Arduino), Pixhawk-family boards (3DR / ArduPilot /
+         CubePilot / Holybro) and any USB serial device (CDC ACM): Android offers to
+         open the app when one is plugged in. -->
+    <usb-device vendor-id="9025" />
+    <!-- ESP32 boat brain: WCH CH340 / CH341 and Silicon Labs CP210x USB chips -->
+    <usb-device vendor-id="6790" />
+    <usb-device vendor-id="4292" />
+    <usb-device vendor-id="10755" />
     <usb-device vendor-id="9900" />
     <usb-device vendor-id="4617" />
     <usb-device vendor-id="11694" />

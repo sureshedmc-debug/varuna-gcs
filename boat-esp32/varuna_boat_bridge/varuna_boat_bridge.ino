@@ -50,9 +50,9 @@ bool relayAlerting = false;
 unsigned long alertUntil = 0;
 unsigned long nextPulseTime = 0;
 int pulseStep = 0;
-const int CADENCE_STEPS = 8;
-const int CADENCE_DURS[CADENCE_STEPS] = {250, 200, 250, 200, 250, 200, 250, 200};
-const bool CADENCE_STATES[CADENCE_STEPS] = {true, false, true, false, true, false, true, false};
+const int CADENCE_STEPS = 16;
+const int CADENCE_DURS[CADENCE_STEPS] = {250, 200, 250, 200, 250, 200, 250, 200, 250, 200, 250, 200, 250, 200, 250, 200};
+const bool CADENCE_STATES[CADENCE_STEPS] = {true, false, true, false, true, false, true, false, true, false, true, false, true, false, true, false};
 
 void setRelay(bool on) {
   if (on) {
@@ -235,7 +235,7 @@ void loop() {
     relayHttp.handleClient();
   }
 
-  // Relay alert rhythm handler (exactly 4 beeps)
+  // Relay alert rhythm handler (exactly 8 beeps)
   if (relayAlerting) {
     if (pulseStep >= CADENCE_STEPS || now >= alertUntil) {
       relayAlerting = false;

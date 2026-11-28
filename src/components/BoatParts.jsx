@@ -66,7 +66,7 @@ export function BoatOffline({ boat, onNavigate }) {
               : boat.linkHint || 'No answer from the boat Pi.'}
           </div>
           <div className="mt-1.5 text-muted">
-            Set the boat Pi's Netbird address in <span className="font-semibold text-ink">System → Boat connection</span>.
+            Start VARUNA Boat on this laptop, then tap Boat on this computer in <span className="font-semibold text-ink">System → Boat connection</span>.
             To practise without hardware, run the boat simulator: <span className="font-mono text-ink">boat-pi › python main.py --sim --port 8001</span>
           </div>
           <div className="mt-2.5 flex gap-2">

@@ -95,6 +95,39 @@ for (const [name, gain, tint] of [['darker + warmer', 0.65, [1.15, 1, 0.8]], ['b
   }
   console.log(`      worst margin (${name}): ${worst.toFixed(2)}`)
 }
+// Plastic bottles, as the real cameras see them.
+// The drone model's catch-all class is "OTHERS": it must not count as a
+// different kind from the boat's "plastic bottle" (it used to cost 25 %).
+{
+  const ref = fx.refs['plastic bottle']
+  const rs = signature(toImg(ref))
+  const scored = cands.map((c) => ({ label: c.label, ...matchScore(rs, 'OTHERS', c.sig, c.label, c.score) }))
+  const own = scored.find((s) => s.label === 'plastic bottle')
+  const best = Math.max(...scored.filter((s) => s.label !== 'plastic bottle').map((s) => s.score))
+  const ok = own.score >= THRESHOLD && own.score >= best + 0.15
+  if (!ok) failed++
+  console.log(`${ok ? 'PASS' : 'FAIL'}  bottle, drone says OTHERS: own=${own.score.toFixed(2)} best other item=${best.toFixed(2)}`)
+}
+// The same bottle lying the other way in the boat's view (turned 90 deg): still a match.
+const turn = ({ w, h, rgb }) => {
+  const out = new Array(rgb.length)
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const s = (y * w + x) * 3, d = (x * h + (h - 1 - y)) * 3
+    out[d] = rgb[s]; out[d + 1] = rgb[s + 1]; out[d + 2] = rgb[s + 2]
+  }
+  return { w: h, h: w, rgb: out }
+}
+{
+  const rs = signature(toImg(fx.refs['plastic bottle']))
+  const b = fx.cands.find((c) => c.label === 'plastic bottle')
+  const turned = matchScore(rs, 'plastic bottle', signature(toImg(turn(b))), b.label, b.score)
+  const ok = turned.score >= THRESHOLD
+  if (!ok) failed++
+  console.log(`${ok ? 'PASS' : 'FAIL'}  bottle turned 90 deg in the boat's view: ${turned.score.toFixed(2)}`)
+  const rsElong = rs.elong, cElong = signature(toImg(b)).elong
+  check0(rsElong >= 1.7 && cElong >= 1.6, `a bottle reads long and thin from both cameras (drone ${rsElong.toFixed(1)}:1, boat ${cElong.toFixed(1)}:1)`)
+}
+function check0(cond, what) { console.log(`${cond ? 'PASS' : 'FAIL'}  ${what}`); if (!cond) failed++ }
 // Edge cases: no reference image (class + detector only), unknown class, no images at all.
 const c0 = cands[0]
 const noRef = matchScore(null, c0.label, c0.sig, c0.label, 0.8)

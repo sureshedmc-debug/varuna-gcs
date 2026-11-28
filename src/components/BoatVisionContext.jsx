@@ -37,7 +37,13 @@ export function BoatVisionProvider({ children }) {
   const [cfgOverride, setCfgOverride] = useState(null)
   const cfg = cfgOverride || (cfgPoll.data && !cfgPoll.data._httpError ? cfgPoll.data : null)
 
-  useEffect(() => subscribeVision(setEngine), [])
+  // Only the engine's status reaches the context: its full state changes ~13
+  // times a second (frames, AI passes, replies) and every screen reading this
+  // context would redraw with it, on every tab. The Boat Vision screen, which
+  // shows the live boxes, subscribes to the engine itself.
+  useEffect(() => subscribeVision((s) => setEngine((p) => (
+    p && p.status === s.status && p.message === s.message ? p : { status: s.status, message: s.message }
+  ))), [])
 
   // Wildlife-safe mode was removed from the app: make sure the boat never
   // holds for animals (the engine no longer looks for them).

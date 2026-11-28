@@ -130,6 +130,13 @@ proxy.on('proxyReq', (proxyReq, req) => {
     // has already established for this request.
     proxyReq.setHeader('host', `localhost:${LOCAL_PORT}`)
     proxyReq.setHeader('sec-fetch-site', 'same-origin')
+    // The website's own address (e.g. https://varuna-gcs.vercel.app), so the
+    // store opens the Google sign-in page there instead of at its own
+    // localhost. Only an allowed frontend origin is passed on, never a header
+    // the caller sent.
+    proxyReq.removeHeader('x-varuna-public-origin')
+    const site = req.headers.origin && originAllowed(req.headers.origin) ? String(req.headers.origin) : refererOrigin(req)
+    if (site && originAllowed(site)) proxyReq.setHeader('x-varuna-public-origin', site.toLowerCase())
   }
 })
 

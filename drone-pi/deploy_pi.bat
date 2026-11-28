@@ -3,7 +3,7 @@ rem ===========================================================================
 rem  VARUNA - deploy the drone backend to the Raspberry Pi 3B+
 rem
 rem   1. finds the Pi: Tailscale (varuna-drone) first, then the Wi-Fi/LAN
-rem      (varuna-drone.local, raspberrypi.local), else asks for its address
+rem      (varuna-drone.local, varuna-pi.local, raspberrypi.local), else asks
 rem   2. checks /home/pi/varuna-drone exists on the Pi (never creates folders)
 rem   3. copies the backend files INTO that folder with scp, overwriting them
 rem   4. installs varuna-drone.service, restarts it, shows its status
@@ -50,7 +50,7 @@ if defined PI_HOST (
   echo       Tailscale knows %PI_NAME% ^(!PI_HOST!^) but SSH does not answer there.
   set "PI_HOST="
 )
-for %%n in (%PI_NAME%.local raspberrypi.local) do (
+for %%n in (%PI_NAME%.local varuna-pi.local raspberrypi.local) do (
   if not defined PI_HOST (
     call :port22 %%n
     if !errorlevel! equ 0 ( set "PI_HOST=%%n" & set "VIA=Wi-Fi/LAN (%%n)" )

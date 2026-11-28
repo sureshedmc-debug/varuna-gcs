@@ -1,5 +1,5 @@
 // Verifies the production build contains no ACCIDENTAL dev host. The backend is
-// reached over Netbird, whose addresses are private to the mesh and therefore
+// reached over Tailscale, whose addresses are private to the mesh and therefore
 // harmless to ship (allowed below); this check catches localhost / loopback /
 // raw LAN-IP leaks and the dev-proxy env var. Fails loudly (exit 1) on any.
 import { readdirSync, readFileSync, statSync } from 'node:fs'
@@ -14,15 +14,15 @@ const FORBIDDEN = [
   // any explicit http(s):// host:port pointing at a LAN/dev backend
   /https?:\/\/(\d{1,3}\.){3}\d{1,3}(:\d+)?/,
 ]
-// Expected hosts: OSM/Esri map tiles (client-side), and a Netbird address if
+// Expected hosts: OSM/Esri map tiles (client-side), and a Tailscale address if
 // one was configured at build time — those are intentional, not leaks.
-// Netbird lives in the 100.64.0.0/10 CGNAT range (100.64.x.x – 100.127.x.x)
+// Tailscale lives in the 100.64.0.0/10 CGNAT range (100.64.x.x – 100.127.x.x)
 // and is meaningless to anyone outside the mesh. A real LAN IP
 // (192.168/10/172.16) or any localhost port still fails FORBIDDEN below.
 const ALLOW = [
   /tile\.openstreetmap\.org/i,
   /arcgisonline\.com/i,
-  /\.netbird\.(cloud|selfhosted)/i,
+  /\.ts\.net\b/i,
   /\b100\.(6[4-9]|[7-9]\d|1[0-1]\d|12[0-7])\.\d{1,3}\.\d{1,3}/,
 ]
 const CONTEXT_RADIUS = 40

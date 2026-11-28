@@ -23,11 +23,24 @@ files:
   - node_modules/eventemitter3/**/*
   - node_modules/requires-port/**/*
   - node_modules/follow-redirects/**/*
+  # Native AI engine (electron/aiEngine.cjs): onnxruntime-node with DirectML.
+  # Only what it runs on Windows x64 (its other platforms are ~160 MB).
+  - node_modules/onnxruntime-node/package.json
+  - node_modules/onnxruntime-node/dist/**/*
+  - node_modules/onnxruntime-node/bin/napi-v6/win32/x64/**/*
+  # Its own onnxruntime-common (1.31): electron-builder's dependency collector
+  # leaves this nested copy out, so it is copied in by hand. (The top-level
+  # onnxruntime-common is onnxruntime-web's older one, bundled into dist/.)
+  - from: node_modules/onnxruntime-node/node_modules/onnxruntime-common
+    to: node_modules/onnxruntime-node/node_modules/onnxruntime-common
+    filter: ["**/*"]
 
 # Serve the frontend (incl. 64MB of ONNX models + wasm) from real files, not
 # from inside the asar archive.
 asarUnpack:
   - dist/**
+  # Native .node + DirectML/onnxruntime DLLs must be real files to load.
+  - node_modules/onnxruntime-node/**
 
 npmRebuild: false
 

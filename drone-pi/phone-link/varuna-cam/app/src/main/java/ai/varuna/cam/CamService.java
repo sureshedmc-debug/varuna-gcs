@@ -5,10 +5,16 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.ServiceInfo;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Paint;
 import android.graphics.ImageFormat;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
@@ -26,6 +32,8 @@ import android.hardware.camera2.TotalCaptureResult;
 import android.hardware.camera2.params.OutputConfiguration;
 import android.hardware.camera2.params.SessionConfiguration;
 import android.hardware.camera2.params.StreamConfigurationMap;
+import android.hardware.usb.UsbDevice;
+import android.hardware.usb.UsbManager;
 import android.media.Image;
 import android.media.ImageReader;
 import android.media.MediaCodec;
@@ -187,6 +195,60 @@ public class CamService extends Service {
     private long fpsSince = SystemClock.elapsedRealtime();
     private final List<Socket> sockets = Collections.synchronizedList(new ArrayList<Socket>());
 
+    // ---- USB webcam (through OTG), used instead of the phone's camera when plugged in.
+    /** The running webcam; null while the phone's own camera is in use. */
+    private volatile UsbCam usbCam;
+    /** Why the webcam isn't in use although one is plugged in (or ""). */
+    private volatile String usbNote = "";
+    /** The webcam whose permission was asked already, so the question comes once per plug-in. */
+    private String usbAsked;
+    /** A webcam picture is being decoded into the H.264 encoder: later ones are skipped meanwhile. */
+    private final AtomicBoolean decBusy = new AtomicBoolean();
+    private Bitmap decBitmap;
+    private final Paint drawPaint = new Paint(Paint.FILTER_BITMAP_FLAG);
+    /** A typical webcam's horizontal field of view; webcams don't report theirs. */
+    private static final float WEBCAM_FOV_DEG = 70f;
+
+    private final UsbCam.Listener webcamListener = new UsbCam.Listener() {
+        @Override
+        public void onFrame(byte[] jpeg, int length) {
+            onWebcamFrame(jpeg, length);
+        }
+
+        @Override
+        public void onLost(String why) {
+            switchCamera(why + "; using the phone camera", 300);
+        }
+    };
+
+    private final BroadcastReceiver usbEvents = new BroadcastReceiver() {
+        @Override
+        @SuppressWarnings("deprecation")    // getParcelableExtra(String): the only one before Android 13
+        public void onReceive(Context c, Intent i) {
+            String a = i.getAction();
+            UsbDevice d = i.getParcelableExtra(UsbManager.EXTRA_DEVICE);
+            if (UsbManager.ACTION_USB_DEVICE_ATTACHED.equals(a)) {
+                if (UsbCam.isWebcam(d) && UsbCam.enabled(c)) {
+                    usbAsked = null;
+                    // A moment's wait: if VARUNA Cam is the webcam's default app,
+                    // Android grants the permission with the plug-in itself.
+                    switchCamera("USB webcam plugged in: opening it", 1500);
+                }
+            } else if (UsbManager.ACTION_USB_DEVICE_DETACHED.equals(a)) {
+                UsbCam u = usbCam;
+                if (u != null && u.isDevice(d)) switchCamera("USB webcam unplugged; using the phone camera", 0);
+                if (d != null && d.getDeviceName().equals(usbAsked)) usbAsked = null;
+            } else if (UsbCam.ACTION_PERMISSION.equals(a)) {
+                if (i.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) {
+                    switchCamera("Opening the USB webcam", 0);
+                } else {
+                    usbNote = "USB webcam: permission refused, so the phone camera is in use."
+                            + " Unplug the webcam and plug it in again to be asked again.";
+                }
+            }
+        }
+    };
+
     private final Runnable reopen = new Runnable() {
         @Override
         public void run() {
@@ -224,6 +286,12 @@ public class CamService extends Service {
         startServer();
         startDiscovery();
         startAnnounce();
+        IntentFilter usbFilter = new IntentFilter();
+        usbFilter.addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED);
+        usbFilter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED);
+        usbFilter.addAction(UsbCam.ACTION_PERMISSION);
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(usbEvents, usbFilter, Context.RECEIVER_NOT_EXPORTED);
+        else registerReceiver(usbEvents, usbFilter);
         camHandler.post(new Runnable() {
             @Override
             public void run() {
@@ -293,18 +361,18 @@ public class CamService extends Service {
         if (multicastLock != null && multicastLock.isHeld()) multicastLock.release();
     }
 
-    // ---- "I'm over here" (NetBird) ---------------------------------------
+    // ---- "I'm over here" (Tailscale) -------------------------------------
 
     /** Seconds between announces to the laptop. */
     private static final int ANNOUNCE_EVERY_MS = 3000;
 
     /**
-     * Tells the laptop where this phone is, over NetBird. A WireGuard tunnel
+     * Tells the laptop where this phone is, over Tailscale. A WireGuard tunnel
      * carries no broadcast, so the laptop can't find the phone the same-Wi-Fi
      * way; instead the phone sends a small "I'm here at 100.x" packet to the
      * laptop address set in the app, every few seconds. The laptop's listener
      * writes that address down and the VARUNA backend connects to it — nothing
-     * to type, and it follows the phone if its NetBird address changes.
+     * to type, and it follows the phone if its Tailscale address changes.
      *
      * Harmless when no laptop address is set (it sends nothing), and it never
      * replaces answering the laptop's direct question — both run together.
@@ -342,7 +410,7 @@ public class CamService extends Service {
 
     /**
      * The same answer the laptop's direct question gets, plus this phone's own
-     * NetBird address (100.x first) and announce:1 so the listener knows it came
+     * Tailscale address (100.x first) and announce:1 so the listener knows it came
      * unasked. The laptop also sees the real source address, so both agree.
      */
     private String announceJson() {
@@ -390,6 +458,10 @@ public class CamService extends Service {
             frameLock.notifyAll();
         }
         location.stop();
+        try {
+            unregisterReceiver(usbEvents);
+        } catch (IllegalArgumentException ignored) {
+        }
         camHandler.removeCallbacks(reopen);
         camHandler.post(new Runnable() {
             @Override
@@ -496,7 +568,7 @@ public class CamService extends Service {
         Notification n = new Notification.Builder(this, CHANNEL)
                 .setSmallIcon(android.R.drawable.ic_menu_camera)
                 .setContentTitle("VARUNA Cam is streaming")
-                .setContentText("Video + GPS on port " + PORT + " for the VARUNA app (NetBird or Wi-Fi)")
+                .setContentText("Video + GPS on port " + PORT + " for the VARUNA app (Tailscale or Wi-Fi)")
                 .setContentIntent(open)
                 .addAction(new Notification.Action.Builder(null, "Stop", stop).build())
                 .setOngoing(true)
@@ -583,6 +655,7 @@ public class CamService extends Service {
 
     private void openCamera() {
         if (stopping) return;
+        if (openWebcam()) return;
         CameraManager cm = (CameraManager) getSystemService(Context.CAMERA_SERVICE);
         try {
             String id = null;
@@ -800,6 +873,9 @@ public class CamService extends Service {
     }
 
     private void closeCamera() {
+        UsbCam u = usbCam;
+        usbCam = null;
+        if (u != null) u.stop();
         request = null;
         readerInRequest = false;
         if (session != null) {
@@ -984,24 +1060,171 @@ public class CamService extends Service {
     /** On the JPEG thread: the NV21 copy as the next MJPEG frame. */
     private void makeJpeg(int w, int h, int quality, long takenMs) {
         try {
-            byte[] jpeg = stamp(compressNv21(w, h, quality), takenMs);
-            synchronized (frameLock) {
-                frame = jpeg;
-                frameSeq++;
-                frameLock.notifyAll();
-            }
-            long now = SystemClock.elapsedRealtime();
-            fpsCount++;
-            kbSum += jpeg.length / 1024;
-            if (now - fpsSince >= 2000) {
-                fps = fpsCount * 1000f / (now - fpsSince);
-                frameKb = fpsCount > 0 ? kbSum / fpsCount : 0;
-                fpsCount = 0;
-                kbSum = 0;
-                fpsSince = now;
-            }
+            publish(stamp(compressNv21(w, h, quality), takenMs));
         } finally {
             jpegBusy.set(false);
+        }
+    }
+
+    /** The next MJPEG frame for /video and /shot.jpg. */
+    private void publish(byte[] jpeg) {
+        synchronized (frameLock) {
+            frame = jpeg;
+            frameSeq++;
+            frameLock.notifyAll();
+        }
+        long now = SystemClock.elapsedRealtime();
+        fpsCount++;
+        kbSum += jpeg.length / 1024;
+        if (now - fpsSince >= 2000) {
+            fps = fpsCount * 1000f / (now - fpsSince);
+            frameKb = fpsCount > 0 ? kbSum / fpsCount : 0;
+            fpsCount = 0;
+            kbSum = 0;
+            fpsSince = now;
+        }
+    }
+
+    // ---- USB webcam -------------------------------------------------------
+
+    /** Reopens the video source (webcam or phone camera) after delayMs, showing why. */
+    void switchCamera(String why, long delayMs) {
+        Handler hd = camHandler;
+        if (hd == null || stopping) return;
+        state = why;
+        hd.removeCallbacks(reopen);
+        hd.postDelayed(reopen, delayMs);
+    }
+
+    /**
+     * On the camera thread: streams from a plugged-in USB webcam if there is one
+     * (and it's allowed and wanted). False means: use the phone's camera.
+     */
+    private boolean openWebcam() {
+        usbNote = "";
+        if (!UsbCam.enabled(this)) return false;
+        UsbDevice d = UsbCam.find(this);
+        if (d == null) return false;
+        if (!UsbCam.supported()) {
+            usbNote = "A USB webcam is plugged in, but webcam support didn't load on this phone";
+            return false;
+        }
+        if (!UsbCam.hasPermission(this, d)) {
+            usbNote = "USB webcam plugged in: tap OK on the question \"Allow VARUNA Cam to access "
+                    + UsbCam.label(d) + "?\" (tick \"always\" so it isn't asked again)";
+            if (!d.getDeviceName().equals(usbAsked)) {
+                usbAsked = d.getDeviceName();
+                UsbCam.askPermission(this, d);
+            }
+            return false;
+        }
+        Quality down = steppedDown;
+        quality = down != null ? down : Quality.get(this);
+        liveJpeg = quality.jpeg;
+        Quality q = quality;
+        UsbCam cam;
+        try {
+            cam = UsbCam.open(this, d, q.width, q.height, q.fps, webcamListener);
+        } catch (Exception e) {
+            usbNote = "USB webcam " + UsbCam.label(d) + ": " + e.getMessage() + ". Using the phone camera.";
+            Log.w(TAG, usbNote);
+            return false;
+        }
+        startWebcamH264(cam, q);
+        usbCam = cam;
+        size = new Size(cam.width, cam.height);
+        fpsRange = null;
+        shutter = null;                 // the webcam runs its own exposure
+        camFps = 0;
+        camCount = 0;
+        camSince = 0;
+        exposureMs = 0;
+        if (location != null) location.setCamera(90, WEBCAM_FOV_DEG);
+        extras = cam.describe();
+        state = "Streaming from the USB webcam";
+        return true;
+    }
+
+    /** The H.264 encoder for the webcam's pictures, at the webcam's size (or 640 wide if the phone can't). */
+    private void startWebcamH264(UsbCam cam, Quality q) {
+        releaseH264();
+        h264Note = "";
+        int fps = Math.max(5, Math.round(cam.fps));
+        int[][] tries = {{cam.width, cam.height}, {640, even(640 * cam.height / Math.max(1, cam.width))}};
+        for (int[] t : tries) {
+            if (!H264Stream.supports(t[0], t[1])) continue;
+            try {
+                h264 = H264Stream.start(t[0], t[1], fps, q.maxKbps);
+                return;
+            } catch (IOException e) {
+                Log.w(TAG, "H.264 for the webcam at " + t[0] + "x" + t[1] + ": " + e.getMessage());
+                h264Note = "H.264: " + e.getMessage() + "; MJPEG only";
+            }
+        }
+        if (h264Note.isEmpty()) h264Note = "H.264: no encoder for the webcam's size on this phone; MJPEG only";
+    }
+
+    private static int even(int v) {
+        return v & ~1;
+    }
+
+    /** On the webcam's thread: each JPEG picture, to /video as it is and to the H.264 encoder. */
+    private void onWebcamFrame(byte[] raw, int length) {
+        long now = SystemClock.elapsedRealtime();
+        if (camSince == 0) camSince = now;
+        camCount++;
+        if (now - camSince >= 2000) {
+            camFps = camCount * 1000f / (now - camSince);
+            camCount = 0;
+            camSince = now;
+        }
+        final byte[] jpeg = Mjpeg.complete(raw, length);
+        if (jpeg == null) return;
+        long taken = System.currentTimeMillis();
+        boolean wanted = clients.get() > 0 || now < wantShotUntil;
+        Quality q = quality;
+        if (wanted && q != null && now - lastEncodeMs >= 1000 / q.fps - 5) {
+            lastEncodeMs = now;
+            publish(stamp(jpeg, taken));
+        }
+        final H264Stream h = h264;
+        Handler eh = encHandler;
+        if (h != null && eh != null && decBusy.compareAndSet(false, true)) {
+            if (!eh.post(() -> drawWebcam(h, jpeg))) decBusy.set(false);
+        }
+    }
+
+    /** On the encoder thread: decodes a webcam picture and draws it into the H.264 encoder. */
+    private void drawWebcam(H264Stream h, byte[] jpeg) {
+        try {
+            if (h != h264) return;
+            BitmapFactory.Options o = new BitmapFactory.Options();
+            o.inMutable = true;
+            o.inPreferredConfig = Bitmap.Config.ARGB_8888;
+            Bitmap b = null;
+            if (decBitmap != null) {
+                o.inBitmap = decBitmap;     // reuse: no new memory for every picture
+                try {
+                    b = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length, o);
+                } catch (IllegalArgumentException e) {
+                    o.inBitmap = null;
+                }
+            }
+            if (b == null) b = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.length, o);
+            if (b == null) return;
+            decBitmap = b;
+            Surface s = h.surface();
+            Canvas c = s.lockHardwareCanvas();
+            try {
+                c.drawBitmap(b, null, new Rect(0, 0, h.width, h.height), drawPaint);
+            } finally {
+                s.unlockCanvasAndPost(c);
+            }
+        } catch (RuntimeException e) {
+            // the encoder was stopped mid-picture (quality change, unplugged)
+            Log.w(TAG, "webcam picture: " + e.getMessage());
+        } finally {
+            decBusy.set(false);
         }
     }
 
@@ -1350,9 +1573,13 @@ public class CamService extends Service {
             }
         }
         if (!extras.isEmpty()) sb.append("\n").append(extras);
+        if (!usbNote.isEmpty()) sb.append("\n").append(usbNote);
         Shutter sh = shutter;
         if (sh != null) sb.append("\n").append(sh.describe());
-        if (camFps > 0) sb.append(String.format(Locale.US, "\ncamera now %.0f fps, exposure %.0f ms", camFps, exposureMs));
+        if (camFps > 0) {
+            sb.append(usbCam != null ? String.format(Locale.US, "\nwebcam now %.0f fps", camFps)
+                    : String.format(Locale.US, "\ncamera now %.0f fps, exposure %.0f ms", camFps, exposureMs));
+        }
         if (location != null) sb.append("\n").append(location.statusLine());
         int watching = clients.get() + (h != null ? h.viewers() : 0);
         sb.append("\nWatching: ").append(watching);
@@ -1379,7 +1606,8 @@ public class CamService extends Service {
                 state.replace("\"", "'"), quality != null ? quality.id : "",
                 size != null ? size.getWidth() : 0, size != null ? size.getHeight() : 0,
                 fps, frameKb, Math.min(liveJpeg, quality != null ? quality.jpeg : 100), clients.get(), PORT,
-                (extras + (camFps > 0 ? String.format(Locale.US, ", camera now %.0f fps, exposure %.0f ms", camFps, exposureMs) : "")).replace("\"", "'"),
+                (extras + (usbNote.isEmpty() ? "" : ", " + usbNote)
+                        + (camFps > 0 ? String.format(Locale.US, ", camera now %.0f fps, exposure %.0f ms", camFps, exposureMs) : "")).replace("\"", "'"),
                 System.currentTimeMillis(), h264Json, h264Note.replace("\"", "'"),
                 shutter != null ? shutter.describe().replace("\"", "'") : "",
                 location != null ? location.latestJson() : "null");
@@ -1405,7 +1633,7 @@ public class CamService extends Service {
         camHandler.post(reopen);
     }
 
-    /** IPv4 addresses of this phone; a NetBird one (100.x) first. */
+    /** IPv4 addresses of this phone; a Tailscale one (100.x) first. */
     static List<String> addresses() {
         List<String> out = new ArrayList<>();
         try {

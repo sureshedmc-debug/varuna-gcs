@@ -12,6 +12,9 @@ User=pi
 # The Pixhawk's TELEM2 UART (/dev/serial0) and the USB webcam (/dev/video0).
 SupplementaryGroups=dialout video
 WorkingDirectory=/home/pi/varuna-drone
+# The Pi's Wi-Fi power saving drops and delays packets (API calls taking 2-10 s,
+# the app's video freezing). Off, as root ("+"), never failing the start ("-").
+ExecStartPre=-+/usr/sbin/iw dev wlan0 set power_save off
 ExecStart=/home/pi/varuna-drone/venv/bin/python main.py
 # Back within 1 s if the backend dies. (A dropped camera or Wi-Fi link is
 # recovered inside the backend itself, also within about a second.)

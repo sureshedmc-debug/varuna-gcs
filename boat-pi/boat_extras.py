@@ -60,6 +60,7 @@ sys.path.insert(0, HERE)
 os.chdir(HERE)
 
 import camera  # noqa: E402
+import camera_model  # noqa: E402
 import collector  # noqa: E402
 import mav_link  # noqa: E402
 import vision  # noqa: E402
@@ -95,7 +96,7 @@ OPS_DEFAULTS = {
     "scoop_delay_s": -1,             # after the capture point (-1 = capture distance / homing speed)
     "collect_max_speed_mps": 0.8,    # faster than this: no scoop
     "collect_max_gps_m": 10.0,       # farther than this from the drone's GPS point: no scoop
-    "require_match": True,           # the camera's item must match the drone's picture
+    "require_match": False,          # True: the camera's item must match the drone's picture (off: any plastic)
     "motor_on_signal": True,         # a new drone find runs the motor (boat ARMED in MANUAL only)
     "motor_power_pct": 20,           # motor power for it, % of the ESC's range (20 % default)
     "motor_run_s": 10,               # how long each signal runs it (a new find restarts the time)
@@ -103,19 +104,29 @@ OPS_DEFAULTS = {
     "alert_duration_s": 8,           # duration of alert pulsing rhythm in seconds
     # ---- The boat's OWN camera (CameraCollect): verified plastic -> motor -> scoop
     "camera_motor": True,            # plastic the boat's camera verifies runs the motor
-    "camera_motor_pct": 10,          # motor power while going for it, % of the ESC's range
+    "camera_motor_pct": 100,         # motor power while going for it, % of the ESC's range (full speed)
     "camera_scoop": True,            # …and the scoop closes when it reaches the collection zone
-    "camera_scoop_m": 1.5,           # the collection zone: scoop when the plastic is this close
+    "camera_scoop_m": 0.9,           # VERY close: scoop only when the plastic is this near (~bottom 15% of the picture)
+    "camera_scoop_confirm": 3,       # …and read that close this many times in a row (one jumpy reading never scoops)
+    # Trapped: the scoop closes only when the plastic the boat was going for is
+    # INSIDE the scoop's mouth, which the camera sees in this part of its picture
+    # (fractions of the picture: 0 = left / top, 1 = right / bottom).
+    "camera_scoop_inside": True,     # require the waste inside the scoop (off: the "very close" rule above)
+    "camera_scoop_seen_first": False,  # …and seen out on the water before it was in the scoop (off: a bottle put straight in counts)
+    "scoop_zone_x1": 0.30, "scoop_zone_x2": 0.70,
+    "scoop_zone_y1": 0.72, "scoop_zone_y2": 1.00,
     "camera_cooldown_s": 6.0,        # after a collection, ignore new plastic this long
     "camera_stale_s": 1.5,           # nothing seen from the app this long -> motor OFF (watchdog)
-    "camera_alert": False,           # pulse the LED strip + buzzer for camera finds too
+    "camera_alert": True,            # pulse the LED strip + buzzer for the boat camera's plastic too
 }
 OPS_LIMITS = {"scoop_speed_pct": (5, 100), "scoop_servo_s_per_60": (0.05, 1.0),
               "scoop_deg_per_1000us": (30, 270), "scoop_hold_s": (0, 30), "scoop_delay_s": (-1, 15),
               "collect_max_speed_mps": (0.1, 3.0), "collect_max_gps_m": (2.0, 30.0),
               "motor_power_pct": (0, 100), "motor_run_s": (1, 120),
               "alert_duration_s": (1, 60),
-              "camera_motor_pct": (0, 100), "camera_scoop_m": (0.3, 10.0),
+              "camera_motor_pct": (0, 100), "camera_scoop_m": (0.3, 10.0), "camera_scoop_confirm": (1, 20),
+              "scoop_zone_x1": (0.0, 0.95), "scoop_zone_x2": (0.05, 1.0),
+              "scoop_zone_y1": (0.0, 0.95), "scoop_zone_y2": (0.05, 1.0),
               "camera_cooldown_s": (0, 60), "camera_stale_s": (0.3, 10)}
 _ops_lock = threading.Lock()
 
@@ -152,6 +163,8 @@ def update_ops(changes):
             if not lo <= v <= hi:
                 return OPS_SETTINGS, f"{k} must be {lo:g}-{hi:g}"
             new[k] = v
+        if new["scoop_zone_x2"] <= new["scoop_zone_x1"] or new["scoop_zone_y2"] <= new["scoop_zone_y1"]:
+            return OPS_SETTINGS, "The scoop area must be wider and taller than nothing (x2 > x1, y2 > y1)"
         OPS_SETTINGS.clear()
         OPS_SETTINGS.update(new)
         try:
@@ -479,6 +492,11 @@ class Ops:
             "pixhawk_usb": p.get("pixhawk") if reachable else None, "usb": p.get("usb") if reachable else None,
             "laptops": p.get("laptops") if reachable else None, "gps_sent": p.get("gps_sent") if reachable else None,
             "camera": p.get("camera") if reachable else None, "camera_fps": p.get("camera_fps") if reachable else None,
+            # Boat Link 2.0+: which brain is on the USB ("uno_r4" / "pixhawk" / "none") and the
+            # phone compass (the UNO R4's heading). Older phones leave these out.
+            "brain": p.get("brain") if reachable else None,
+            "compass_deg": p.get("compass_deg") if reachable else None,
+            "compass_calibrate": bool(p.get("compass_calibrate")) if reachable else False,
         }
 
     def boat_position(self, s, phone=None):
@@ -559,14 +577,23 @@ class Ops:
         d = target.get("distance_m")
         zone = float(st["camera_scoop_m"])
         age = float(target.get("age_ms") or 0) / 1000.0
+        # Where the waste is: trapped inside the scoop (the camera sees it in the
+        # scoop's mouth; CameraCollect has already seen it there several times in
+        # a row, after seeing it out on the water), or the older "very close" rule.
+        if st.get("camera_scoop_inside", True):
+            inside = CAMERA.in_scoop(target)
+            where = [("Waste trapped inside the scoop" + ("" if inside is not None else " (the app sends no box position)"),
+                      bool(inside))]
+        else:
+            where = [(f"Very close (within {zone:g} m)" + (f" (now {d:.2f} m)" if d is not None else " (no distance)"),
+                      d is not None and d <= zone),
+                     ("In front of the boat", bool(target.get("centred")))]
         out = [
             ("Automatic collection is ON", bool(st["auto_collect"])),
             ("Camera collection is ON", bool(st["camera_scoop"])),
             ("Boat camera connected", bool(cam is not None and cam.connected)),
             ("The item is verified plastic", bool(target.get("confirmed"))),
-            (f"In the collection zone ({zone:g} m)" + (f" (now {d:.2f} m)" if d is not None else " (no distance)"),
-             d is not None and d <= zone),
-            ("In front of the boat", bool(target.get("centred"))),
+            *where,
             (f"Seen just now (last seen {age:.1f} s ago)", age <= 1.0),
             (f"Speed at most {st['collect_max_speed_mps']:g} m/s (now {gs:.1f})", gs <= st["collect_max_speed_mps"]),
             ("Pixhawk connected and armed", bool(s["fc_connected"] and s["armed"])),
@@ -843,7 +870,7 @@ OPS = Ops()
 # logged and nothing moves. Arming later never starts the motor by surprise.
 #
 # 50 % stick -> SERVO3_TRIM + 50 % of (SERVO3_MAX - SERVO3_TRIM) = 1500 µs at
-# the ESC, the same as the MOT_THR_MAX 50 cap. The µs sent on CH3 comes from the
+# the ESC (MOT_THR_MAX 100: full power allowed). The µs sent on CH3 comes from the
 # Pixhawk's own RC3_MIN / TRIM / MAX / DZ (read when it connects).
 #
 # Stops (throttle back on the transmitter at once): motor_run_s over, STOP /
@@ -860,7 +887,7 @@ MOTOR_OUTPUT = 3            # MAIN OUT 3 = the ESC (SERVO3_FUNCTION 70)
 MOTOR_PARAMS_RETRY_S = 30.0
 # Used until the Pixhawk's own values are read (= what pixhawk_setup.py writes).
 MOTOR_PARAM_DEFAULTS = {"RC3_MIN": 1000.0, "RC3_TRIM": 1000.0, "RC3_MAX": 2000.0, "RC3_DZ": 50.0,
-                        "RC3_REVERSED": 0.0, "SERVO3_TRIM": 1000.0, "SERVO3_MAX": 2000.0, "MOT_THR_MAX": 50.0}
+                        "RC3_REVERSED": 0.0, "SERVO3_TRIM": 1000.0, "SERVO3_MAX": 2000.0, "MOT_THR_MAX": 100.0}
 
 
 def throttle_pwm(pct, p):
@@ -1143,6 +1170,7 @@ MOTOR = MotorPush()
 # so they flash and sound in exact lockstep rhythm.
 RELAY_DO_SET = 181  # MAV_CMD_DO_SET_RELAY
 RELAY_INSTANCE = 0  # 0 = RELAY1 (AUX 1, Pin 50)
+ALERT_BEEPS = 8     # the buzzer rings this many times for each plastic detection
 
 
 def _trigger_esp32(endpoint):
@@ -1202,11 +1230,9 @@ class AlertBlinker:
             log.warning("relay send: %s", exc)
 
     def _run(self):
-        # Exactly 4 beeps/pulses: ON -> OFF repeated 4 times
-        cadence = [(0.25, 1), (0.20, 0),
-                   (0.25, 1), (0.20, 0),
-                   (0.25, 1), (0.20, 0),
-                   (0.25, 1), (0.20, 0)]
+        # Exactly ALERT_BEEPS beeps/pulses: ON -> OFF repeated. Every OFF is shorter
+        # than the ESP32 bridge's 300 ms re-arm, so it plays its own 8 beeps once.
+        cadence = [(0.25, 1), (0.20, 0)] * ALERT_BEEPS
         while True:
             self._wake.wait(0.1)
             with self.lock:
@@ -1222,7 +1248,7 @@ class AlertBlinker:
                 self._set_relay(link, state)
                 time.sleep(duration)
 
-            self.stop("4 beeps finished")
+            self.stop(f"{ALERT_BEEPS} beeps finished")
 
     def signal(self, ids, source="drone", force=False):
         """A drone signal (new plastic find) or operator test."""
@@ -1321,6 +1347,10 @@ class CameraCollect:
         self.collected = 0
         self.refused = None          # why the last scoop did not happen
         self.last_reason = None
+        self.close_hits = 0          # readings in a row with the plastic VERY close / inside the scoop
+        self.seen_outside = False    # the locked item was seen out on the water, outside the scoop
+        self.scoop_why = None        # why the scoop is not closing on the item right now
+        self._note_key, self._note_t = None, 0.0
         self._cycle_gen = None
         self._started = False
 
@@ -1388,6 +1418,8 @@ class CameraCollect:
             with self.lock:
                 self.last_reason = why
                 state, t_seen = self.state, self.t_seen
+            if isinstance(item, dict) and OPS_SETTINGS.get("camera_scoop_inside", True) and self.in_scoop(item):
+                self._note(why)
             if state == "approach" and now - t_seen > self._lost_s():
                 self._lose(why or "the plastic went out of sight")
             return
@@ -1396,15 +1428,96 @@ class CameraCollect:
                 return                                   # busy with the last one
             same = self.target and self.target.get("id") == item.get("id")
             self.target, self.t_seen, self.last_reason = item, now, None
+            if not same:
+                self.close_hits = 0
+                self.seen_outside = False
             if not same and self.state == "approach":
                 self.event_new(item)
             elif self.state == "idle":
                 self.state = "approach"
                 self.event_new(item)
-        if float(item.get("distance_m") or 1e9) <= float(OPS_SETTINGS["camera_scoop_m"]) and item.get("centred"):
+        # 1. The motor pushes the boat towards the plastic (the app only locks
+        #    plastic that MATCHES the drone's picture when there is one).
+        # 2. The scoop moves only when that plastic is TRAPPED inside the scoop:
+        #    seen out on the water first, then inside the scoop's mouth, several
+        #    readings in a row — never on one reading, never on something that
+        #    was sitting in the scoop all along.
+        ready, why = self.ready_to_scoop(item, count=True)
+        with self.lock:
+            self.scoop_why = why
+        if why and OPS_SETTINGS.get("camera_scoop_inside", True) and self.in_scoop(item)                 and not why.startswith("inside the scoop "):
+            self._note(why)
+        if ready:
             self._collect(item)
         else:
             self._push()
+
+    def _note(self, why):
+        """The waste is in the scoop's mouth but the scoop will not close: say
+        why in the event log (once per reason, at most every 5 s)."""
+        now = time.time()
+        with self.lock:
+            if why == self._note_key and now - self._note_t < 5.0:
+                return
+            self._note_key, self._note_t, self.scoop_why = why, now, why
+        OPS.event(f"Boat camera: waste in the scoop but not scooping — {why}", "warn")
+
+    @staticmethod
+    def scoop_zone():
+        st = OPS_SETTINGS
+        return (float(st["scoop_zone_x1"]), float(st["scoop_zone_y1"]),
+                float(st["scoop_zone_x2"]), float(st["scoop_zone_y2"]))
+
+    def in_scoop(self, item):
+        """Is the item's box centre inside the scoop's mouth? None: the app sent no box."""
+        box = item.get("box") if isinstance(item, dict) else None
+        try:
+            x1, y1, x2, y2 = (float(v) for v in box)
+        except (TypeError, ValueError):
+            return None
+        cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+        zx1, zy1, zx2, zy2 = self.scoop_zone()
+        return zx1 <= cx <= zx2 and zy1 <= cy <= zy2
+
+    def ready_to_scoop(self, item, count=False):
+        """(ready, why not). With count=True this is one new reading: it moves the
+        in-a-row counter. Otherwise it only reports the current state."""
+        st = OPS_SETTINGS
+        need = max(1, int(st.get("camera_scoop_confirm", 3)))
+        if st.get("camera_scoop_inside", True):
+            inside = self.in_scoop(item)
+            # Only a reading where the item is in sight NOW counts: the app keeps a
+            # lock alive (with its last box) for a moment after losing sight of it.
+            seen_now = item.get("visible") is not False
+            # Seen out on the water first: optional, so a bottle put straight
+            # into the scoop (or one the camera first sees already there) counts.
+            need_out = bool(st.get("camera_scoop_seen_first", False))
+            with self.lock:
+                if inside is False and seen_now:
+                    self.seen_outside = True
+                if count:
+                    self.close_hits = self.close_hits + 1                         if (inside and seen_now and (self.seen_outside or not need_out)) else 0
+                hits, outside = self.close_hits, self.seen_outside
+            if inside is None:
+                return False, "the app sends no box position (update the app)"
+            if need_out and not outside:
+                return False, "not seen out on the water first (it may be part of the boat)"
+            if not inside:
+                return False, "not inside the scoop yet"
+            if hits < need:
+                return False, f"inside the scoop {hits}x in a row (needs {need})"
+            return True, None
+        d = item.get("distance_m")
+        very_close = d is not None and float(d) <= float(st["camera_scoop_m"]) and bool(item.get("centred"))
+        with self.lock:
+            if count:
+                self.close_hits = self.close_hits + 1 if very_close else 0
+            hits = self.close_hits
+        if not very_close:
+            return False, "not very close yet"
+        if hits < need:
+            return False, f"very close {hits}x in a row (needs {need})"
+        return True, None
 
     def event_new(self, item):
         d = item.get("distance_m")
@@ -1428,15 +1541,27 @@ class CameraCollect:
             conf = float(cfg.get("camera_plastic_conf", 0.45))
             hits = int(cfg.get("camera_plastic_hits", 2))
             max_m = float(cfg.get("camera_target_max_m", 15.0))
+            if cfg.get("camera_long_range"):  # Boat tab "Long range": far plastic counts too
+                max_m = max(max_m, float(cfg.get("camera_long_range_max_m", 30.0)))
+            max_frac = float(cfg.get("camera_max_box_frac", 0.25))
         except (TypeError, ValueError):
-            conf, hits, max_m = 0.45, 2, 15.0
+            conf, hits, max_m, max_frac = 0.45, 2, 15.0, 0.25
+        try:
+            frac = float(item.get("box_frac"))
+        except (TypeError, ValueError):
+            frac = None
+        # Waste trapped in the scoop is right under the lens, so it is big in the
+        # picture: there it may cover up to 90 % (a whole-picture box still can't).
+        if frac is not None and frac > max_frac and OPS_SETTINGS.get("camera_scoop_inside", True)                 and self.in_scoop(item):
+            max_frac = max(max_frac, 0.9)
+        if frac is not None and frac > max_frac:
+            return False, f"box covers {frac * 100:.0f}% of the picture - the scene, not an item"
         if float(item.get("score") or 0) < conf:
             return False, f"only {float(item.get('score') or 0) * 100:.0f}% sure (needs {conf * 100:.0f}%)"
         if int(item.get("hits") or 0) < hits and float(item.get("score") or 0) < 0.8:
             return False, f"seen {item.get('hits')}x (needs {hits})"
-        d = item.get("distance_m")
-        if d is None or not (0 < float(d) <= max_m):
-            return False, f"no usable distance ({d})"
+        # Any plastic the camera sees runs the motor, near or far, with or
+        # without a distance; the scoop alone needs a known, short distance.
         return True, None
 
     # ------------------------------------------------------------ motor
@@ -1476,6 +1601,8 @@ class CameraCollect:
                 return
             self.state = "idle"
             self.target = None
+            self.close_hits = 0
+            self.seen_outside = False
             self.last_reason = why
         self._stop_motor(why)
         OPS.event(f"Boat camera: plastic lost — {why}", "warn")
@@ -1488,12 +1615,16 @@ class CameraCollect:
             return
         with self.lock:
             self.state = "collecting"
+            self.close_hits = 0
+            self.seen_outside = False
         # Stop pushing first: the boat coasts the last stretch into the item
         # instead of driving over it while the scoop is still moving.
-        self._stop_motor("plastic reached the collection zone")
+        inside = OPS_SETTINGS.get("camera_scoop_inside", True)
+        self._stop_motor("plastic is inside the scoop" if inside else "plastic is very close")
         d = item.get("distance_m")
-        OPS.event(f"Boat camera: plastic in the collection zone"
-                  + (f" ({d:.2f} m)" if d is not None else "") + " — scooping")
+        OPS.event("Boat camera: plastic trapped inside the scoop — motor off, scooping" if inside
+                  else f"Boat camera: plastic very close" + (f" ({d:.2f} m)" if d is not None else "")
+                  + " — motor off, scooping")
         with OPS.lock:
             self._cycle_gen = OPS.gen + 1
         OPS.request_collect(vm, f"camera-{item.get('id')}", None, source="camera", target=item,
@@ -1531,6 +1662,8 @@ class CameraCollect:
             busy = self.state in ("approach", "collecting")
             self.state = "idle"
             self.target = None
+            self.close_hits = 0
+            self.seen_outside = False
             self.cooldown_until = 0.0
         self._stop_motor(why)
         return busy
@@ -1551,6 +1684,13 @@ class CameraCollect:
             "seen_ago_s": round(now - t_seen, 2) if t_seen else None,
             "app_ago_s": round(now - t_obs, 2) if t_obs else None,
             "scoop_m": float(st["camera_scoop_m"]),
+            "close_hits": self.close_hits,
+            "close_need": int(st.get("camera_scoop_confirm", 3)),
+            "scoop_inside": bool(st.get("camera_scoop_inside", True)),
+            "in_scoop": self.in_scoop(item) if item else None,
+            "seen_outside": self.seen_outside,
+            "seen_first": bool(st.get("camera_scoop_seen_first", False)),
+            "scoop_why": self.scoop_why if item else None,
             "motor_pct": float(st["camera_motor_pct"]),
             "cooldown_s": round(cool, 1) if cool else None,
             "collected": collected,
@@ -1595,6 +1735,7 @@ def _col_start_ops(self):
     MOTOR.start()
     ALERT.start()
     CAMERA.start()
+    CAPTAIN.start()
 
 
 collector.Collector.start = _col_start_ops
@@ -1728,6 +1869,154 @@ live_collect.LiveCollect.operator = _lc_operator_motor
 live_collect.LiveCollect.pause = _lc_pause_motor
 live_collect.LiveCollect.stop = _lc_stop_motor
 
+# ---------------------------------------------------------------- AI captain's world (laptop -> boat phone)
+# The trained captain runs on the boat phone (VARUNA Boat Link 2.4+). The phone
+# knows its own GPS and compass; what it cannot know is WHERE the plastic is.
+# Once a second this sends it: the drone's finds (lat/lng), what the boat's
+# camera sees right now (metres ahead / to the right), home, and how full the
+# bin is. It only ever describes the world: it cannot switch the captain to
+# full control (that is on the phone screen only) - the one command it can
+# send is STOP (POST /api/ops/captain {"action": "stop"}).
+CAPTAIN_FEED_S = 1.0
+CAPTAIN_SIM_BIN = 30            # the captain was trained with a 30-item bin
+CAPTAIN_CAM_MAX_M = 25.0
+CAPTAIN_TARGET_MAX_AGE_S = 2 * 3600   # older drone finds are not sent
+
+
+class CaptainFeed:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.enabled = os.environ.get("VARUNA_CAPTAIN_FEED", "1") != "0"
+        self.sent = 0
+        self.last_ok_t = 0.0
+        self.last_err = None
+        self.last_world = None
+        self.phone_captain = None     # the phone's /captain.json
+        self.phone_captain_t = 0.0
+        self._home = None             # first good boat position, when the Pixhawk has no home
+        self._started = False
+
+    def start(self):
+        if self._started:
+            return
+        self._started = True
+        threading.Thread(target=self._run, name="captain-feed", daemon=True).start()
+
+    def _run(self):
+        while True:
+            time.sleep(CAPTAIN_FEED_S)
+            if not (self.enabled and OPS.phone_url):
+                continue
+            try:
+                world = self.world()
+                if world is None:
+                    continue
+                self._post("/captain/world", world)
+                with self.lock:
+                    self.sent += 1
+                    self.last_ok_t, self.last_err, self.last_world = time.time(), None, world
+                self._read_phone()
+            except Exception as exc:                                 # noqa: BLE001 - phone away = try again
+                with self.lock:
+                    self.last_err = str(exc)[:200]
+
+    def _post(self, path, body):
+        req = urllib.request.Request(OPS.phone_url + path, data=json.dumps(body).encode("utf-8"),
+                                     headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=1.5) as r:
+            return json.loads(r.read().decode("utf-8") or "{}")
+
+    def _read_phone(self):
+        with urllib.request.urlopen(OPS.phone_url + "/captain.json", timeout=1.5) as r:
+            j = json.loads(r.read().decode("utf-8"))
+        with self.lock:
+            self.phone_captain, self.phone_captain_t = j, time.time()
+
+    # ------------------------------------------------------------ what the captain should know
+    def world(self):
+        M = _main()
+        if M is None or not hasattr(M, "link"):
+            return None
+        s = M.link.snapshot()
+        now = time.time()
+        lat, lng, _src = OPS.boat_position(s)
+        if s.get("home_lat") is not None:
+            home = [s["home_lat"], s["home_lng"]]
+        else:
+            if self._home is None and lat is not None:
+                self._home = [lat, lng]
+            home = self._home
+        plastic = []
+        for t in list(M.live.targets.values()):
+            if t.get("status") in live_collect.ACTIVE and t.get("lat") is not None:
+                seen = t.get("detected_at") or t.get("added_at") or now
+                age = max(0.0, now - seen)
+                if age <= CAPTAIN_TARGET_MAX_AGE_S:          # days-old finds have drifted away
+                    plastic.append({"lat": t["lat"], "lng": t["lng"], "age_s": round(age, 1)})
+        plastic.sort(key=lambda p: p["age_s"])
+        plastic.extend(self._camera_items(M, now))
+        bin_info = M.vision.catch_summary().get("bin", {})
+        cap = bin_info.get("capacity") or M.cfg.get("bin_capacity_items") or 75
+        count = int(bin_info.get("count") or 0)
+        w = {"plastic": plastic[:24], "weeds": [], "shore": [],
+             "bin": int(round(CAPTAIN_SIM_BIN * min(1.0, count / float(cap)))),
+             "go_home": bool(bin_info.get("full")) or getattr(M.live, "state", None) == "returning"}
+        if home:
+            w["home"] = [float(home[0]), float(home[1])]
+        return w
+
+    @staticmethod
+    def _camera_items(M, now):
+        """Plastic the boat's camera sees right now, metres ahead / to the right of the boat."""
+        vm = M.vision
+        with vm._obs_lock:
+            obs, at = vm.obs, vm.obs_at
+        if not obs or now - at > vision.OBS_FRESH_S:
+            return []
+        cfg = M.cfg
+        w, h = obs.get("frame_w") or cfg["camera_width"], obs.get("frame_h") or cfg["camera_height"]
+        cam = camera_model.CameraModel.from_cfg(cfg, w, h)
+        ramp_y = cfg["ramp_top"] * h
+        out = []
+        for b in obs.get("targets") or []:
+            try:
+                x = (float(b["x1"]) + float(b["x2"])) / 2
+                y = float(b["y2"])           # where the item meets the water
+                if (float(b["y1"]) + float(b["y2"])) / 2 > ramp_y:
+                    continue                 # already on the ramp
+            except (KeyError, TypeError, ValueError):
+                continue
+            g = cam.pixel_to_ground(x, min(y, ramp_y))
+            if g is None or not 0 < g[0] <= CAPTAIN_CAM_MAX_M:
+                continue
+            out.append({"fwd_m": round(g[0], 2), "right_m": round(g[1], 2), "age_s": 0})
+        return out[:8]
+
+    # ------------------------------------------------------------ for the app
+    def stop(self, why):
+        if not OPS.phone_url:
+            return False, "No boat phone configured (BOAT_PHONE_URL)."
+        try:
+            self._post("/captain/stop", {"why": why})
+        except Exception as exc:                                     # noqa: BLE001
+            return False, f"Could not reach the boat phone: {exc}"
+        OPS.event(f"AI captain stopped ({why})", "warn")
+        return True, "Captain stopped - back to watch only."
+
+    def view(self):
+        with self.lock:
+            fresh = time.time() - self.phone_captain_t < 5
+            lw = self.last_world or {}
+            return {"enabled": self.enabled, "phone": bool(OPS.phone_url), "sent": self.sent,
+                    "last_sent_s": round(time.time() - self.last_ok_t, 1) if self.last_ok_t else None,
+                    "error": self.last_err,
+                    "plastic": len(lw.get("plastic") or []), "bin": lw.get("bin"), "go_home": lw.get("go_home"),
+                    "captain": self.phone_captain if fresh else None}
+
+
+CAPTAIN = CaptainFeed()
+
+
 # ---------------------------------------------------------------- /api/ops/... for the app
 import fastapi  # noqa: E402
 from fastapi import APIRouter, Body  # noqa: E402
@@ -1737,7 +2026,24 @@ ops_router = APIRouter()
 
 @ops_router.get("/api/ops/status")
 def ops_status():
-    return OPS.status()
+    out = OPS.status()
+    if isinstance(out, dict) and out.get("success", True) is not False:
+        out["captain"] = CAPTAIN.view()
+    return out
+
+
+@ops_router.get("/api/ops/captain")
+def ops_captain():
+    return {"success": True, **CAPTAIN.view()}
+
+
+@ops_router.post("/api/ops/captain")
+def ops_captain_cmd(body: dict = Body(...)):
+    """AI captain on the boat phone: stop only. Full control is switched on at the phone itself."""
+    if str(body.get("action", "")) != "stop":
+        return {"success": False, "message": "Only stop is possible from here; full control is on the boat phone."}
+    ok, msg = CAPTAIN.stop("operator (app)")
+    return {"success": ok, "message": msg}
 
 
 @ops_router.post("/api/ops/settings")

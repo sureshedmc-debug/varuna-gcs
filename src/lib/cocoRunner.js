@@ -3,9 +3,10 @@
 // own, and the session is loaded once however many detectors acquire it.
 
 import { loadOrt, createSession } from './detector'
+import { pixelsToInput } from './nativeAI.js'
+import { letterbox } from './framePrep.js'
 
 export const COCO_IN = 320
-const PAD_RGB = [114, 114, 114]
 
 let shared = null // { promise, refs }
 
@@ -15,30 +16,7 @@ async function build(onProgress) {
   const inputName = session.inputNames[0]
   const outputName = session.outputNames[0]
 
-  const cv = document.createElement('canvas')
-  cv.width = COCO_IN
-  cv.height = COCO_IN
-  const cx = cv.getContext('2d', { willReadFrequently: true })
   const buf = new Float32Array(3 * COCO_IN * COCO_IN)
-
-  function preprocess(source, sw, sh) {
-    const ratio = Math.min(COCO_IN / sw, COCO_IN / sh)
-    const nw = Math.round(sw * ratio)
-    const nh = Math.round(sh * ratio)
-    const padX = Math.floor((COCO_IN - nw) / 2)
-    const padY = Math.floor((COCO_IN - nh) / 2)
-    cx.fillStyle = `rgb(${PAD_RGB[0]},${PAD_RGB[1]},${PAD_RGB[2]})`
-    cx.fillRect(0, 0, COCO_IN, COCO_IN)
-    cx.drawImage(source, 0, 0, sw, sh, padX, padY, nw, nh)
-    const { data } = cx.getImageData(0, 0, COCO_IN, COCO_IN)
-    const area = COCO_IN * COCO_IN
-    for (let i = 0; i < area; i++) {
-      buf[i] = data[i * 4] / 255
-      buf[area + i] = data[i * 4 + 1] / 255
-      buf[area * 2 + i] = data[i * 4 + 2] / 255
-    }
-    return { ratio, padX, padY }
-  }
 
   let lastFrame
   let lastResult = null
@@ -51,8 +29,9 @@ async function build(onProgress) {
       const sw = source.videoWidth || source.width || source.naturalWidth || 0
       const sh = source.videoHeight || source.height || source.naturalHeight || 0
       if (!sw || !sh) return null
-      const { ratio, padX, padY } = preprocess(source, sw, sh)
-      const tensor = new ort.Tensor('float32', buf, [1, 3, COCO_IN, COCO_IN])
+      // Letterboxed off the page's thread (framePrep.js): no stall here.
+      const { data: pixels, ratio, padX, padY } = await letterbox(source, { cx1: 0, cy1: 0, cw: sw, ch: sh }, COCO_IN)
+      const tensor = pixelsToInput(ort, session, pixels, COCO_IN, buf)
       const result = await session.run({ [inputName]: tensor })
       const out = result[outputName]
       const data = out.getData ? await out.getData() : out.data

@@ -1,13 +1,13 @@
 @echo off
 rem VARUNA boat backend on THIS laptop. The boat carries a phone running the
 rem VARUNA Boat Link app (boat-phone/):
-rem   Pixhawk --USB OTG--> phone --NetBird (or Wi-Fi)--> TCP 5760 --> this program
+rem   boat brain (UNO R4) --USB OTG--> phone --Tailscale (or Wi-Fi)--> TCP 5760 --> this program
 rem
-rem NetBird: join BOTH this laptop and the boat's phone to your NetBird network
-rem (the phone needs the NetBird app, signed in, Connected). Then they reach each
-rem other anywhere, over mobile data - no shared Wi-Fi and no hotspot needed.
-rem This program asks every NetBird peer by itself; to pin one address, put it in
-rem the file boat-pi/boat_phone_ip.txt, or set VARUNA_BOAT_PHONE.
+rem Tailscale: log in BOTH this laptop and the boat's phone to the same Tailscale
+rem account, and name the phone "varuna-boat" in the admin console. Then they
+rem reach each other anywhere, over mobile data - no shared Wi-Fi, no hotspot.
+rem This program finds varuna-boat (then any other Tailscale device) by itself; to
+rem pin one address or name, put it in boat-pi/boat_phone_ip.txt, or set VARUNA_BOAT_PHONE.
 rem   phone GPS --> Pixhawk (GPS_INPUT)      phone camera --> port 8080 --> this program
 rem The app finds the boat at http://localhost:8001 (desktop app: Settings > boat address).
 rem Driving: FS-i6 transmitter into the Pixhawk (CH3 throttle, CH4 rudder, SwD MANUAL/ACRO,

@@ -3,16 +3,18 @@ Find the boat's link on the laptop's network, and (with --run) keep the boat
 program connected to it no matter what.
 
 The link is the phone on the boat running VARUNA Boat Link (boat-phone/): the
-Pixhawk's MAVLink on TCP port 5760 and the phone's camera on port 8080. It is
-looked for in three places, in this order:
+boat brain's MAVLink (UNO R4, or a Pixhawk) on TCP port 5760 and the phone's
+camera on port 8080. It is looked for in this order:
 
-  1. the address you gave (the command line, or VARUNA_BOAT_PHONE)
-  2. NetBird  — every peer this computer can see (netbird.py). The phone and
-                the laptop need no shared Wi-Fi at all: they can be on mobile
-                data, anywhere, as long as both are joined to your NetBird
-                network. This is the normal way now.
-  3. the local network — the laptop's hotspot (192.168.137.x) first, then any
-                other network it is on. Used when NetBird is off.
+  1. the address you gave (the command line, VARUNA_BOAT_PHONE, or the file
+     boat_phone_ip.txt) - an IP or a Tailscale name
+  2. Tailscale - the phone named "varuna-boat" (VARUNA_BOAT_NAME), then every
+                 other device this computer can see (tailscale.py). The phone
+                 and the laptop need no shared Wi-Fi at all: they can be on
+                 mobile data, anywhere, as long as both are logged in to the
+                 same Tailscale account. This is the normal way now.
+  3. the local network - the laptop's hotspot (192.168.137.x) first, then any
+                 other network it is on. Used when Tailscale is off.
 
 The old ESP32 bridge (boat-esp32/, TCP 5760, no camera) is found the same way.
 
@@ -37,7 +39,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import psutil
 
-import netbird
+import tailscale
 
 HOTSPOT_PREFIX = "192.168.137."
 BACKEND_PORT = 8001
@@ -45,6 +47,7 @@ CAMERA_PORT = 8080        # VARUNA Boat Link's MJPEG camera
 STARTUP_GRACE_S = 30      # time the boat program gets to connect after a (re)start
 NO_PIXHAWK_S = 45         # no Pixhawk this long -> find the ESP32 again and restart
 NO_ANSWER_S = 30          # boat program not answering this long -> restart it
+BOAT_NAME = os.environ.get("VARUNA_BOAT_NAME", "varuna-boat")   # the phone's Tailscale machine name
 
 
 def local_networks():
@@ -57,7 +60,7 @@ def local_networks():
             ip = ipaddress.ip_address(a.address)
             if not ip.is_private or ip.is_loopback or a.address.startswith("169.254."):
                 continue
-            if a.address.startswith("100."):        # NetBird: asked peer by peer, never swept
+            if a.address.startswith("100."):        # Tailscale: asked peer by peer, never swept
                 continue
             nets.append((a.address, ipaddress.ip_network(f"{a.address}/24", strict=False)))
     nets.sort(key=lambda n: not n[0].startswith(HOTSPOT_PREFIX))
@@ -86,7 +89,8 @@ def is_boat_phone(ip):
 def fixed_phone():
     """The boat phone's address if you gave one (VARUNA_BOAT_PHONE, or the file
     boat_phone_ip.txt next to this script). An address here is tried first and
-    works over NetBird, Wi-Fi or a hotspot alike."""
+    works over Tailscale, Wi-Fi or a hotspot alike. A Tailscale name
+    (varuna-boat) is turned into its address."""
     out = []
     raw = os.environ.get("VARUNA_BOAT_PHONE", "")
     try:
@@ -97,19 +101,44 @@ def fixed_phone():
         pass
     for ip in raw.replace(",", " ").split():
         ip = ip.split(":")[0].strip()
+        if ip and not ip[0].isdigit():
+            ip = tailscale.find(ip) or _resolve(ip)
         if ip and ip not in out:
+            out.append(ip)
+    return out
+
+
+def _resolve(name):
+    """A name through DNS (MagicDNS answers Tailscale names), or None."""
+    try:
+        return socket.gethostbyname(name)
+    except OSError:
+        return None
+
+
+def tailscale_phones():
+    """The boat phone by its Tailscale name first, then the other Tailscale devices."""
+    out = []
+    named = tailscale.find(BOAT_NAME)
+    if named:
+        out.append(named)
+    for ip in tailscale.phone_ips():
+        if ip not in out:
             out.append(ip)
     return out
 
 
 def find(port=5760, prefer=None):
     """The boat's link: `prefer` (ip) if it still answers, then the address you
-    gave, then NetBird's peers, then a scan of the local networks. A phone
+    gave, then the Tailscale devices, then a scan of the local networks. A phone
     running VARUNA Boat Link wins over anything else with `port` open."""
     if prefer and answers(prefer, port, 1.5):
         return f"{prefer}:{port}"
-    # 1 + 2: a given address and NetBird peers — asked one by one, no sweep.
-    direct = [ip for ip in fixed_phone() + netbird.phone_ips() if ip != prefer]
+    # 1 + 2: a given address and the Tailscale devices - asked one by one, no sweep.
+    direct = []
+    for ip in fixed_phone() + tailscale_phones():
+        if ip != prefer and ip not in direct:
+            direct.append(ip)
     if direct:
         with ThreadPoolExecutor(max_workers=16) as pool:
             hits = [ip for ip, ok in zip(direct, pool.map(lambda h: answers(h, port, 2.0), direct)) if ok]
@@ -195,9 +224,9 @@ def wait_for_esp(port, prefer=None):
             say(f"Found Pixhawk on serial port {sp}.")
             return sp
         if first:
-            say("Boat not found yet - check: VARUNA Boat Link open on the boat's phone, and the phone "
-                "on NetBird (or on this laptop's hotspot). Still looking...")
-            say("  " + netbird.describe())
+            say("Boat not found yet - check: VARUNA Boat Link open on the boat's phone, and Tailscale "
+                f"ON on the phone (named {BOAT_NAME}) and on this laptop. Still looking...")
+            say("  " + tailscale.describe())
             first = False
         time.sleep(2)
     # Check serial port directly
@@ -219,7 +248,7 @@ def run(port=5760, fixed=None):
     try:
         while True:
             if not fixed:
-                say("Looking for the boat (phone with VARUNA Boat Link over NetBird or Wi-Fi, or a USB Pixhawk) ...")
+                say("Looking for the boat (phone with VARUNA Boat Link over Tailscale or Wi-Fi, or a USB boat brain) ...")
                 addr = wait_for_esp(port, prefer=addr.split(":")[0] if addr else None)
             is_serial = addr.upper().startswith("COM") or addr.startswith("/dev/")
             ip = addr.rsplit(":", 1)[0] if not is_serial else "127.0.0.1"
@@ -255,15 +284,15 @@ def run(port=5760, fixed=None):
                 if fc:
                     last_fc = now
                 if fc != was_fc and answered:
-                    say("Pixhawk CONNECTED - the app can control the boat." if fc
-                        else "Pixhawk link lost - waiting for it to come back ...")
+                    say("Boat brain CONNECTED - the app can control the boat." if fc
+                        else "Boat brain link lost - waiting for it to come back ...")
                     was_fc = fc
                 if now - started < STARTUP_GRACE_S:
                     continue
                 if now - last_answer > NO_ANSWER_S:
                     reason = "the boat program stopped answering"
                 elif now - last_fc > NO_PIXHAWK_S:
-                    reason = f"no Pixhawk for {NO_PIXHAWK_S} s"
+                    reason = f"no boat brain for {NO_PIXHAWK_S} s"
             say(f"Restarting: {reason}.")
             stop(proc)
             proc = None

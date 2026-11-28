@@ -11,8 +11,8 @@ control app.
 
 - **Frontend:** React + Vite + Tailwind + Framer Motion. The same build also
   ships as a Windows desktop app through Electron (`npm run electron:build`).
-- **Backend:** FastAPI on a Raspberry Pi, reached over Netbird at
-  `varuna-pi.netbird.cloud:8000`. The Pi has 1 GB RAM, so the app is built on a
+- **Backend:** FastAPI on a Raspberry Pi, reached over Tailscale at
+  `varuna-drone:8000` (MagicDNS name). The Pi has 1 GB RAM, so the app is built on a
   laptop or CI and only `dist/` is copied to the Pi. See `README.md` and
   `RASPI_BACKEND_GUIDE.md`.
 - **AI detection:** runs on the laptop with local ONNX models, so it works even

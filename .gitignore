@@ -25,3 +25,13 @@ rec-assets/
 # Video clips kept for reviewing runs, and throwaway working files
 raw_videos/
 scratch/
+
+# Built phone apps dropped in the project root (release/ holds the real ones)
+/*.apk
+# Raw project videos (2+ GB) and personal documents stay out of git
+/varuna project videos/
+# Python caches, RL training checkpoints and throwaway files
+__pycache__/
+boat-r4/ai/runs/
+*.tmp
+.preview/

@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8" /><meta name="viewport" content="width=device-width,initial-scale=1" /><title>VARUNA Assistant · robot states</title></head>
+<body style="margin:0;background:#eef3f8;font-family:Inter,system-ui,sans-serif">
+<div id="root"></div>
+<script type="module">
+import React, { useRef, useState } from 'react'
+import { createRoot } from 'react-dom/client'
+import VarunaBot from '/src/components/bot/VarunaBot.jsx'
+const h = React.createElement
+const STATES = ['idle', 'listening', 'thinking', 'speaking', 'happy', 'alert', 'sleep', 'error']
+function Cell({ s }) {
+  const lv = useRef(0)
+  React.useEffect(() => { if (s !== 'speaking' && s !== 'listening') return; const iv = setInterval(() => { lv.current = Math.random() }, 140); return () => clearInterval(iv) }, [s])
+  return h('div', { style: { background: '#fff', borderRadius: 18, padding: 8, textAlign: 'center', boxShadow: '0 6px 20px rgba(15,23,42,.08)' } },
+    h(VarunaBot, { state: s, levelRef: lv, size: 170 }), h('div', { style: { fontWeight: 700, color: '#0f172a' } }, s))
+}
+function App() {
+  const [g, setG] = useState(null)
+  return h('div', { style: { padding: 16 } },
+    h('div', { style: { display: 'flex', gap: 8, marginBottom: 12 } }, ['wave', 'nod', 'shake', 'bounce', 'alert'].map((n) => h('button', { key: n, onClick: () => setG({ name: n, id: Date.now() }) }, n))),
+    h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 } },
+      h('div', { style: { background: '#fff', borderRadius: 18, padding: 8, textAlign: 'center' } }, h(VarunaBot, { state: 'idle', gesture: g, size: 170 }), h('div', null, 'gesture')),
+      STATES.map((s) => h(Cell, { key: s, s }))))
+}
+createRoot(document.getElementById('root')).render(h(App))
+</script>
+</body>
+</html>

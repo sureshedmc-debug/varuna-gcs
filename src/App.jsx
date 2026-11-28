@@ -1,5 +1,5 @@
 import { useEffect, useState, lazy, Suspense } from 'react'
-import { AnimatePresence, motion } from 'framer-motion'
+import { motion } from 'framer-motion'
 import { ToastProvider } from './components/Toast'
 import { SystemProvider, useSystem } from './components/SystemContext'
 import { BoatProvider, useBoat } from './components/BoatContext'
@@ -13,6 +13,7 @@ import { startDataRecorders } from './lib/liveMissionPlan'
 import { lockData } from './lib/dataLock'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import OpsAlert from './components/OpsAlert'
+import BoatEventWatcher from './components/bot/BoatEventWatcher'
 
 import { wakeWordEnabled } from './lib/assistant/wakeWord'
 
@@ -52,6 +53,9 @@ const SCREENS = {
 // arrive from links and the assistant: send them somewhere that exists.
 const TAB_ALIAS = { collect: 'boat', ops: 'boat', water: 'home' }
 const tabFor = (t) => TAB_ALIAS[t] || (SCREENS[t] ? t : 'home')
+// Live drone / boat telemetry (flight mode, link, warnings, boat pop-ups) shows
+// only where the operator flies and drives: the Live and Boat tabs.
+const TELEMETRY_TABS = new Set(['live', 'boat'])
 
 // Only this small component listens to the live system state for the banner,
 // so telemetry updates don't re-render the whole shell (rail, top bar, screen).
@@ -116,7 +120,7 @@ function Shell({ onLock }) {
 
   return (
     <div className="relative min-h-screen">
-      {!fullBleed && <div className="ambient" />}
+      {tab === 'home' ? <div className="ambient" /> : <div className="sx-pagebg" />}
       <TopBar
         onLock={onLock}
         onMenu={() => setNavOpen(true)}
@@ -124,6 +128,7 @@ function Shell({ onLock }) {
         onAssistant={() => setWakeSignal((n) => n + 1)}
         wakeState={wakeWordOn ? wakeState : 'off'}
         onToggleWake={toggleWakeWord}
+        showTelemetry={TELEMETRY_TABS.has(tab)}
       />
       <Rail
         active={tab}
@@ -133,17 +138,19 @@ function Shell({ onLock }) {
         mobileOpen={navOpen}
         onMobileOpenChange={setNavOpen}
       />
-      <SystemWarnings />
+      {TELEMETRY_TABS.has(tab) && <SystemWarnings />}
       <main
         className={`relative z-10 pt-[56px] transition-[padding] duration-500 ease-[cubic-bezier(.16,1,.3,1)] ${navPinned ? 'md:pl-[244px]' : 'md:pl-[28px]'} ${fullBleed ? 'px-2 pb-2 md:pr-2' : 'px-2.5 pb-4 md:pr-4'}`}
       >
-        <AnimatePresence mode="wait">
+        {/* No exit animation: the new tab starts loading the moment it is picked
+            (waiting for the old one to fade out made every switch feel slow). */}
           <motion.div
             key={tab}
-            initial={{ opacity: 0, y: 10 }}
+            className="sx-tabpage"
+            data-tab={tab}
+            initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -5 }}
-            transition={{ type: 'tween', ease: 'easeOut', duration: 0.2 }}
+            transition={{ type: 'tween', ease: 'easeOut', duration: 0.15 }}
           >
             <ErrorBoundary key={tab}>
               <Suspense fallback={
@@ -158,12 +165,12 @@ function Shell({ onLock }) {
               </Suspense>
             </ErrorBoundary>
           </motion.div>
-        </AnimatePresence>
       </main>
       <LiveCollectDetect tab={tab} onOpen={() => setTab('live')} />
-      <OpsAlert hidden={tab === 'boat'} onOpen={() => setTab('boat')} />
+      <BoatEventWatcher />
+      <OpsAlert hidden={tab !== 'live'} onOpen={() => setTab('boat')} />
       <Suspense fallback={null}>
-        <VoiceAssistant tab={tab} wakeSignal={wakeSignal} wakeWordOn={wakeWordOn} onWakeState={setWakeState} />
+        <VoiceAssistant tab={tab} showTelemetry={TELEMETRY_TABS.has(tab)} wakeSignal={wakeSignal} wakeWordOn={wakeWordOn} onWakeState={setWakeState} />
       </Suspense>
     </div>
   )

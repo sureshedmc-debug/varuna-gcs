@@ -3,6 +3,7 @@ package ai.varuna.cam;
 import android.Manifest;
 import android.app.Activity;
 import android.content.Intent;
+import android.hardware.usb.UsbManager;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -42,7 +43,8 @@ public class MainActivity extends Activity {
     private Button homeBtn;
     private Button locBtn;
     private Button shutterBtn;
-    private TextView netbirdLine;
+    private Button webcamBtn;
+    private TextView tailnetLine;
     private EditText laptopInput;
     private boolean background;
     private boolean locationAsked;
@@ -74,24 +76,25 @@ public class MainActivity extends Activity {
         root.addView(title);
 
         TextView sub = new TextView(this);
-        sub.setText("Sends this phone's camera and GPS to the VARUNA app over NetBird (or the same Wi-Fi).");
+        sub.setText("Sends this phone's camera and GPS to the VARUNA app over Tailscale (or the same Wi-Fi).");
         sub.setTextColor(Color.rgb(150, 175, 200));
         sub.setTextSize(14);
         sub.setPadding(0, dp(4), 0, dp(14));
         root.addView(sub);
 
-        // This phone's NetBird address, so it's easy to read off / copy.
-        netbirdLine = new TextView(this);
-        netbirdLine.setTextColor(Color.rgb(120, 220, 160));
-        netbirdLine.setTextSize(14);
-        netbirdLine.setTypeface(Typeface.MONOSPACE);
-        netbirdLine.setPadding(0, 0, 0, dp(12));
-        root.addView(netbirdLine);
+        // This phone's Tailscale address, so it's easy to read off / copy.
+        tailnetLine = new TextView(this);
+        tailnetLine.setTextColor(Color.rgb(120, 220, 160));
+        tailnetLine.setTextSize(14);
+        tailnetLine.setTypeface(Typeface.MONOSPACE);
+        tailnetLine.setPadding(0, 0, 0, dp(12));
+        root.addView(tailnetLine);
 
-        // The laptop's NetBird address: where this phone announces itself, so the
-        // VARUNA backend finds it over NetBird without anyone typing an IP.
+        // The laptop's Tailscale address: where this phone announces itself. Only a
+        // backup - the laptop normally finds this phone by its Tailscale name
+        // (varuna-drone-cam) by itself.
         TextView nbTitle = new TextView(this);
-        nbTitle.setText("Laptop NetBird address (where the VARUNA app runs)");
+        nbTitle.setText("Laptop Tailscale address (optional, e.g. varuna-laptop)");
         nbTitle.setTextColor(Color.rgb(150, 175, 200));
         nbTitle.setTextSize(13);
         root.addView(nbTitle);
@@ -99,7 +102,7 @@ public class MainActivity extends Activity {
         LinearLayout nbRow = new LinearLayout(this);
         nbRow.setOrientation(LinearLayout.HORIZONTAL);
         laptopInput = new EditText(this);
-        laptopInput.setHint("e.g. 100.99.71.176");
+        laptopInput.setHint("varuna-laptop or 100.x.x.x");
         laptopInput.setHintTextColor(Color.rgb(110, 130, 150));
         laptopInput.setTextColor(Color.WHITE);
         laptopInput.setTextSize(16);
@@ -114,7 +117,7 @@ public class MainActivity extends Activity {
             @Override
             public void onClick(View v) {
                 LaptopLink.set(MainActivity.this, laptopInput.getText().toString());
-                Toast.makeText(MainActivity.this, "Saved. Announcing to the laptop over NetBird.",
+                Toast.makeText(MainActivity.this, "Saved. Announcing to the laptop over Tailscale.",
                         Toast.LENGTH_SHORT).show();
                 refresh();
             }
@@ -179,6 +182,22 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(52));
         slp.topMargin = dp(8);
         root.addView(shutterBtn, slp);
+
+        // A USB webcam on the phone's port (OTG adapter) as the video instead of the phone's camera.
+        webcamBtn = new Button(this);
+        webcamBtn.setAllCaps(false);
+        webcamBtn.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                UsbCam.set(MainActivity.this, !UsbCam.enabled(MainActivity.this));
+                CamService s = CamService.running;
+                if (s != null) s.switchCamera("Changing the camera", 0);
+                refresh();
+            }
+        });
+        LinearLayout.LayoutParams wlp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(52));
+        wlp.topMargin = dp(8);
+        root.addView(webcamBtn, wlp);
 
         homeBtn = new Button(this);
         homeBtn.setText("Set take-off point here (height 0)");
@@ -266,6 +285,11 @@ public class MainActivity extends Activity {
 
     private void handleIntent(Intent intent) {
         background = intent != null && intent.getBooleanExtra("background", false);
+        // Opened by plugging in the USB webcam (VARUNA Cam is its app): use it now.
+        if (intent != null && UsbManager.ACTION_USB_DEVICE_ATTACHED.equals(intent.getAction())) {
+            CamService s = CamService.running;
+            if (s != null && UsbCam.enabled(this)) s.switchCamera("USB webcam plugged in: opening it", 300);
+        }
         // Opened from the shortcut or the launcher: start streaming straight away.
         if (CamService.running == null) startStream();
         else if (background) stepAside();
@@ -348,17 +372,17 @@ public class MainActivity extends Activity {
         List<String> ips = CamService.addresses();
         String nb = "";
         for (String ip : ips) {
-            if (ip.startsWith("100.")) {    // NetBird
+            if (ip.startsWith("100.")) {    // Tailscale
                 nb = ip;
                 break;
             }
         }
         if (nb.isEmpty() && !ips.isEmpty()) nb = ips.get(0);
         if (nb.isEmpty()) {
-            netbirdLine.setText("This phone: no network yet — turn on NetBird (or Wi-Fi)");
+            tailnetLine.setText("This phone: no network yet — turn on Tailscale (or Wi-Fi)");
         } else {
-            netbirdLine.setText("This phone: http://" + nb + ":8080"
-                    + (nb.startsWith("100.") ? "   ✓ NetBird" : "   (not on NetBird 100.x yet)"));
+            tailnetLine.setText("This phone: http://" + nb + ":8080"
+                    + (nb.startsWith("100.") ? "   ✓ Tailscale" : "   (Tailscale off - no 100.x yet)"));
         }
 
         Quality cur = Quality.get(this);
@@ -367,6 +391,10 @@ public class MainActivity extends Activity {
             qButtons[i].setText((on ? "✓ " : "") + Quality.ALL[i].label);
             qButtons[i].setTypeface(on ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
         }
+        android.hardware.usb.UsbDevice cam = UsbCam.find(this);
+        webcamBtn.setText(UsbCam.enabled(this)
+                ? "✓ USB webcam when plugged in" + (cam != null ? " (" + UsbCam.label(cam) + ")" : " (none plugged in now)")
+                : "USB webcam: off, the phone camera only (tap to use a webcam)");
         shutterBtn.setText(Shutter.enabled(this)
                 ? "✓ Fast shutter for flight (sharp when the drone shakes)"
                 : "Fast shutter for flight: off (tap to turn on)");

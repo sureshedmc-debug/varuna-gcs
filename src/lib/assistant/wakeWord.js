@@ -17,6 +17,11 @@
 import { getGroqKey, groqTranscribe } from './groqClient'
 import { getLlmConfig } from './llmSettings'
 
+// AudioContext.close() returns a promise that rejects if it is already closed
+// (a try/catch around it never sees that), so close only once and swallow it.
+const closeCtx = (c) => { try { if (c && c.state !== 'closed') c.close().catch(() => {}) } catch { /* ignore */ } }
+
+
 const Recognition = typeof window !== 'undefined' ? window.SpeechRecognition || window.webkitSpeechRecognition : null
 const isElectron = typeof navigator !== 'undefined' && /Electron\//i.test(navigator.userAgent || '')
 const canRecord = typeof window !== 'undefined' && !!window.MediaRecorder && !!navigator.mediaDevices?.getUserMedia
@@ -351,11 +356,7 @@ function createWhisperWake({ onWake, onState, state }) {
     } catch {
       /* ignore */
     }
-    try {
-      ctx?.close()
-    } catch {
-      /* ignore */
-    }
+    closeCtx(ctx)
     stream = null
     ctx = null
   }

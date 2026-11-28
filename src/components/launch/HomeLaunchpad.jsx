@@ -82,7 +82,7 @@ function Readiness() {
 
 const BOAT_HELP = [
   'Switch on the boat and wait about a minute.',
-  'Check this laptop and the boat are on the same Netbird network.',
+  'Check Tailscale is Connected on this laptop and on the boat phone (varuna-boat).',
   "If it still doesn't connect, check the boat's address under System → Boat connection.",
 ]
 

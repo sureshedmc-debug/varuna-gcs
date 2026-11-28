@@ -76,10 +76,49 @@ final class Mav {
         return b.array();
     }
 
+    static final int ATTITUDE_ID = 30;
+    static final int ATTITUDE_CRC_EXTRA = 39;
+
+    /** ATTITUDE payload (28 bytes): time_boot_ms, roll, pitch, yaw (rad), and their rates (rad/s). */
+    static byte[] attitudePayload(long timeBootMs, float roll, float pitch, float yaw,
+                                  float rollSpeed, float pitchSpeed, float yawSpeed) {
+        ByteBuffer b = ByteBuffer.allocate(28).order(ByteOrder.LITTLE_ENDIAN);
+        b.putInt((int) timeBootMs);
+        b.putFloat(roll);
+        b.putFloat(pitch);
+        b.putFloat(yaw);
+        b.putFloat(rollSpeed);
+        b.putFloat(pitchSpeed);
+        b.putFloat(yawSpeed);
+        return b.array();
+    }
+
     static final int COMMAND_LONG_ID = 76;
     static final int COMMAND_LONG_CRC_EXTRA = 152;
     static final int MAV_CMD_DO_SET_MODE = 176;
     static final int ROVER_HOLD = 4;
+    static final int ROVER_MANUAL = 0;
+
+    // RC_CHANNELS_OVERRIDE (70): how the laptop drives the brain in MANUAL; the AI captain does the same.
+    static final int RC_OVERRIDE_ID = 70;
+    static final int RC_OVERRIDE_CRC_EXTRA = 124;
+    static final int RC_IGNORE = 65535, RC_RELEASE = 0;
+
+    /** chan1..chan8 (µs; 65535 = leave as it is, 0 = back to the receiver), then target system / component. */
+    static byte[] rcOverridePayload(int targetSys, int targetComp, int... ch) {
+        ByteBuffer b = ByteBuffer.allocate(18).order(ByteOrder.LITTLE_ENDIAN);
+        for (int i = 0; i < 8; i++) b.putShort((short) (i < ch.length ? ch[i] : RC_IGNORE));
+        b.put((byte) targetSys);
+        b.put((byte) targetComp);
+        return b.array();
+    }
+
+    /** The brain's "laptop stick" scale (brain.cpp laptop_norm): 1500 = centre, ±30 µs dead band, ±370 µs full. */
+    static int stickUs(float v) {
+        v = Math.max(-1f, Math.min(1f, v));
+        if (Math.abs(v) < 0.01f) return 1500;
+        return Math.round(1500 + Math.signum(v) * (30 + Math.abs(v) * 370));
+    }
 
     /** COMMAND_LONG payload in wire order: 7 floats, command, target system / component, confirmation. */
     static byte[] commandLongPayload(int command, int targetSys, int targetComp, float... params) {

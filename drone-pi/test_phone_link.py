@@ -107,13 +107,13 @@ def main():
     sample = "\n".join([
         "1: lo    inet 127.0.0.1/8 scope host lo",
         "14: rmnet_data2    inet 10.45.12.7/30 scope global rmnet_data2",
-        "40: wt0    inet 100.99.10.5/16 brd 100.99.255.255 scope global wt0",
+        "40: tun0    inet 100.99.10.5/32 scope global tun0",
         "33: swlan0    inet 192.168.43.1/24 brd 192.168.43.255 scope global swlan0",
     ])
     hosts = relay_mod.hotspot_hosts(sample)
     check(len(hosts) == 253 and "192.168.43.2" in hosts and "192.168.43.1" not in hosts
           and not any(h.startswith(("10.", "100.", "127.")) for h in hosts),
-          "relay searches only the hotspot network (not mobile data, NetBird or itself)")
+          "relay searches only the hotspot network (not mobile data, Tailscale or itself)")
 
     cam = camera_server(make_jpegs())
     _load("mav_link", os.path.join(BOAT, "mav_link.py"))

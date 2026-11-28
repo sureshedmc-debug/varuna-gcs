@@ -7,8 +7,7 @@ import CachedTileLayer from '../components/CachedTileLayer'
 import { api } from '../api/client'
 import { usePolling, useNow } from '../hooks/usePolling'
 import { useToast } from '../components/Toast'
-import { Btn, StaleBadge, StatusOrb, TiltCard, Spinner } from '../components/ui'
-import { ViewToggle, EYE, EYE_OFF } from '../components/ViewToggle'
+import { StatusOrb, Spinner } from '../components/ui'
 import { fmtClock, fmtCoord, num } from '../lib/format'
 import { useTrashStats, resetTrashStats } from '../lib/detectionStats'
 import { useTrashLog, clearTrashLog, mapsLink, ensurePhoto, hydratePhotos, getTrashLog } from '../lib/trashLog'
@@ -16,6 +15,7 @@ import { useMissionRecording, captureMissionPoster, clearMissionRecording } from
 import { generateReportNarrative } from '../lib/reportAi'
 import { getLlmConfig, isLlmConfigReady } from '../lib/assistant/llmSettings'
 import LlmPicker from '../components/LlmPicker'
+import { EmptyState, Kpi, MoreOptions, Page, Section, TabHeader } from '../components/simple/Simple'
 import { renderReportCharts } from '../lib/reportChart'
 import { buildTrashDataset, downloadWordReport, fallbackNarrative } from '../lib/reportDoc'
 import { fetchBoatReportData } from '../lib/boatReport'
@@ -29,7 +29,8 @@ import { sendReportReadyEmail } from '../lib/alerts/email'
 import { openWhatsApp } from '../lib/alerts/whatsapp'
 import HeatLayer from '../components/HeatLayer'
 import TypeBreakdownChart from '../components/TypeBreakdownChart'
-import ImpactStatStrip from '../components/ImpactStatStrip'
+import { useImpactStats, resetImpactStats } from '../lib/impactStats'
+import { openCertificatePrintView, buildCertificateHtml } from '../lib/certificate'
 import { useHomePoint, useLivePosition } from '../hooks/useLaptopGps'
 import { useSystem } from '../components/SystemContext'
 
@@ -187,7 +188,7 @@ const TrashMap = memo(function TrashMap({ rows, sightings, showHeat }) {
   }, [rows])
   const heat = useMemo(() => (showHeat ? heatPoints(sightings || []) : []), [sightings, showHeat])
   return (
-    <div className="relative mb-3 overflow-hidden rounded-xl border border-line" style={{ height: 220 }}>
+    <div className="relative overflow-hidden rounded-b-[14px]" style={{ height: 340 }}>
       <MapContainer center={points[0] || [17.385, 78.4867]} zoom={16} zoomControl={false}
         attributionControl={false} style={{ height: '100%', width: '100%', background: '#0E1116' }}>
         <CachedTileLayer url={SAT_URL} maxZoom={19} />
@@ -209,8 +210,10 @@ const TrashMap = memo(function TrashMap({ rows, sightings, showHeat }) {
         ))}
       </MapContainer>
       {!located.length && (
-        <div className="pointer-events-none absolute inset-0 z-[400] flex items-center justify-center bg-black/40 text-center text-xs text-muted">
-          No trash locations yet — start detection on the Live tab.
+        <div className="pointer-events-none absolute inset-0 z-[400] flex items-center justify-center bg-slate-900/45 p-4 text-center">
+          <span className="rounded-xl px-4 py-2.5 text-[13.5px] font-semibold" style={{ background: 'var(--sx-card)', color: 'var(--sx-ink)', boxShadow: 'var(--sx-shadow)' }}>
+            No locations yet: finds from the Live tab appear here
+          </span>
         </div>
       )}
     </div>
@@ -228,8 +231,8 @@ const DetectionRow = memo(function DetectionRow({ d, n, expanded, onToggle, onWh
     <motion.div layout initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }}
       className="overflow-hidden rounded-xl"
       style={{
-        background: 'rgba(255,255,255,0.03)',
-        border: '1px solid rgba(255,255,255,0.07)',
+        background: 'var(--sx-card)',
+        border: '1px solid var(--sx-line)',
         transition: 'border-color 0.15s, box-shadow 0.15s',
       }}
       whileHover={{ borderColor: `${col}44`, boxShadow: `0 0 0 1px ${col}18` }}
@@ -252,8 +255,8 @@ const DetectionRow = memo(function DetectionRow({ d, n, expanded, onToggle, onWh
         {/* Main info */}
         <button onClick={() => onToggle(d.key)} className="flex min-w-0 flex-1 flex-col py-2.5 pr-2 text-left">
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className="font-mono text-[10px] tnum text-faint">#{n}</span>
-            <span className="font-semibold text-ink">{d.class}</span>
+            <span className="font-mono text-[11px] tnum text-muted">#{n}</span>
+            <span className="text-[14px] font-semibold capitalize text-ink">{d.class}</span>
             {d.count > 1 && (
               <span className="rounded-full px-1.5 py-0.5 font-mono text-[10px] tnum font-bold"
                 style={{ background: `${col}22`, color: col }}>×{d.count}</span>
@@ -270,8 +273,8 @@ const DetectionRow = memo(function DetectionRow({ d, n, expanded, onToggle, onWh
           </div>
 
           {/* Coords */}
-          <div className="mt-0.5 font-mono text-[10px] tnum text-muted">
-            {d.located ? `${fmtCoord(d.lat)}, ${fmtCoord(d.lng)}` : 'Unlocated — no GPS fix at capture'}
+          <div className="mt-0.5 font-mono text-[11.5px] tnum text-muted">
+            {d.located ? `${fmtCoord(d.lat)}, ${fmtCoord(d.lng)}` : 'No location: there was no GPS fix when it was seen'}
           </div>
 
           {/* Confidence bar */}
@@ -289,8 +292,8 @@ const DetectionRow = memo(function DetectionRow({ d, n, expanded, onToggle, onWh
         <div className="flex shrink-0 flex-col items-end gap-1.5 px-3 py-2.5">
           {d.located
             ? <a href={mapsLink(d.lat, d.lng)} target="_blank" rel="noreferrer"
-                className="rounded-md px-2 py-0.5 text-[10px] font-bold text-accent"
-                style={{ background: 'rgba(59,158,255,0.1)' }}>Map ↗</a>
+                className="rounded-md px-2 py-0.5 text-[11.5px] font-bold"
+                style={{ background: 'var(--sx-accent-soft)', color: 'var(--sx-accent-text)' }}>Map ↗</a>
             : <StatusOrb level="warn" size={8} />}
           <AgeLabel time={d.time} />
         </div>
@@ -350,25 +353,22 @@ function RecordingElapsed({ startedAt }) {
   const now = useNow(1000); return fmtDuration(now - startedAt)
 }
 function Detail({ k, v, level }) {
-  const c = level ? { ok: '#32D74B', warn: '#FF9F0A' }[level] : '#F2F4F7'
+  const c = level ? { ok: 'var(--sx-ok)', warn: 'var(--sx-warn)' }[level] : 'var(--sx-ink)'
   return (
     <div className="flex flex-col">
-      <span className="text-[10px] uppercase tracking-wider text-muted">{k}</span>
+      <span className="text-[10.5px] font-semibold uppercase tracking-wider text-muted">{k}</span>
       <span className="font-mono tnum font-semibold" style={{ color: c }}>{v}</span>
     </div>
   )
 }
 
-// ── Stat block (top stats row) ────────────────────────────────────────────────
-function Stat({ label, value, level }) {
-  const c = level ? { ok: '#32D74B', warn: '#FF9F0A' }[level] : 'var(--accent-hex)'
-  return (
-    <div className="rounded-xl px-3 py-2.5 text-center"
-      style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}>
-      <div className="font-mono text-xl font-bold tnum" style={{ color: c }}>{value}</div>
-      <div className="mt-0.5 text-[10px] uppercase tracking-wider text-muted">{label}</div>
-    </div>
-  )
+function fmtHours(sec) {
+  const h = (Number(sec) || 0) / 3600
+  return h >= 1 ? `${h.toFixed(1)} h` : `${Math.round((Number(sec) || 0) / 60)} min`
+}
+function fmtArea(m2) {
+  m2 = Number(m2) || 0
+  return m2 >= 10000 ? `${(m2 / 10000).toFixed(2)} ha` : `${Math.round(m2)} m²`
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -378,10 +378,10 @@ export default function DetectionsScreen() {
   const trashStats = useTrashStats()
   const sightings  = useTrashLog()
   const video      = useMissionRecording()
+  const impact     = useImpactStats()
 
   const [reporting,  setReporting]  = useState(false)
   const [expanded,   setExpanded]   = useState(null)
-  const [showReport, setShowReport] = useState(true)
   const [showHeat,   setShowHeat]   = useState(false)
   const [filter,     setFilter]     = useState('all')   // 'all' | 'pi' | 'webcam' | 'located'
   const [search,     setSearch]     = useState('')
@@ -524,190 +524,126 @@ export default function DetectionsScreen() {
   }
 
   // ── Render ──────────────────────────────────────────────────────────────────
+  const types = Object.entries(byClassCounts).sort((a, b) => b[1] - a[1])
   return (
-    <div className={`mx-auto grid max-w-5xl gap-4 ${showReport ? 'lg:grid-cols-[1.3fr_1fr]' : 'lg:grid-cols-1'}`}>
+    <Page>
+    <TabHeader icon="detections" title="Detections"
+      hint="Every piece of plastic the drone has found and where it was. Turn it into a report for the authorities in one click.">
+      <button type="button" className="sx-btn" disabled={reporting} onClick={generateReport}>
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8l-5-5z" /><path d="M14 3v5h5M9 13h6M9 17h4" /></svg>
+        {reporting ? 'Generating…' : 'Generate report'}
+      </button>
+    </TabHeader>
 
-      {/* ── Left: Detection log ── */}
-      <TiltCard tilt={false} className="p-5">
-
-        {/* Header */}
-        <div className="mb-3 flex items-center justify-between gap-2">
-          <h2 className="text-base font-semibold text-ink">Detection log</h2>
-          <div className="flex items-center gap-2">
-            <StaleBadge lastUpdate={det.lastUpdate} connected={!det.error} />
-            <ViewToggle compact active={!showReport} onClick={() => setShowReport((v) => !v)}
-              label={showReport ? 'Focus' : 'Report'} icon={showReport ? EYE_OFF : EYE} />
-          </div>
-        </div>
-
-        {/* Stats row */}
-        <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <Stat label="Total"         value={allRows.length} />
-          <Stat label="Located"       value={locatedCount}               level="ok" />
-          <Stat label="Unlocated"     value={allRows.length - locatedCount} level="warn" />
-          <Stat label="Live-cam peak" value={trashStats.peak} />
-        </div>
-
-        {/* Impact strip */}
-        <div className="mb-3 rounded-xl px-3 py-2"
-          style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-          <div className="mb-1.5 text-[10px] uppercase tracking-wider text-muted">Impact so far</div>
-          <ImpactStatStrip />
-        </div>
-
-        {/* Action buttons */}
-        <div className="mb-2 flex flex-wrap items-center gap-2">
-          <button onClick={() => setShowHeat((v) => !v)}
-            className="rounded-lg px-2.5 py-1 text-[11px] font-semibold text-ink transition-colors hover:bg-chip2"
-            style={{ background: showHeat ? 'rgba(59,158,255,0.15)' : 'var(--chip)', border: showHeat ? '1px solid rgba(59,158,255,0.3)' : '1px solid transparent' }}>
-            {showHeat ? '🌡 Hide heatmap' : '🌡 Heatmap'}
-          </button>
-          <button onClick={planFromHotspots} disabled={locatedCount === 0}
-            className="rounded-lg px-2.5 py-1 text-[11px] font-semibold text-ink transition-colors hover:bg-chip2 disabled:opacity-40"
-            style={{ background: 'var(--chip)' }}>
-            ✈ Plan from hotspots
-          </button>
-          <button onClick={openCollectionRoute} disabled={locatedCount === 0}
-            className="rounded-lg px-2.5 py-1 text-[11px] font-semibold text-ink transition-colors hover:bg-chip2 disabled:opacity-40"
-            style={{ background: 'var(--chip)' }}>
-            🗺 Collection route ↗
-          </button>
-        </div>
-
-        {/* Map */}
-        <TrashMap rows={allRows} sightings={sightings} showHeat={showHeat} />
-
-        {/* Type breakdown */}
-        {allRows.length > 0 && (
-          <div className="mb-3 rounded-xl px-3 py-2"
-            style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-            <div className="mb-1.5 text-[10px] uppercase tracking-wider text-muted">Type breakdown</div>
-            <TypeBreakdownChart byClass={byClassCounts} />
-          </div>
-        )}
-
-        {/* Filter + search bar */}
-        <div className="mb-2 flex flex-wrap items-center gap-2">
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="🔍  Search class…"
-            className="inp min-w-[120px] flex-1 rounded-xl px-3 py-1.5 text-xs"
-          />
-          {[
-            { id: 'all',     label: 'All' },
-            { id: 'pi',      label: 'PI AI' },
-            { id: 'webcam',  label: 'Webcam' },
-            { id: 'located', label: 'Located' },
-          ].map((f) => (
-            <button key={f.id} onClick={() => setFilter(f.id)}
-              className="rounded-full px-3 py-1 text-[11px] font-semibold transition-all"
-              style={filter === f.id
-                ? { background: 'rgba(59,158,255,0.15)', color: 'var(--accent-hex)', border: '1px solid rgba(59,158,255,0.3)' }
-                : { background: 'var(--chip)', color: 'var(--muted)', border: '1px solid transparent' }}>
-              {f.label}
-            </button>
-          ))}
-          <select value={sortMode} onChange={(e) => setSortMode(e.target.value)}
-            className="inp rounded-xl px-2.5 py-1 text-xs" style={{ width: 130 }}>
-            <option value="newest">Newest first</option>
-            <option value="oldest">Oldest first</option>
-            <option value="conf">Highest conf.</option>
-          </select>
-        </div>
-
-        {/* Detection list */}
-        <div className="flex max-h-[46vh] flex-col gap-2 overflow-y-auto pr-1">
-          {det.loading && rows.length === 0 ? (
-            <Spinner label="Loading detections" />
-          ) : rows.length === 0 ? (
-            <div className="py-10 text-center text-sm text-muted">
-              {allRows.length > 0 ? 'No results match your filters.' : 'No trash detected yet.'}
-              {allRows.length === 0 && (
-                <div className="mt-1 text-xs">Start detection on the Live tab — each sighting is stamped with the drone&apos;s live GPS.</div>
-              )}
-            </div>
-          ) : (
-            rows.map((d, i) => (
-              <DetectionRow key={d.key} d={d} n={i + 1}
-                expanded={expanded === d.key} onToggle={toggleRow} onWhatsApp={onWhatsApp} />
-            ))
-          )}
-        </div>
-
-        {sightings.length > 0 && (
-          <div className="mt-2 flex justify-end">
-            <button onClick={clearLog}
-              className="rounded-md px-2 py-1 text-[11px] font-semibold text-muted transition-colors hover:text-bad">
-              Clear recorded locations
-            </button>
-          </div>
-        )}
-      </TiltCard>
-
-      {/* ── Right: Report card ── */}
-      <AnimatePresence>
-        {showReport && (
-          <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 20 }} transition={{ type: 'spring', stiffness: 260, damping: 26 }}>
-            <TiltCard className="flex h-full flex-col p-5">
-              <h2 className="mb-1 text-base font-semibold text-ink">AI environmental report</h2>
-              <p className="mb-3 text-xs text-muted">
-                Generates a Word document with 3D graphs, analysis, and every trash location with coordinates and a Google Maps link.
-              </p>
-
-              {/* LLM picker */}
-              <div className="mb-3 rounded-xl p-3"
-                style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
-                <LlmPicker kind="report" />
-                <p className="mt-2 text-[10px] text-muted">
-                  Independent from the voice assistant's AI. Stored only in this browser. Nothing configured → built-in report is used.
-                </p>
-              </div>
-
-              {/* Generate button */}
-              <Btn disabled={reporting} onClick={generateReport} className="mb-3">
-                {reporting ? 'Generating…' : `📄 Generate report (Word) · ${locatedCount} location${locatedCount === 1 ? '' : 's'}`}
-              </Btn>
-
-              {/* Video status */}
-              <div className="mb-3 flex items-center justify-between rounded-xl px-3 py-2.5 text-xs"
-                style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
-                <div className="flex items-center gap-2">
-                  <StatusOrb level={video.recording ? 'ok' : clips.length ? 'idle' : 'warn'} size={8} pulse={video.recording} />
-                  <span className="text-muted">
-                    {video.recording
-                      ? <><>Recording… </><RecordingElapsed startedAt={video.startedAt} /></>
-                      : clips.length
-                        ? `${clips.length} clip${clips.length === 1 ? '' : 's'} · ${fmtDuration(clipsMs)} · ${fmtBytes(clipsBytes)}`
-                        : 'No mission video yet'}
-                  </span>
-                </div>
-                {clips.length > 0 && !video.recording && (
-                  <div className="flex shrink-0 gap-2">
-                    <button onClick={() => downloadMissionVideo(null, false)} className="font-semibold text-accent">↓ Save</button>
-                    <button onClick={() => { clearMissionRecording(); toast.push({ level: 'ok', title: 'Mission video cleared' }) }}
-                      className="font-semibold text-muted transition-colors hover:text-bad">Clear</button>
-                  </div>
-                )}
-              </div>
-
-              {/* Footer */}
-              <div className="mt-auto flex items-center justify-between border-t border-line pt-3 text-[11px] text-muted">
-                <span>
-                  Live-cam peak: <span className="font-mono tnum text-ink">{trashStats.peak}</span>
-                  {trashStats.updatedAt > 0 && <span className="ml-1">· {fmtClock(trashStats.updatedAt)}</span>}
-                </span>
-                <button
-                  onClick={() => { resetTrashStats(); toast.push({ level: 'ok', title: 'Live-cam count reset' }) }}
-                  className="rounded-md px-2 py-1 font-semibold text-muted transition-colors hover:text-ink">
-                  Reset
-                </button>
-              </div>
-            </TiltCard>
-          </motion.div>
-        )}
-      </AnimatePresence>
+    <div className="sx-kpis">
+      <Kpi label="Plastic found" value={allRows.length} note={types.length ? `${types.length} type${types.length === 1 ? '' : 's'}` : 'none yet'} color="var(--sx-accent)" />
+      <Kpi label="With GPS location" value={locatedCount} note={allRows.length ? `${Math.round((locatedCount / allRows.length) * 100)}% of finds` : '—'} color="var(--sx-ok)" />
+      <Kpi label="Area covered" value={fmtArea(impact.areaCoveredM2)} />
+      <Kpi label="Flight time" value={fmtHours(impact.flightSeconds)} />
+      <Kpi label="Missions flown" value={impact.missionsCompleted} />
     </div>
+
+    <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.65fr)_minmax(0,1fr)]">
+      {/* ── Left: map + list ── */}
+      <div className="flex min-w-0 flex-col gap-4">
+        <Section title="Where it was found" sub={locatedCount ? `${locatedCount} location${locatedCount === 1 ? '' : 's'} on the map` : 'Locations appear as the drone finds plastic'}
+          actions={<>
+            <button type="button" className="sx-btn ghost sm" aria-pressed={showHeat} onClick={() => setShowHeat((v) => !v)}
+              style={showHeat ? { borderColor: 'var(--sx-accent)', color: 'var(--sx-accent-text)', background: 'var(--sx-accent-soft)' } : undefined}>Heatmap</button>
+            <button type="button" className="sx-btn ghost sm" onClick={planFromHotspots} disabled={locatedCount === 0}>Plan from hotspots</button>
+            <button type="button" className="sx-btn ghost sm" onClick={openCollectionRoute} disabled={locatedCount === 0}>Collection route ↗</button>
+          </>} flush>
+          <TrashMap rows={allRows} sightings={sightings} showHeat={showHeat} />
+        </Section>
+
+        <Section title="All detections" sub={rows.length !== allRows.length ? `${rows.length} of ${allRows.length} shown` : `${allRows.length} total`} flush>
+          <div className="flex flex-wrap items-center gap-2 border-b px-[18px] py-3" style={{ borderColor: 'var(--sx-line)' }}>
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by type, e.g. bottle"
+              className="sx-input min-w-[160px] flex-1" style={{ minHeight: 36 }} aria-label="Search detections" />
+            <div className="sx-seg" role="group" aria-label="Filter">
+              {[{ id: 'all', label: 'All' }, { id: 'located', label: 'Located' }, { id: 'pi', label: 'Drone AI' }, { id: 'webcam', label: 'Webcam' }].map((f) => (
+                <button key={f.id} type="button" aria-pressed={filter === f.id} onClick={() => setFilter(f.id)}>{f.label}</button>
+              ))}
+            </div>
+            <select value={sortMode} onChange={(e) => setSortMode(e.target.value)} className="sx-input" style={{ width: 150, minHeight: 36 }} aria-label="Sort">
+              <option value="newest">Newest first</option>
+              <option value="oldest">Oldest first</option>
+              <option value="conf">Most confident</option>
+            </select>
+          </div>
+          <div className="flex max-h-[52vh] flex-col gap-2 overflow-y-auto p-3">
+            {det.loading && rows.length === 0 ? (
+              <Spinner label="Loading detections" />
+            ) : rows.length === 0 ? (
+              allRows.length > 0
+                ? <div className="py-10 text-center text-[14px] text-muted">Nothing matches these filters.</div>
+                : <EmptyState icon="detections" title="No plastic found yet">
+                    Turn on the plastic finder on the Live tab. Every find is saved here with the drone&apos;s GPS position.
+                  </EmptyState>
+            ) : (
+              rows.map((d, i) => (
+                <DetectionRow key={d.key} d={d} n={i + 1}
+                  expanded={expanded === d.key} onToggle={toggleRow} onWhatsApp={onWhatsApp} />
+              ))
+            )}
+          </div>
+          {sightings.length > 0 && (
+            <div className="flex justify-end border-t px-[18px] py-2.5" style={{ borderColor: 'var(--sx-line)' }}>
+              <button type="button" onClick={clearLog} className="sx-btn ghost sm">Clear recorded locations</button>
+            </div>
+          )}
+        </Section>
+      </div>
+
+      {/* ── Right: report, types, impact ── */}
+      <div className="flex min-w-0 flex-col gap-4">
+        <Section title="Report for the authorities" sub="A Word document with charts, a short analysis and every location with a Google Maps link.">
+          <button type="button" className="sx-btn lg w-full" disabled={reporting} onClick={generateReport}>
+            {reporting ? 'Generating…' : `Generate report · ${locatedCount} location${locatedCount === 1 ? '' : 's'}`}
+          </button>
+          <div className="sx-well mt-3 flex items-center justify-between gap-2 px-3 py-2.5 text-[13px]">
+            <div className="flex min-w-0 items-center gap-2">
+              <StatusOrb level={video.recording ? 'ok' : clips.length ? 'idle' : 'warn'} size={8} pulse={video.recording} />
+              <span className="truncate text-muted">
+                {video.recording
+                  ? <>Recording mission video <RecordingElapsed startedAt={video.startedAt} /></>
+                  : clips.length
+                    ? `${clips.length} video clip${clips.length === 1 ? '' : 's'} · ${fmtDuration(clipsMs)} · ${fmtBytes(clipsBytes)}`
+                    : 'No mission video yet (added to the report when there is one)'}
+              </span>
+            </div>
+            {clips.length > 0 && !video.recording && (
+              <div className="flex shrink-0 gap-3">
+                <button type="button" onClick={() => downloadMissionVideo(null, false)} className="font-semibold" style={{ color: 'var(--sx-accent-text)' }}>Save</button>
+                <button type="button" onClick={() => { clearMissionRecording(); toast.push({ level: 'ok', title: 'Mission video cleared' }) }}
+                  className="font-semibold text-muted hover:text-bad">Clear</button>
+              </div>
+            )}
+          </div>
+          <MoreOptions id="report-ai" title="AI writing for the report" hint="optional">
+            <LlmPicker kind="report" />
+            <p className="mt-2 text-[12px] text-muted">
+              Separate from the assistant&apos;s AI and kept only in this browser. Without one, the built-in report is used.
+            </p>
+          </MoreOptions>
+          <div className="mt-3 flex items-center justify-between text-[12.5px] text-muted">
+            <span>Most seen at once on camera: <b className="tnum text-ink">{trashStats.peak}</b>{trashStats.updatedAt > 0 && <> · {fmtClock(trashStats.updatedAt)}</>}</span>
+            <button type="button" className="font-semibold hover:text-ink" onClick={() => { resetTrashStats(); toast.push({ level: 'ok', title: 'Camera count reset' }) }}>Reset</button>
+          </div>
+        </Section>
+
+        <Section title="By type" sub={types.length ? 'How many of each kind of plastic' : undefined}>
+          {types.length ? <TypeBreakdownChart byClass={byClassCounts} /> : <div className="py-3 text-[13.5px] text-muted">The mix of plastic types shows here after the first finds.</div>}
+        </Section>
+
+        <Section title="Impact certificate" sub="A printable certificate of the cleanup so far.">
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className="sx-btn ghost" onClick={() => openCertificatePrintView(buildCertificateHtml({ stats: impact }))}>Open certificate</button>
+            <button type="button" className="sx-btn ghost" onClick={() => { if (window.confirm('Reset the impact totals for this browser?')) resetImpactStats() }}>Reset totals</button>
+          </div>
+        </Section>
+      </div>
+    </div>
+    </Page>
   )
 }

@@ -34,6 +34,7 @@ import { getDroneCrop } from './droneTargets'
 import { BoxTracker } from './track'
 import { MOTION_W, greyOf, estimateShift } from './frameMotion'
 import { PlasticLock, plasticClassIds } from './boatTarget'
+import { createLearner, boxFeatures, cropInfo, learnerEnabled } from './feedbackLearner'
 
 // Detection passes per second. Each pass is tracked, judged and sent to the
 // boat, so this is also how fast the boat learns that plastic is there: at 6
@@ -41,6 +42,31 @@ import { PlasticLock, plasticClassIds } from './boatTarget'
 // in its own loop and never runs two passes at once, so a slower computer
 // simply does fewer passes instead of falling behind.
 const PLASTIC_HZ = 6
+// The Live tab's extra layers (WebcamDetect.jsx), the same values:
+//  * people: the face and person models; a plastic box on a face, or touching
+//    a person at all, is dropped - the boat must never go for a person;
+//  * self-learning: what the operator marked ✖ (not plastic) on the Live tab is
+//    dropped here too ('hide'); a box that looks like one but isn't certain
+//    ('explore') is shown but never moves the boat.
+const HUMAN_EVERY_MS = 350
+const FACE_CONF = 0.7
+const PERSON_CONF = 0.7
+const FACE_SUPPRESS_IOU = 0.2
+const LEARNER_REFRESH_MS = 5000 // pick up new ✔/✖ answers given on the Live tab
+// Long range (Boat tab switch, boat setting camera_long_range): far plastic is
+// a few pixels at full-frame scale, too small for the model. Each pass then also
+// runs the model on ONE zoomed-in piece of the far water (three overlapping
+// pieces, in turn, like the Live tab's long-range scan), so a far item is seen
+// two to three times bigger; each piece's boxes count for LR_TILE_TTL_MS.
+const MATCH_GATES_LOCK = false // true: with a drone picture, only plastic that matches it may lock
+const LR_TILES = 3
+const LR_OVERLAP = 0.35
+const LR_FAR_BAND = 0.6 // the far water: the top 60% of the picture (above the ramp)
+const LR_TILE_TTL_MS = 1500
+// Matching a box this small (pixels, shorter side) is guesswork: no score.
+const MATCH_MIN_PX = 8
+// Below this size a box's match is averaged over more passes (long range).
+const MATCH_SMALL_PX = 24
 const STALL_MS = 6000 // no frame for this long: drop the connection and reconnect
 const GRID_W = 64
 const GRID_H = 24
@@ -50,9 +76,15 @@ let state = initialState()
 let run = null // the current run's private data
 let matchTarget = null // { id, cls }: the drone find (with a picture) the Boat tab shows
 
-/** The Boat tab's drone find to match the camera against when the boat isn't homing. */
+/**
+ * The Boat tab's drone picture to match the camera against when the boat isn't
+ * homing: { id, cls } (the find's stored picture), or with `crop` (a JPEG data
+ * URL) and `key` to match against exactly that picture - the live one.
+ */
 export function setMatchTarget(t) {
-  matchTarget = t?.id ? { id: String(t.id), cls: t.cls || null } : null
+  matchTarget = t?.id
+    ? { id: String(t.id), cls: t.cls || null, crop: t.crop || null, key: t.crop ? String(t.key ?? '') : null }
+    : null
 }
 
 function initialState() {
@@ -116,7 +148,9 @@ function applyLockConfig(r) {
     conf: Math.max(floor, Number(cfg.camera_plastic_conf) || 0.45),
     minHits: Math.max(1, Number(cfg.camera_plastic_hits) || 2),
     lostMs: Math.max(200, (Number(cfg.camera_lock_lost_s) || 1.2) * 1000),
-    maxM: Number(cfg.camera_target_max_m) || 15,
+    maxM: cfg.camera_long_range
+      ? Math.max(Number(cfg.camera_target_max_m) || 15, Number(cfg.camera_long_range_max_m) || 30)
+      : Number(cfg.camera_target_max_m) || 15,
   })
 }
 
@@ -163,6 +197,7 @@ export function startBoatVision({ cfg, sim }) {
     // and keeps that id while the boat drives towards it.
     tracker: new BoxTracker({ matchIou: 0.3, smoothing: 0.5, maxAgeMs: 900, confirmHits: 2, instantScore: 0.8 }),
     lock: new PlasticLock(),
+    lr: { next: 0, boxes: new Map() }, // long range: next piece, each piece's last boxes
     motion: { cv: document.createElement('canvas'), prev: null, w: 0, h: 0 },
   }
   r.sig.width = r.sig.height = SIG
@@ -186,6 +221,8 @@ export function stopBoatVision() {
   try {
     r.plastic?.dispose()
     r.wildlife?.dispose()
+    r.person?.dispose()
+    r.face?.dispose()
   } catch {
     /* already gone */
   }
@@ -204,6 +241,10 @@ async function loadModels(r) {
     // "OTHERS" never does), and how sure it must be.
     r.lock.set({ ids: plasticClassIds(r.plastic.meta), names: r.plastic.meta?.names })
     applyLockConfig(r)
+    r.det = await import('./detector')
+    r.learner = createLearner(r.plastic.meta?.names || [])
+    r.learnerAt = performance.now()
+    loadPeopleModels(r) // in the background: plastic detection starts without waiting
     set({ models: { ...state.models, plastic: 'ready' } })
     r.aiWake?.()
     r.aiWake = null
@@ -212,9 +253,74 @@ async function loadModels(r) {
   }
 }
 
+/** The Live tab's face + person models (people are never plastic). Optional: without them, plastic still runs. */
+async function loadPeopleModels(r) {
+  try {
+    const { createFaceDetector } = await import('./faceDetector')
+    const fd = await createFaceDetector()
+    if (run !== r) return fd.dispose()
+    r.face = fd
+  } catch (e) {
+    console.warn('[boat vision] face model:', e?.message || e)
+  }
+  try {
+    const { createPersonDetector } = await import('./personDetector')
+    const pd = await createPersonDetector()
+    if (run !== r) return pd.dispose()
+    r.person = pd
+  } catch (e) {
+    console.warn('[boat vision] person model:', e?.message || e)
+  }
+}
+
+/**
+ * The Live tab's layers after the plastic model: drop boxes on people, then
+ * let the self-learner (the operator's ✔/✖ answers) drop learned false alarms.
+ * Each box left gets `rl`: 'show' (may move the boat) or 'explore' (unsure: shown only).
+ */
+async function liveLayers(r, src, raw, w, h) {
+  const now = performance.now()
+  if ((r.face || r.person) && now - (r.humanAt || 0) >= HUMAN_EVERY_MS) {
+    r.humanAt = now
+    if (r.face) {
+      try { r.faces = await exclusive(r, () => r.face.detectFaces(src, { confThr: FACE_CONF, iouThr: 0.25 })) } catch { /* keep the last */ }
+    }
+    if (r.person) {
+      try { r.persons = await exclusive(r, () => r.person.detectPersons(src, { confThr: PERSON_CONF, iouThr: 0.3, frame: {} })) } catch { /* keep the last */ }
+    }
+    if (run !== r) return []
+  }
+  if (r.det && r.faces?.length) raw = raw.filter((t) => !r.faces.some((f) => r.det.overlapRatio(f, t) > FACE_SUPPRESS_IOU))
+  // A box that IS a person (their body, their shirt) is dropped. Plastic that
+  // only touches one (a bottle in a hand, an item next to a swimmer) stays
+  // visible but unsure ('explore'): shown with a "?", never locked, so the
+  // boat never drives at a person. Dropping it outright hid every bottle
+  // someone held up to the camera.
+  const touchesPerson = (b) => (r.persons || []).some((p) => r.det.overlapRatio(b, p) > 0)
+  if (r.det && r.persons?.length) raw = r.det.suppressPersonBody(raw, r.persons)
+  const rlOf = (b, action) => (touchesPerson(b) ? 'explore' : action)
+  if (!raw.length || !r.learner || !learnerEnabled()) return raw.map((b) => ({ ...b, rl: rlOf(b, 'show') }))
+  if (now - r.learnerAt > LEARNER_REFRESH_MS) {
+    r.learner = createLearner(r.plastic?.meta?.names || [])
+    r.learnerAt = now
+  }
+  const lrn = r.learner
+  const out = []
+  for (const b of raw) {
+    let d = { action: 'show' }
+    try {
+      const ci = cropInfo(src, b)
+      d = lrn.decide(boxFeatures(b, w, h, lrn.nClasses, ci?.stats), ci?.fp || null)
+    } catch { /* no picture of it: the detector's call */ }
+    if (d.action === 'hide') continue // a learned false alarm
+    out.push({ ...b, rl: rlOf(b, d.action), why: touchesPerson(b) ? 'next to a person' : d.reason })
+  }
+  return out
+}
+
 async function streamLoop(r) {
   while (run === r) {
-    // One connection attempt. A half-open connection (NetBird dropped without a
+    // One connection attempt. A half-open connection (Tailscale dropped without a
     // reset) never delivers another byte, so a watchdog aborts it when frames stop.
     const attempt = new AbortController()
     const stopAll = () => attempt.abort()
@@ -353,10 +459,19 @@ async function runAiPass(r, srcCanvas, frameTime, w, h) {
     hazards = []
   } else {
     if (!r.plastic) return
-    const water = { x1: 0, y1: 0, x2: 1, y2: Math.min(1, (cfg.ramp_top ?? 0.78) + 0.02) }
+    // The whole picture, the scoop's mouth at the bottom included: the item the
+    // boat is going for is followed right into the scoop, so the boat can tell
+    // it is TRAPPED there before the scoop closes (boat_extras.py). A box down
+    // there may only CONTINUE that lock, never start one (see below).
+    const whole = { x1: 0, y1: 0, x2: 1, y2: 1 }
     const conf = Math.max(0.2, r.plastic.meta?.recommendedConf || 0.25)
-    raw = (await exclusive(r, () => r.plastic.detect(srcCanvas, { confThr: conf, iouThr: 0.45, rect: water })))
-      .filter((b) => (b.y1 + b.y2) / 2 < rampY)
+    raw = await exclusive(r, () => r.plastic.detect(srcCanvas, { confThr: conf, iouThr: 0.45, rect: whole }))
+    if (run !== r) return
+    // Zoomed pieces always run: a bottle that is small in the whole picture is
+    // missed at full-frame scale but found in a 2x zoom (long range: far water).
+    raw = await longRangeBoxes(r, srcCanvas, raw, conf, cfg)
+    if (run !== r) return
+    raw = await liveLayers(r, srcCanvas, raw, w, h)
     if (run !== r) return
     hazards = []
   }
@@ -365,23 +480,47 @@ async function runAiPass(r, srcCanvas, frameTime, w, h) {
   // camera shakes) and the boxes are carried with it, so an item keeps its id
   // and the evidence for it from pass to pass instead of looking like a new one
   // each time. Only a box that survives this can move the boat.
+  // A box over a big part of the picture is the model calling the whole scene
+  // (a wall, the sky, glare on the water) plastic, not an item: a real piece in
+  // front of the boat is small in the frame. It is dropped before tracking, so
+  // it can never be matched, lock, run the motor or fire the scoop.
+  // A box bigger than an item on the water usually is (a bottle held close to
+  // the camera) is still shown, but unsure: it can't lock, so it can't move the
+  // boat. Only a box covering most of the picture is dropped as the scene.
+  const maxFrac = Math.min(0.9, Math.max(0.05, Number(cfg.camera_max_box_frac) || 0.25))
+  raw = raw.filter((b) => !wholeScene(b, w, h)).map((b) => (plausibleBox(b, w, h, maxFrac) ? b : { ...b, rl: 'explore' }))
   followShake(r, srcCanvas, w, h)
   tracked = r.tracker.update(raw, performance.now())
+  // Down in the ramp / scoop band only the item already locked is kept: a box
+  // there that was never chased across the water (a part of the boat, a splash)
+  // is not shown, matched or locked.
+  const heldId = r.lock.lock ? String(r.lock.lock.id) : null
+  tracked = tracked.filter((b) => (b.y1 + b.y2) / 2 < rampY || (heldId != null && String(b.id) === heldId))
   targets = tracked.map((b) => ({
     x1: b.x1, y1: b.y1, x2: b.x2, y2: b.y2, score: b.score, label: b.label, id: b.id,
+    ...(b.rl === 'explore' ? { unsure: true } : {}),
     ...(r.sim ? { sim: true } : {}),
   }))
   // 2b. Homing onto a drone find: how well does each box match the drone's crop?
   const homing = r.homing || matchTarget
   if (homing && targets.length) {
-    const ref = await referenceFor(r, homing.id)
+    const ref = await referenceFor(r, homing)
     if (run !== r) return
     const prev = r.prevMatch?.id === homing.id ? r.prevMatch.boxes : []
+    // Boxes from 30% up are compared, so a clear bottle the AI is only 35-45%
+    // sure of still shows its match. The lock (boatTarget.js) still needs the
+    // boat's own camera_plastic_conf before anything moves.
+    const matchConf = Math.max(0.3, Number(r.plastic?.meta?.recommendedConf) || 0)
     targets = targets.map((b) => {
+      if (!(Number(b.score) >= matchConf)) return b
+      const side = Math.min(b.x2 - b.x1, b.y2 - b.y1)
+      if (side < MATCH_MIN_PX) return b // too few pixels to compare (still far): matched when closer
       const sig = ref?.sig ? signature(cropSig(r, srcCanvas, b, w, h)) : null
       const m = matchScore(ref?.sig || null, homing.cls, sig, b.label, Number(b.score))
-      const p = prev.find((q) => iou(q, b) > 0.3)
-      const sm = p ? 0.55 * m.score + 0.45 * p.match : m.score
+      const p = prev.find((q) => Number.isFinite(q.match) && iou(q, b) > 0.3)
+      // A small (far) box's picture is noisy: its score follows more passes.
+      const k = side < MATCH_SMALL_PX ? 0.3 : 0.55
+      const sm = p ? k * m.score + (1 - k) * p.match : m.score
       return { ...b, match: Math.round(sm * 1000) / 1000, matchParts: m.parts }
     })
     r.prevMatch = { id: homing.id, boxes: targets }
@@ -392,7 +531,21 @@ async function runAiPass(r, srcCanvas, frameTime, w, h) {
   // the item is in view (and for a moment after), so a brief glint on another
   // box never makes the boat change its mind. The boat checks all of this again
   // before it moves anything (boat-pi/boat_extras.py, CameraCollect).
-  const lock = tracked ? r.lock.update(tracked, w, h, cfg) : null
+  // With a drone picture to match against (the Boat tab's "Drone saw this", or
+  // the find the boat is homing onto), only plastic that MATCHES it may lock:
+  // a "not a match" box - or one not compared yet (too small, too unsure) -
+  // never runs the motor, the buzzer or the scoop. With no drone picture, any
+  // plastic the camera confirms counts.
+  // An unsure box (the self-learner is asking about it) never moves the boat.
+  let lockable = tracked ? tracked.filter((b) => b.rl !== 'explore') : tracked
+  // Matching is skipped: any plastic the camera confirms runs the motor. The
+  // match scores are still worked out and shown on the Boat tab.
+  if (MATCH_GATES_LOCK && homing && lockable) {
+    const thr = Math.min(0.95, Math.max(0.2, Number(cfg.match_threshold) || 0.55))
+    const ok = new Set(targets.filter((b) => Number.isFinite(b.match) && b.match >= thr).map((b) => b.id))
+    lockable = lockable.filter((b) => ok.has(b.id))
+  }
+  const lock = lockable ? r.lock.update(lockable, w, h, cfg) : null
   const aiMs = Math.round(performance.now() - t0)
   set({ targets, hazards, lock, tracks: trackView(r), aiMs: aiMs > 2 ? aiMs : state.aiMs })
 
@@ -458,6 +611,51 @@ function followShake(r, src, sw, sh) {
   r.tracker.shift(s.dx * (sw / w), s.dy * (sh / h))
 }
 
+/**
+ * Long range: run the model on the next piece of the far water and merge every
+ * piece's recent boxes with the full-frame ones (overlaps become one box).
+ */
+async function longRangeBoxes(r, srcCanvas, full, conf, cfg) {
+  // Long range: the far water in LR_TILES pieces. Otherwise: the whole picture in 2x2 pieces.
+  const far = cfg.camera_long_range ? Math.min(LR_FAR_BAND, cfg.ramp_top ?? 0.78) : 'all'
+  if (!r.lr.tiles || r.lr.far !== far) {
+    const { makeTileGrid } = await import('./detector')
+    r.lr.tiles = far === 'all'
+      ? makeTileGrid(2, 2, LR_OVERLAP)
+      : makeTileGrid(LR_TILES, 1, LR_OVERLAP).map((t) => ({ x1: t.x1, x2: t.x2, y1: 0, y2: far }))
+    r.lr.far = far
+    r.lr.next = 0
+    r.lr.boxes.clear()
+  }
+  const idx = r.lr.next % r.lr.tiles.length
+  r.lr.next = idx + 1
+  try {
+    // A zoomed piece guesses a little more: its boxes must still pass the lock's
+    // confidence before the boat acts, so the floor here only finds candidates.
+    const boxes = await exclusive(r, () => r.plastic.detect(srcCanvas, { confThr: Math.max(0.2, conf * 0.85), iouThr: 0.4, rect: r.lr.tiles[idx] }))
+    r.lr.boxes.set(idx, { boxes, t: performance.now() })
+  } catch {
+    /* one piece missed: the others still count */
+  }
+  const now = performance.now()
+  const recent = [...r.lr.boxes.values()].filter((e) => now - e.t <= LR_TILE_TTL_MS).map((e) => e.boxes)
+  if (!recent.length) return full
+  const { mergeBoxes } = await import('./detector')
+  return mergeBoxes([full, ...recent], 0.4)
+}
+
+/** True for a box over most of the picture: the model calling the whole scene plastic. */
+export function wholeScene(b, w, h) {
+  const bw = (b.x2 - b.x1) / Math.max(1, w), bh = (b.y2 - b.y1) / Math.max(1, h)
+  return bw * bh > 0.6 || (bw > 0.85 && bh > 0.85)
+}
+
+/** False for a box too big to be one item on the water: over `maxFrac` of the frame, or over 70% of its width or height. */
+export function plausibleBox(b, w, h, maxFrac = 0.25) {
+  const bw = (b.x2 - b.x1) / Math.max(1, w), bh = (b.y2 - b.y1) / Math.max(1, h)
+  return bw > 0 && bh > 0 && bw * bh <= maxFrac && bw <= 0.7 && bh <= 0.7
+}
+
 function iou(a, b) {
   const ix = Math.max(0, Math.min(a.x2, b.x2) - Math.max(a.x1, b.x1))
   const iy = Math.max(0, Math.min(a.y2, b.y2) - Math.max(a.y1, b.y1))
@@ -466,12 +664,17 @@ function iou(a, b) {
   return u > 0 ? i / u : 0
 }
 
-/** The drone's crop of a find, as a matcher signature (cached per find). */
-async function referenceFor(r, id) {
-  // Cached per find; no picture yet (still arriving) → try again every 3 s.
-  if (r.ref?.id === id && (r.ref.sig || Date.now() - r.ref.t < 3000)) return r.ref
-  r.ref = { id, sig: null, t: Date.now() }
-  let url = await getDroneCrop(id)
+/**
+ * The drone's crop of a find, as a matcher signature: the given live picture
+ * (`h.crop`), else the find's stored one. Cached per picture; no picture yet
+ * (still arriving) → try again every 3 s.
+ */
+async function referenceFor(r, h) {
+  const id = h.id
+  const key = h.crop ? `${id}#${h.key}` : id
+  if (r.ref?.key === key && (r.ref.sig || Date.now() - r.ref.t < 3000)) return r.ref
+  r.ref = { id, key, sig: null, t: Date.now() }
+  let url = h.crop || await getDroneCrop(id)
   if (!url) {
     try {
       const res = await fetch(boatUrls.liveReference(id), { cache: 'no-store' })
@@ -483,12 +686,13 @@ async function referenceFor(r, id) {
   if (!url) return r.ref
   try {
     const img = await createImageBitmap(await (await fetch(url)).blob())
+    const aspect = img.width / Math.max(1, img.height) // the crop's true shape, before it is squeezed to SIG x SIG
     const cv = document.createElement('canvas')
     cv.width = cv.height = SIG
     const ctx = cv.getContext('2d', { willReadFrequently: true })
     ctx.drawImage(img, 0, 0, SIG, SIG)
     img.close?.()
-    if (r.ref?.id === id) r.ref.sig = signature(ctx.getImageData(0, 0, SIG, SIG))
+    if (r.ref?.key === key) r.ref.sig = signature(ctx.getImageData(0, 0, SIG, SIG), { aspect })
   } catch {
     /* a damaged image: class + score only */
   } finally {
@@ -505,7 +709,9 @@ function cropSig(r, bmp, b, w, h) {
   if (x2 - x1 < 3 || y2 - y1 < 3) return null
   const ctx = r.sig.getContext('2d', { willReadFrequently: true })
   ctx.drawImage(bmp, x1, y1, x2 - x1, y2 - y1, 0, 0, SIG, SIG)
-  return ctx.getImageData(0, 0, SIG, SIG)
+  const data = ctx.getImageData(0, 0, SIG, SIG)
+  data.aspect = (x2 - x1) / (y2 - y1) // the true shape (a bottle is long and thin), before the squeeze
+  return data
 }
 
 function trackView(r) {

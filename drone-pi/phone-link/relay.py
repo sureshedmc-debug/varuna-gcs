@@ -1,11 +1,11 @@
 """
 VARUNA phone relay: passes the drone's MAVLink between the ESP32 and the VARUNA
-backend on the laptop (same Wi-Fi, or NetBird). The ESP32 is either plugged into the phone's USB-C
+backend on the laptop (same Wi-Fi, or Tailscale). The ESP32 is either plugged into the phone's USB-C
 port (esp32_usb_bridge sketch) or on the phone's hotspot (DroneBridge).
 
     USB:   Pixhawk TELEM2 --UART--> ESP32 --USB-C cable--> phone (relay.py --usb-fd, via termux-usb)
     Wi-Fi: Pixhawk TELEM2 --UART--> ESP32 (DroneBridge) --hotspot Wi-Fi, UDP--> phone:14550
-    then:  phone:14551 <--Wi-Fi (or NetBird), UDP-- laptop backend (--connection udpout:<phone IP>:14551)
+    then:  phone:14551 <--Wi-Fi (or Tailscale), UDP-- laptop backend (--connection udpout:<phone IP>:14551)
 
 USB mode is started by relay.sh, through termux-usb, which opens the USB device
 and passes its file descriptor:  termux-usb -r -e "python relay.py --usb-fd" <device>
@@ -48,8 +48,9 @@ import time
 PEER_TIMEOUT_S = 15     # a ground station silent this long is dropped
 STATUS_S = 10           # print a status line this often
 POKE_S = 2              # poke the ESP32 this often until it answers
-# Interfaces that are never the hotspot: loopback, mobile data, VPNs (NetBird is wt0).
-NOT_HOTSPOT = ("lo", "rmnet", "ccmni", "clat", "v4-", "tun", "wt", "dummy", "ip6", "sit", "radio", "p2p")
+# Interfaces that are never the hotspot: loopback, mobile data, VPNs (Tailscale is
+# tun0 on Android, tailscale0 on Linux).
+NOT_HOTSPOT = ("lo", "rmnet", "ccmni", "clat", "v4-", "tun", "tailscale", "dummy", "ip6", "sit", "radio", "p2p")
 
 
 def interfaces_ioctl():

@@ -110,6 +110,77 @@
         "--strictPort"
       ],
       "port": 5175
+    },
+    {
+      "name": "boat-ai-live",
+      "runtimeExecutable": "py",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8093",
+        "--bind",
+        "127.0.0.1",
+        "--directory",
+        "boat-r4/ai"
+      ],
+      "port": 8093
+    },
+    {
+      "name": "boat-design",
+      "runtimeExecutable": "py",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8094",
+        "--bind",
+        "127.0.0.1",
+        "--directory",
+        "boat-r4/design"
+      ],
+      "port": 8094
+    },
+    {
+      "name": "site-main-dist",
+      "runtimeExecutable": "py",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8095",
+        "--bind",
+        "127.0.0.1",
+        "--directory",
+        "C:/Users/Dell/AppData/Local/Temp/claude/ad8201743ed8d96f/e2c81472-367f-45a5-bede-176ef9b4756a/scratchpad/site-main/dist"
+      ],
+      "port": 8095
+    },
+    {
+      "name": "boat-scratch-sim",
+      "runtimeExecutable": "py",
+      "runtimeArgs": [
+        "boat-pi/boat_extras.py",
+        "--sim",
+        "--port",
+        "8091",
+        "--host",
+        "127.0.0.1"
+      ],
+      "port": 8091
+    },
+    {
+      "name": "varuna-ui",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "C:/Users/Dell/AppData/Local/Temp/claude/ad8201743ed8d96f/e2c81472-367f-45a5-bede-176ef9b4756a/scratchpad/run-ui.cjs"
+      ],
+      "port": 5177
+    },
+    {
+      "name": "captain-sandbox",
+      "runtimeExecutable": "py",
+      "runtimeArgs": [
+        "boat-r4/ai/sandbox.py"
+      ],
+      "port": 8094
     }
   ]
 }

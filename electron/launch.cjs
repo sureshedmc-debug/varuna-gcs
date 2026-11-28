@@ -26,7 +26,8 @@ const LOCAL_PORT = 5173
 const LOCAL_URL  = `http://localhost:${LOCAL_PORT}/`
 
 function runElectron(extraEnv = {}) {
-  const env = { ...process.env, ...extraEnv }
+  // Started from the project folder: keep the same operator records as `npm run dev`.
+  const env = { VARUNA_DATA_DIR: path.join(root, 'data'), ...process.env, ...extraEnv }
   delete env.ELECTRON_RUN_AS_NODE
   return spawn(electronBinary, [root], { stdio: 'inherit', env, windowsHide: false })
 }

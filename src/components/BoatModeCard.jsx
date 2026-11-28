@@ -15,7 +15,7 @@ const MODES = [
   { id: 'HOLD', label: 'Hold', gps: false, hint: 'Stop: motors to neutral' },
   { id: 'LOITER', label: 'Loiter', gps: true, hint: 'Stay on this spot' },
   { id: 'GUIDED', label: 'Guided', gps: true, hint: 'Go to points the app sends (collection)' },
-  { id: 'AUTO', label: 'Auto', gps: true, hint: 'Run the mission on the Pixhawk' },
+  { id: 'AUTO', label: 'Auto', gps: true, hint: 'Run the mission on the boat brain' },
   { id: 'RTL', label: 'RTL', gps: true, hint: 'Return to launch' },
   { id: 'SMART_RTL', label: 'SmartRTL', gps: true, hint: 'Return the way it came' },
 ]

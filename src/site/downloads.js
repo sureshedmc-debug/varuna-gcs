@@ -67,6 +67,11 @@ export function useDownloads() {
   return { loading: rel === undefined, version: rel?.version || '', date: rel?.date || '', page: rel?.page || RELEASES, android, windows }
 }
 
+/** Downloads are for visitors signed in with a Google (Gmail) account. */
+export const canDownload = (user) => !!user && (user.provider === 'google' || /^G-/.test(user.userId || ''))
+/** The address the Google sign-in returns to, which reopens the download dialog. */
+export const AFTER_SIGN_IN = 'get-app'
+
 export const mb = (bytes) => (bytes ? `${Math.round(bytes / 1048576)} MB` : '')
 
 // Open / close the download dialog from anywhere on the site.

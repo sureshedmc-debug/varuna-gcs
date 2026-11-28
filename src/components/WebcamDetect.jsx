@@ -30,6 +30,7 @@ import {
 // One auto-alert at most every this many seconds, no matter how many frames
 // still contain a big dump. Prevents spamming the email channel.
 const ALERT_COOLDOWN_MS = 60000
+const PAINT_IDLE_MS = 33      // drone view with no new frame: repaint (boxes gliding) at most ~30x/s
 
 const ACCENT = '#3b82f6'        // generic / fallback
 const HUMAN_COLOR = '#FFD60A'
@@ -222,6 +223,11 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource: sourceProp
   // times a second when a detection pass ends.
   const dispRef        = useRef(new Map())   // track id -> { x1,y1,x2,y2, score, a (opacity), box }
   const lastDrawRef    = useRef(0)
+  // Drone video: paint when a new frame is on the stream canvas, else at most
+  // every PAINT_IDLE_MS (box animation, MJPEG) — not on every 60/120 Hz screen
+  // frame, which weak phones and laptops can't afford.
+  const paintAtRef     = useRef(0)
+  const paintedShotRef = useRef(null)
   const detGapRef      = useRef(150)         // ms between detection passes (average)
   const lastDetRef     = useRef(0)
   // Which detection loop is the current one. stop() + start() (switching
@@ -655,6 +661,12 @@ export default function WebcamDetect({ confThr = 0.15, defaultSource: sourceProp
   function draw() {
     const cv=canvasRef.current, el=srcElRef.current
     if(!cv||!el) return
+    if(sourceRef.current!=='webcam'){
+      const t=performance.now(), shot=el===streamCanvasRef.current?h264Ref.current?.frame()??null:null
+      const fresh=shot!==null&&shot!==paintedShotRef.current
+      if(!fresh&&t-paintAtRef.current<PAINT_IDLE_MS){if(runningRef.current)rafRef.current=requestAnimationFrame(draw);return}
+      paintAtRef.current=t; paintedShotRef.current=shot
+    }
     const ctx=cv.getContext('2d'), cw=cv.width, ch=cv.height
     ctx.clearRect(0,0,cw,ch)
     const [vw,vh]=srcSize(el)

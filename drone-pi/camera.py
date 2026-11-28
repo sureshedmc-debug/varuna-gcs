@@ -74,6 +74,8 @@ STALL_S = 10          # restart a capture process that sends nothing for this lo
 PROC_STALL_S = 1.0    # ...or, once its frames were flowing, that goes quiet this long
 RETRY_S = 0.5         # a capture that ended: start it again after this
 NO_CAMERA_RETRY_S = 1.0  # no camera / every setting failed: look again after this
+H264_RETRY_S = 15     # on an MJPEG fallback after H.264 worked: go back to try H.264 this often
+                      # (the ground station's RTP stream is H.264 only)
 IDLE_S = 30           # camera off this long after the last viewer left (less heat); back on in ~2 s
 START_WAIT_S = 8      # how long a snapshot waits for the camera to come out of standby
 PHONE_PROBE_S = 1.0   # the phone camera's server must accept a connection this fast
@@ -871,6 +873,9 @@ class CameraManager:
         self.started_at = None
         self._setting = None       # the settings the capture was started with (_setting_key)
         self._failed_at = {}       # source → when every setting of it last failed
+        self._worked = set()       # capture settings (names) that have produced frames since start
+        self._retried = False      # a setting that worked before failed once: tried it once more
+        self._back_to_best_at = None   # MJPEG fallback: end it at this time to try H.264 again
         self.codec = None          # "h264" or "mjpeg": what the running capture sends
         self._sizes = deque(maxlen=120)                  # (time, bytes) of recent frames
         self._h264 = deque(maxlen=H264_KEEP)             # (seq, keyframe, capture time µs, Annex-B data)
@@ -1105,11 +1110,29 @@ class CameraManager:
             name, res, cmd, fmt = attempts[attempt_index % len(attempts)]
             self.codec = fmt
             self._setting = self._setting_key()
+            # Running a fallback while the best (H.264) setting has worked before
+            # (it failed once - encoder or webcam still busy after a restart):
+            # end the fallback now and then to try the best one again.
+            best = attempts[0]
+            self._back_to_best_at = (time.time() + H264_RETRY_S
+                                     if attempt_index % len(attempts) and best[3] == "h264" and best[0] in self._worked
+                                     else None)
             ok = self._capture(name, res, cmd, fmt)
+            self._back_to_best_at = None
+            if ok:
+                self._worked.add(name)
+                self._retried = False
             if self._stop.is_set():
                 break
             if self._setting_changed() or self._idle():
+                attempt_index = 0                  # next start: the best setting first
                 continue                           # settings changed in the app, or nobody watching
+            if not ok and name in self._worked and not self._retried:
+                # It worked before: a busy device right after a restart. Once more, then fall back.
+                self._retried = True
+                log.info("Camera: %s worked before - trying it once more", name)
+                self._stop.wait(1.0)
+                continue
             if not ok:
                 attempt_index += 1                 # this setting doesn't work: try the next one
                 if attempt_index % len(attempts) == 0:
@@ -1264,6 +1287,9 @@ class CameraManager:
             for frame in iter_jpegs(stream, self._stop):
                 self._publish(ensure_dht(frame))
                 got += 1
+                if self._back_to_best_at and time.time() >= self._back_to_best_at:
+                    log.info("Camera: MJPEG fallback - trying H.264 again")
+                    break
         self._kill()
         if errlines:
             self.last_error = " ".join(errlines)[-300:]

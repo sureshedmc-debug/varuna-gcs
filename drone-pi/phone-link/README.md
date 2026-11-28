@@ -35,14 +35,17 @@ by itself and follows it if its address changes; VARUNA Cam shows the address it
 is using (for example 192.168.1.3). Nothing to type in, and the video crosses
 the Wi-Fi directly, which is what keeps the picture close to live.
 
-**NetBird (only when the drone is somewhere else):** if the phone is also on
-your NetBird network, the laptop asks its peers too and can reach the drone
-over mobile data from anywhere. A local address always wins when there is one,
-so having NetBird on the phone never slows the normal case down. To pin one
-address, set `VARUNA_NETBIRD_PHONES`, or put the phone's 100.x address in
-`drone-pi/phone-link/phone_ip.txt`. Check what NetBird can see with
-`py boat-pi/netbird.py`. (The BOAT's phone is the other way round — it is
-normally reached over NetBird; see `boat-pi/README.md`.)
+**Tailscale (anywhere, over mobile data):** log the phone and the laptop in
+to the same Tailscale account and name the phone **varuna-drone-cam** in the
+admin console. `start_tailscale.bat` (or `start_laptop_backend.bat` with no IP)
+then finds the phone by that name with `find_phone_tailscale.py`, writes it to
+`phone_ip.txt` and starts the backend. It never picks the boat phone
+(`varuna-boat`). As a backup, type the laptop's Tailscale name in VARUNA Cam's
+"Laptop Tailscale address" box: the phone then announces itself and
+`tailnet_link.py` hears it. To pin one address, put the phone's 100.x address in
+`drone-pi/phone-link/phone_ip.txt`. Check what Tailscale can see with
+`py drone-pi/tailscale.py`. (The boat's phone works the same way under the name
+`varuna-boat`; see `boat-pi/README.md`.)
 
 **Without the telemetry link (phone GPS):** the ESP32 and `relay.py` can be left
 out. VARUNA Cam 2.2 or newer then gives the drone's position from the phone's own
@@ -316,7 +319,8 @@ DroneBridge and start the relay with `--esp <that IP>`.
 
 ## Far away, over the internet (optional)
 
-Off your Wi-Fi, NetBird can carry the same link over 4G: install NetBird on the
-phone and the laptop, sign both in to the same network, and give
-`start_laptop_backend.bat` the phone's NetBird IP (100.x.x.x) instead. Lock
-NetBird in Recents too, since vivo closes it in the background.
+Off your Wi-Fi, Tailscale carries the same link over 4G: install Tailscale on
+the phone and the laptop, sign both in to the same account, name the phone
+`varuna-drone-cam`, and run `start_tailscale.bat`. Lock Tailscale in Recents
+too, and set its battery use to Unrestricted, since vivo closes it in the
+background.

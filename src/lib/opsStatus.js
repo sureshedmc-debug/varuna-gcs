@@ -54,5 +54,8 @@ export function useOpsStatus(enabled = true) {
 }
 
 export const fmt8 = (v) => (Number.isFinite(v) ? Number(v).toFixed(8) : '—')
-export const fmtM = (v) => (Number.isFinite(v) ? (v < 10 ? v.toFixed(1) : Math.round(v)) + ' m' : '—')
+export const fmtM = (v) => (!Number.isFinite(v) ? '—'
+  : v >= 100000 ? `${Math.round(v / 1000).toLocaleString()} km`
+  : v >= 1000 ? `${(v / 1000).toFixed(1)} km`
+  : (v < 10 ? v.toFixed(1) : Math.round(v)) + ' m')
 export const clock = (t) => (t ? new Date(t * 1000).toLocaleTimeString([], { hour12: false }) : '')

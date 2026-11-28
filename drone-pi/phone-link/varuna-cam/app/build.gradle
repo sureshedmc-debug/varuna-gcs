@@ -1,5 +1,5 @@
 // VARUNA Cam: streams the phone's camera as MJPEG on port 8080 (http://<phone>:8080/video)
-// for the VARUNA drone backend, over NetBird. Build:  gradlew assembleDebug
+// for the VARUNA drone backend, over Tailscale. Build:  gradlew assembleDebug
 plugins {
     id 'com.android.application'
 }
@@ -12,8 +12,20 @@ android {
         applicationId 'ai.varuna.cam'
         minSdk 26
         targetSdk 34
-        versionCode 13
-        versionName '2.6.0'
+        versionCode 15
+        versionName '2.8.0'
+        ndk {
+            abiFilters 'armeabi-v7a', 'arm64-v8a'
+        }
+    }
+
+    // The USB webcam's video transfers (uvc_stream.c).
+    ndkVersion '28.2.13676358'
+    externalNativeBuild {
+        cmake {
+            path 'src/main/cpp/CMakeLists.txt'
+            version '3.22.1'
+        }
     }
 
     compileOptions {

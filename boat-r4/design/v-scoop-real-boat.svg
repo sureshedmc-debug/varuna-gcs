@@ -1,0 +1,187 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1010" viewBox="0 0 1600 1010" font-family="Segoe UI, Arial, sans-serif">
+  <defs>
+    <pattern id="mesh" width="12" height="12" patternUnits="userSpaceOnUse">
+      <rect width="12" height="12" fill="#eef3f5"/>
+      <path d="M0 0H12M0 0V12" stroke="#7d8f97" stroke-width="1.4"/>
+    </pattern>
+    <clipPath id="hullSide"><rect x="1000" y="300" width="400" height="120" rx="34"/></clipPath>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#263238"/>
+    </marker>
+  </defs>
+  <rect width="1600" height="1010" fill="#ffffff"/>
+
+  <!-- title -->
+  <text x="40" y="52" font-size="34" font-weight="700" fill="#102027">VARUNA boat: V-scoop upgrade for the real foam hull</text>
+  <text x="40" y="84" font-size="19" fill="#455a64">No hollow middle. A tilting V-shaped mesh scoop on the bow, two BLDC motors up in the air at the stern with air fins.</text>
+
+  <!-- ================= TOP VIEW ================= -->
+  <rect x="30" y="100" width="780" height="890" rx="14" fill="#f7fafb" stroke="#d5dee2"/>
+  <text x="50" y="132" font-size="20" font-weight="700" fill="#0d8a8a">TOP VIEW</text>
+  <line x1="90" y1="400" x2="90" y2="310" stroke="#263238" stroke-width="3" marker-end="url(#arr)"/>
+  <text x="64" y="422" font-size="16" fill="#263238">forward</text>
+
+  <!-- floating waste ahead -->
+  <g>
+    <ellipse cx="300" cy="125" rx="30" ry="10" fill="#9fd6f2" stroke="#4a8fb0" transform="rotate(-20 300 125)"/>
+    <ellipse cx="520" cy="138" rx="26" ry="9" fill="#bfe39a" stroke="#6a9a3a" transform="rotate(25 520 138)"/>
+    <path d="M640 118 q10 -10 20 0 t20 0" stroke="#3f8f3f" stroke-width="4" fill="none"/>
+    <text x="688" y="124" font-size="14" fill="#3f8f3f">duckweed</text>
+  </g>
+
+  <!-- V-scoop (wide mouth at the front, narrow back at the hinge) -->
+  <polygon points="350,400 490,400 610,170 230,170" fill="url(#mesh)" stroke="#455a64" stroke-width="6" stroke-linejoin="round"/>
+  <line x1="230" y1="170" x2="610" y2="170" stroke="#f2b632" stroke-width="8" stroke-linecap="round"/>
+  <line x1="350" y1="400" x2="490" y2="400" stroke="#263238" stroke-width="7"/>
+  <circle cx="350" cy="400" r="7" fill="#263238"/><circle cx="490" cy="400" r="7" fill="#263238"/>
+  <!-- catch at the narrow back -->
+  <ellipse cx="400" cy="372" rx="26" ry="9" fill="#9fd6f2" stroke="#4a8fb0" transform="rotate(10 400 372)"/>
+  <ellipse cx="445" cy="360" rx="22" ry="8" fill="#f4f4f4" stroke="#999" transform="rotate(-30 445 360)"/>
+  <rect x="418" y="335" width="22" height="12" fill="#e57373" stroke="#b71c1c" transform="rotate(15 429 341)"/>
+  <!-- optional brushes -->
+  <circle cx="230" cy="170" r="28" fill="none" stroke="#4fb3d9" stroke-width="3" stroke-dasharray="6 5"/>
+  <circle cx="610" cy="170" r="28" fill="none" stroke="#4fb3d9" stroke-width="3" stroke-dasharray="6 5"/>
+
+  <!-- hull: rounded rectangle, orange rim, white deck, covered electronics bay -->
+  <rect x="270" y="400" width="300" height="480" rx="80" fill="#FF9933" stroke="#c96a12" stroke-width="3"/>
+  <rect x="284" y="414" width="272" height="452" rx="68" fill="#ffffff"/>
+  <rect x="312" y="480" width="216" height="260" rx="36" fill="#e9eef0" stroke="#9fb0b8" stroke-width="2" stroke-dasharray="8 6"/>
+  <text x="420" y="590" font-size="16" fill="#37474f" text-anchor="middle">electronics bay</text>
+  <text x="420" y="612" font-size="16" fill="#37474f" text-anchor="middle">(lid on top)</text>
+  <text x="420" y="640" font-size="14" fill="#607d8b" text-anchor="middle">ESP32 · battery · relays</text>
+  <!-- phone + scoop servo on the bow deck -->
+  <rect x="400" y="424" width="40" height="18" rx="3" fill="#111418"/>
+  <rect x="470" y="420" width="30" height="18" rx="3" fill="#1565c0"/>
+  <line x1="485" y1="420" x2="470" y2="385" stroke="#1565c0" stroke-width="3"/>
+
+  <!-- stern: motors on pylons, props (edge-on), air fins on a tie bar -->
+  <g>
+    <rect x="333" y="772" width="24" height="30" fill="#b8c2c8"/><rect x="483" y="772" width="24" height="30" fill="#b8c2c8"/>
+    <circle cx="345" cy="800" r="16" fill="#202428"/><circle cx="495" cy="800" r="16" fill="#202428"/>
+    <rect x="293" y="818" width="104" height="16" rx="6" fill="none" stroke="#90a4ae" stroke-width="2"/>
+    <rect x="443" y="818" width="104" height="16" rx="6" fill="none" stroke="#90a4ae" stroke-width="2"/>
+    <line x1="300" y1="826" x2="390" y2="826" stroke="#e0702a" stroke-width="7" stroke-linecap="round"/>
+    <line x1="450" y1="826" x2="540" y2="826" stroke="#e0702a" stroke-width="7" stroke-linecap="round"/>
+    <rect x="341" y="842" width="8" height="54" fill="#0d8a8a"/><rect x="491" y="842" width="8" height="54" fill="#0d8a8a"/>
+    <line x1="345" y1="852" x2="495" y2="852" stroke="#1565c0" stroke-width="3"/>
+  </g>
+
+  <!-- top view callouts -->
+  <g font-size="16" fill="#263238">
+    <line x1="620" y1="200" x2="660" y2="230" stroke="#263238"/>
+    <text x="664" y="236" font-weight="700">V-scoop</text>
+    <text x="664" y="256">mesh floor + sides</text>
+    <text x="664" y="276">12–15 mm holes</text>
+    <text x="664" y="300">mouth ≈ 1.3 × hull W</text>
+    <text x="664" y="320">length ≈ 0.8 × W</text>
+    <text x="664" y="340">back ≈ 0.5 × W</text>
+    <line x1="612" y1="170" x2="660" y2="160" stroke="#f2b632" stroke-width="2"/>
+    <text x="664" y="166">rubber lip</text>
+    <line x1="497" y1="404" x2="660" y2="410" stroke="#263238"/>
+    <text x="664" y="408" font-weight="700">hinge at the bow</text>
+    <text x="664" y="428">scoop tilts up here</text>
+    <line x1="500" y1="430" x2="660" y2="462" stroke="#1565c0"/>
+    <text x="664" y="468">scoop servo</text>
+    <text x="664" y="488">+ pushrod (GPIO26)</text>
+    <line x1="400" y1="434" x2="200" y2="470" stroke="#111418"/>
+    <text x="60" y="476">phone (camera, GPS)</text>
+    <line x1="203" y1="170" x2="120" y2="215" stroke="#4fb3d9"/>
+    <text x="44" y="236">optional brushes</text>
+    <text x="44" y="256">(keep off in weeds)</text>
+    <line x1="560" y1="826" x2="610" y2="790" stroke="#e0702a"/>
+    <text x="614" y="788" font-weight="700">2 BLDC motors in the air</text>
+    <text x="614" y="808">same signal in manual</text>
+    <line x1="500" y1="880" x2="610" y2="900" stroke="#0d8a8a"/>
+    <text x="614" y="900" font-weight="700">air fins, 1 servo</text>
+    <text x="614" y="920">(tie bar)</text>
+    <text x="60" y="560">rounded-rectangle</text>
+    <text x="60" y="580">foam hull</text>
+    <text x="60" y="600">(no hole through it)</text>
+  </g>
+  <text x="50" y="962" font-size="15" fill="#455a64">Sizes are proportions of your hull width, so they fit whatever your foam hull measures.</text>
+
+  <!-- ================= SIDE VIEW ================= -->
+  <rect x="830" y="100" width="740" height="460" rx="14" fill="#ffffff" stroke="#d5dee2"/>
+  <text x="850" y="132" font-size="20" font-weight="700" fill="#0d8a8a">SIDE VIEW</text>
+  <path d="M831 380H1569V545a14 14 0 0 1-14 14H845a14 14 0 0 1-14-14z" fill="#d6edf5"/>
+  <line x1="831" y1="380" x2="1569" y2="380" stroke="#4a8fb0" stroke-width="2" stroke-dasharray="10 6"/>
+  <text x="845" y="374" font-size="15" fill="#4a8fb0">waterline</text>
+
+  <!-- rooted weed below the lip -->
+  <path d="M1505 556 C1490 520 1520 500 1500 470 C1485 445 1510 430 1498 410" stroke="#3f8f3f" stroke-width="5" fill="none"/>
+  <path d="M1530 556 C1545 525 1520 505 1535 480 C1548 460 1528 445 1536 425" stroke="#3f8f3f" stroke-width="4" fill="none"/>
+
+  <!-- hull with saffron / white / green bands -->
+  <g clip-path="url(#hullSide)">
+    <rect x="1000" y="300" width="400" height="34" fill="#FF9933"/>
+    <rect x="1000" y="334" width="400" height="40" fill="#ffffff"/>
+    <rect x="1000" y="374" width="400" height="46" fill="#138808"/>
+  </g>
+  <rect x="1000" y="300" width="400" height="120" rx="34" fill="none" stroke="#5d4037" stroke-width="2"/>
+
+  <!-- motor on pylons, prop edge-on, air fin behind -->
+  <line x1="1060" y1="300" x2="1072" y2="206" stroke="#90a4ae" stroke-width="6"/>
+  <line x1="1110" y1="300" x2="1078" y2="206" stroke="#90a4ae" stroke-width="6"/>
+  <rect x="1052" y="186" width="44" height="26" rx="6" fill="#202428"/>
+  <rect x="1036" y="146" width="12" height="108" rx="4" fill="none" stroke="#90a4ae" stroke-width="2"/>
+  <line x1="1042" y1="152" x2="1042" y2="248" stroke="#e0702a" stroke-width="7" stroke-linecap="round"/>
+  <rect x="984" y="166" width="40" height="70" rx="3" fill="#0d8a8a"/>
+  <line x1="1018" y1="156" x2="1018" y2="300" stroke="#90a4ae" stroke-width="3"/>
+  <path d="M1030 200 h-70" stroke="#7cc8f2" stroke-width="3" stroke-dasharray="6 6" marker-end="url(#arr)"/>
+
+  <!-- phone mast -->
+  <line x1="1370" y1="300" x2="1370" y2="232" stroke="#90a4ae" stroke-width="4"/>
+  <rect x="1360" y="196" width="22" height="40" rx="3" fill="#111418"/>
+
+  <!-- V-scoop raised (holding the catch) -->
+  <g transform="rotate(-38 1400 307)">
+    <polygon points="1400,290 1545,350 1545,396 1400,324" fill="url(#mesh)" fill-opacity="0.35" stroke="#455a64" stroke-width="3" stroke-dasharray="9 6"/>
+  </g>
+  <!-- V-scoop lowered (collecting) -->
+  <polygon points="1400,290 1545,350 1545,396 1400,324" fill="url(#mesh)" stroke="#455a64" stroke-width="4" stroke-linejoin="round"/>
+  <line x1="1536" y1="396" x2="1550" y2="396" stroke="#f2b632" stroke-width="7" stroke-linecap="round"/>
+  <circle cx="1400" cy="307" r="8" fill="#263238"/>
+  <!-- servo + pushrod -->
+  <rect x="1384" y="280" width="28" height="18" rx="3" fill="#1565c0"/>
+  <line x1="1404" y1="284" x2="1462" y2="318" stroke="#1565c0" stroke-width="3"/>
+  <!-- bottle floating into the scoop -->
+  <ellipse cx="1515" cy="376" rx="24" ry="8" fill="#9fd6f2" stroke="#4a8fb0"/>
+  <rect x="1537" y="372" width="8" height="8" fill="#d8432b"/>
+
+  <!-- side view callouts -->
+  <g font-size="16" fill="#263238">
+    <text x="1070" y="140" font-weight="700">BLDC motor + prop up in the air</text>
+    <text x="850" y="190" font-weight="700">air fin</text>
+    <text x="850" y="210">turns the</text>
+    <text x="850" y="230">propwash</text>
+    <text x="1180" y="244" font-weight="700">scoop raised ~40°:</text>
+    <text x="1180" y="264">catch held out of the</text>
+    <text x="1180" y="284">water, water drains</text>
+    <line x1="1340" y1="262" x2="1430" y2="230" stroke="#455a64" stroke-dasharray="4 4"/>
+    <text x="1200" y="478" font-weight="700">scoop lowered = collecting</text>
+    <text x="1200" y="498">lip only 2–3 cm under the surface</text>
+    <line x1="1400" y1="484" x2="1540" y2="402" stroke="#455a64"/>
+    <text x="1200" y="530" fill="#2e6b2e">rooted weeds pass under the lip</text>
+    <text x="1200" y="360" fill="#37474f" font-weight="700" text-anchor="middle">foam hull (saffron · white · green)</text>
+  </g>
+
+  <!-- ================= WEEDS ================= -->
+  <rect x="830" y="578" width="740" height="412" rx="14" fill="#f1f8ef" stroke="#bfd8b6"/>
+  <text x="850" y="612" font-size="21" font-weight="700" fill="#2e6b2e">Keep harmless weeds out, take only the plastic</text>
+  <g font-size="16.5" fill="#1b2e1b">
+    <text x="850" y="646"><tspan font-weight="700">1. Mesh with 12–15 mm holes.</tspan> Duckweed, algae and small leaves wash</text>
+    <text x="874" y="667">through it; bottles, cups, wrappers and bags stay in.</text>
+    <text x="850" y="697"><tspan font-weight="700">2. Shallow lip, 2–3 cm under water.</tspan> Plastic floats on top; rooted</text>
+    <text x="874" y="718">and sunken weeds slide under the scoop.</text>
+    <text x="850" y="748"><tspan font-weight="700">3. Lower the scoop only when the camera sees plastic.</tspan> Otherwise it stays</text>
+    <text x="874" y="769">raised and the boat drives over weed beds empty.</text>
+    <text x="850" y="799"><tspan font-weight="700">4. Shake-out.</tspan> Before holding the catch, lift and drop the scoop twice:</text>
+    <text x="874" y="820">loose weed falls back out through the mesh, plastic stays.</text>
+    <text x="850" y="850"><tspan font-weight="700">5. Smooth, rounded V edges and no brushes in weedy water.</tspan> Strands slide</text>
+    <text x="874" y="871">off instead of hooking or winding up on a brush.</text>
+    <text x="850" y="901"><tspan font-weight="700">6. Go slow near weeds (≤ 0.3 m/s).</tspan> They bend away instead of piling</text>
+    <text x="874" y="922">into the V.</text>
+    <text x="850" y="952"><tspan font-weight="700">7. Teach the camera a "weed" class</tspan> and steer around weed patches;</text>
+    <text x="874" y="973">mark big weed beds as no-go zones on the mission map.</text>
+  </g>
+</svg>

@@ -23,9 +23,10 @@
 // need to be real-time.
 
 import { loadOrt, createSession } from './detector'
+import { pixelsToInput } from './nativeAI.js'
+import { letterbox } from './framePrep.js'
 
 const IN = 320
-const PAD_RGB = [114, 114, 114]
 export const BOTTLE_CLASS = 39 // COCO class id for 'bottle'
 
 export async function createCocoDetector(onProgress) {
@@ -35,30 +36,7 @@ export async function createCocoDetector(onProgress) {
   const inputName = session.inputNames[0]
   const outputName = session.outputNames[0]
 
-  const cv = document.createElement('canvas')
-  cv.width = IN
-  cv.height = IN
-  const cx = cv.getContext('2d', { willReadFrequently: true })
   const buf = new Float32Array(3 * IN * IN)
-
-  function preprocess(source, sw, sh) {
-    const ratio = Math.min(IN / sw, IN / sh)
-    const nw = Math.round(sw * ratio)
-    const nh = Math.round(sh * ratio)
-    const padX = Math.floor((IN - nw) / 2)
-    const padY = Math.floor((IN - nh) / 2)
-    cx.fillStyle = `rgb(${PAD_RGB[0]},${PAD_RGB[1]},${PAD_RGB[2]})`
-    cx.fillRect(0, 0, IN, IN)
-    cx.drawImage(source, 0, 0, sw, sh, padX, padY, nw, nh)
-    const { data } = cx.getImageData(0, 0, IN, IN)
-    const area = IN * IN
-    for (let i = 0; i < area; i++) {
-      buf[i] = data[i * 4] / 255
-      buf[area + i] = data[i * 4 + 1] / 255
-      buf[area * 2 + i] = data[i * 4 + 2] / 255
-    }
-    return { ratio, padX, padY }
-  }
 
   /** Detect all 80 COCO classes; caller separates bottle (BOTTLE_CLASS) from
    * everything else. Class-agnostic NMS — good enough for verification use. */
@@ -66,8 +44,9 @@ export async function createCocoDetector(onProgress) {
     const sw = source.videoWidth || source.width || source.naturalWidth
     const sh = source.videoHeight || source.height || source.naturalHeight
     if (!sw || !sh) return []
-    const { ratio, padX, padY } = preprocess(source, sw, sh)
-    const tensor = new ort.Tensor('float32', buf, [1, 3, IN, IN])
+    // Letterboxed off the page's thread (framePrep.js): no stall here.
+    const { data: pixels, ratio, padX, padY } = await letterbox(source, { cx1: 0, cy1: 0, cw: sw, ch: sh }, IN)
+    const tensor = pixelsToInput(ort, session, pixels, IN, buf)
     const result = await session.run({ [inputName]: tensor })
     const out = result[outputName]
     const data = out.getData ? await out.getData() : out.data

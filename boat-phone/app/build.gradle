@@ -1,6 +1,7 @@
 // VARUNA Boat Link: the phone on the boat. Pixhawk over USB OTG <-> Wi-Fi
 // (TCP 5760, like the old ESP32 bridge), the phone's GPS into the Pixhawk
-// (GPS_INPUT), and the phone's camera as MJPEG on port 8080.
+// (GPS_INPUT), and the phone's camera as MJPEG on port 8080. 2.4.0: the trained AI
+// captain (assets/captain.bin, copied from boat-r4/ai/out at every build), watch only or full control.
 // Build: gradlew assembleDebug  ->  app/build/outputs/apk/debug/app-debug.apk
 plugins {
     id 'com.android.application'
@@ -14,8 +15,8 @@ android {
         applicationId 'ai.varuna.boatlink'
         minSdk 24
         targetSdk 34
-        versionCode 1
-        versionName '1.0.0'
+        versionCode 7
+        versionName '2.4.1'
     }
 
     buildTypes {
@@ -29,3 +30,12 @@ android {
         targetCompatibility JavaVersion.VERSION_17
     }
 }
+
+// The newest exported captain (boat-r4/ai/export.py -> out/captain.bin) goes into the app at every build.
+def captainBin = file("../../boat-r4/ai/out/captain.bin")
+tasks.register('copyCaptain', Copy) {
+    from(captainBin)
+    into("src/main/assets")
+    onlyIf { captainBin.exists() }
+}
+preBuild.dependsOn('copyCaptain')

@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useSystem } from './SystemContext'
 import { SwipeConfirm } from './ui'
-import VarunaOrb from './VarunaOrb'
+import VarunaBot from './bot/VarunaBot'
+import { KIND_WHO, LevelIcon } from './bot/botUi'
 import LlmPicker from './LlmPicker'
 import { useLivePosition, useLaptopGps, useHomePoint } from '../hooks/useLaptopGps'
 import { createAssistantChat } from '../lib/assistant/assistantChat'
@@ -11,61 +12,80 @@ import { getLlmConfig, isLlmConfigReady } from '../lib/assistant/llmSettings'
 import { listenUntilSilence, browserListenToText, browserSttSupported, chime, currentSttLang, noteUserText, speak, stopSpeaking } from '../lib/assistant/voice'
 import VoiceSettings from './VoiceSettings'
 import { createWakeListener, wakeWordSupported } from '../lib/assistant/wakeWord'
+import {
+  botLevel, dismissPopup, gesture, getBot, onBoatMessage, postBoatMessage, setAwake, setCaption, setDemo, setHeard, setMood, setMuted, useBotState,
+} from '../lib/assistant/botStore'
+import { matchBoatIntent, runBoatCommand } from '../lib/assistant/boatCommands'
 
-// VARUNA voice co-pilot — a small floating orb (Copilot-style), not a window.
-// Say "Hi Varuna" (or tap ✨ in the top bar): the orb rises at the bottom of the
-// screen, greets you, listens, does the task (plan missions, answer, request
-// flight commands behind the swipe-to-confirm), and keeps the conversation going
-// until you stop talking — then it tucks itself away again.
+// The VARUNA Assistant: a floating 3D robot on every tab.
+//   - Say "Varuna", click the robot, or press Alt+V: it wakes, listens, does the
+//     job (boat commands, questions, drone missions) and keeps the conversation
+//     going until you stop talking, then docks in the corner again.
+//   - It also relays what the boat and its AI captain do (BoatEventWatcher),
+//     as pop-ups next to the dock and, unless muted, out loud.
+// On the Boat Vision tab the same robot is shown big inside the tab, so the
+// dock, the pop-ups and the panel are hidden there (the brain keeps running).
 
 const TOOL_CAPTION = {
   get_app_status: 'Checking the drone…',
   navigate: 'Opening the tab…',
+  get_boat_vision_summary: 'Looking through the boat camera…',
   get_detections_summary: 'Reading the detections…',
-  plan_mission: 'Finding the lake & planning the path…',
+  plan_mission: 'Finding the lake and planning the path…',
   plan_hotspot_mission: 'Finding the worst trash hotspots…',
   get_mission_debrief: 'Putting together the debrief…',
   query_trash_history: 'Checking the trash history…',
   request_flight_command: 'Swipe on the screen to confirm…',
 }
-// Where the orb sits per tab — always above that tab's bottom controls (never over STOP).
-const BOTTOM = { home: 70, live: 232, mission: 172, detections: 24, system: 24 }
-// Note: plain "stop" is NOT here — it's the emergency-stop flight command.
+// Dock height above the bottom edge per tab: always above that tab's own bottom controls.
+const DOCK_BOTTOM = { home: 18, live: 236, mission: 18, boat: 18, detections: 18, replay: 18, data: 18, system: 18 }
+const BOAT_TABS = new Set(['boat', 'vision'])
+// Note: plain "stop" is NOT here: it stops the boat (see boatCommands).
 const DISMISS_RE = /^(bye|goodbye|bye bye|thank you|thanks|thank u|that'?s all|stop listening|go to sleep|sleep|bas|bas karo|ok bye|nothing|no thanks|dhanyavaad|shukriya)[.! ]*$/i
-
-// Shown under the orb right after the chime (not spoken — Varuna listens at once).
 function greeting() {
   if (currentSttLang() === 'hi-IN') return ['हाँ, बोलिए।', 'जी, सुन रहा हूँ।', 'बताइए, क्या करना है?'][Math.floor(Math.random() * 3)]
   const h = new Date().getHours()
   const part = h < 12 ? 'Good morning.' : h < 17 ? 'Good afternoon.' : 'Good evening.'
-  return [`${part} What can I do for you?`, 'Yes? I’m listening.', 'I’m here — go ahead.', 'At your service. What do you need?'][Math.floor(Math.random() * 4)]
+  return [`${part} What can I do for you?`, 'Yes? I’m listening.', 'I’m here. Go ahead.', 'At your service. What do you need?'][Math.floor(Math.random() * 4)]
 }
 
-export default function VoiceAssistant({ tab, wakeSignal, wakeWordOn, onWakeState }) {
+export default function VoiceAssistant({ tab, showTelemetry = true, wakeSignal, wakeWordOn, onWakeState }) {
   const { telemetry, simulated, backendReachable } = useSystem()
   const live = useLivePosition(telemetry.data)
   const laptop = useLaptopGps(true)
   const homePoint = useHomePoint(telemetry.data, live, simulated)
 
-  const [awake, setAwake] = useState(false)
-  const [phase, setPhase] = useState('idle') // idle | listening | transcribing | thinking | speaking | noconfig | error
-  const [heard, setHeard] = useState('')
-  const [said, setSaid] = useState('')
-  const [typing, setTyping] = useState(false)
+  const awake = useBotState((s) => s.awake)
+  const mood = useBotState((s) => s.mood)
+  const caption = useBotState((s) => s.caption)
+  const heard = useBotState((s) => s.heard)
+  const gest = useBotState((s) => s.gesture)
+  const popups = useBotState((s) => s.popups)
+  const muted = useBotState((s) => s.muted)
+  const demo = useBotState((s) => s.demo)
+  const summon = useBotState((s) => s.summon)
+  const [phase, setPhaseState] = useState('idle') // idle | listening | transcribing | thinking | speaking | noconfig | error
   const [typed, setTyped] = useState('')
   const [showSettings, setShowSettings] = useState(false)
   const [confirm, setConfirm] = useState(null)
-  const [mobile, setMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768)
+  const [mobile, setMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 640)
+  const [drowsy, setDrowsy] = useState(false)
 
-  const levelRef = useRef(0)
   const sessionRef = useRef(0) // bumps on every wake/sleep: stale async steps bail out
   const turnSidRef = useRef(-1) // session that owns the chat turn currently running tools
   const listenRef = useRef(null)
   const wakeRef = useRef(null)
   const awakeRef = useRef(false)
   const lastConfirmRef = useRef(null)
+  const tabRef = useRef(tab)
+  tabRef.current = tab
   if (confirm) lastConfirmRef.current = confirm
   const shown = confirm || lastConfirmRef.current
+
+  function setPhase(p) {
+    setPhaseState(p)
+    setMood(p === 'transcribing' ? 'thinking' : p === 'noconfig' ? 'idle' : p)
+  }
 
   // Live app state for the assistant's tools.
   const ctxRef = useRef({})
@@ -86,18 +106,18 @@ export default function VoiceAssistant({ tab, wakeSignal, wakeWordOn, onWakeStat
     chatRef.current = createAssistantChat(
       () => ctxRef.current,
       (ev) => {
-        if (ev.type === 'tool') setSaid(TOOL_CAPTION[ev.name] || 'Working on it…')
+        if (ev.type === 'tool') setCaption(TOOL_CAPTION[ev.name] || 'Working on it…')
       },
     )
   }
 
   useEffect(() => {
-    const f = () => setMobile(window.innerWidth < 768)
+    const f = () => setMobile(window.innerWidth < 640)
     window.addEventListener('resize', f)
     return () => window.removeEventListener('resize', f)
   }, [])
 
-  // ---- wake word ("Hi Varuna") in the background while asleep ----
+  // ---- wake word ("Varuna") in the background while asleep ----
   // Not on the Live tab: always-on speech recognition takes one to two CPU
   // cores, which the live video and the AI detection need (tap-to-talk works).
   const liveRef = useRef(tab === 'live')
@@ -130,33 +150,135 @@ export default function VoiceAssistant({ tab, wakeSignal, wakeWordOn, onWakeStat
     else wake('')
   }, [wakeSignal]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Summoned from a tab (Boat Vision mic, quick commands).
+  const firstSummon = useRef(summon.id)
+  useEffect(() => {
+    if (summon.id === firstSummon.current) return
+    if (summon.text) {
+      if (!awakeRef.current) openSession()
+      handle(summon.text, sessionRef.current)
+    } else if (awakeRef.current && phase !== 'listening') tapTalk()
+    else if (!awakeRef.current) wake('')
+  }, [summon.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Alt+V anywhere: talk / close. Esc closes.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === 'v' || e.key === 'V')) {
+        e.preventDefault()
+        if (awakeRef.current) sleep()
+        else wake('')
+      } else if (e.key === 'Escape' && awakeRef.current && !getBot().confirm) sleep()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => () => stopEverything(), []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A friendly hello once per session.
+  useEffect(() => {
+    let done = false
+    try {
+      done = sessionStorage.getItem('varuna.bot.hello') === '1'
+      sessionStorage.setItem('varuna.bot.hello', '1')
+    } catch {
+      /* private mode */
+    }
+    if (done) return undefined
+    const id = setTimeout(() => {
+      gesture('wave')
+      postBoatMessage({ text: 'Hi, I’m VARUNA. Click me, press Alt+V or say “Varuna” whenever you need me.', level: 'info', kind: 'assistant', key: 'hello', speak: false })
+    }, 1800)
+    return () => clearTimeout(id)
+  }, [])
+
+  // ---- boat messages: pop-ups, and spoken one at a time unless muted ----
+  const queueRef = useRef([])
+  const speakingMsgRef = useRef(false)
+  useEffect(() => onBoatMessage((msg) => {
+    if (msg.mood === 'happy') gesture('bounce')
+    else if (msg.level === 'bad') gesture('alert')
+    if (msg.kind === 'assistant' || !msg.speak || getBot().muted) return
+    if (awakeRef.current) return // mid-conversation: shown, not spoken
+    const q = queueRef.current
+    if (msg.level === 'bad') {
+      q.length = 0 // urgent: drop the backlog and cut in
+      if (speakingMsgRef.current) stopSpeaking()
+    }
+    q.push(msg)
+    while (q.length > 3) q.splice(q.findIndex((m) => m.level !== 'bad'), 1)
+    drainMessages()
+  }), []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function drainMessages() {
+    if (speakingMsgRef.current) return
+    speakingMsgRef.current = true
+    try {
+      while (queueRef.current.length && !awakeRef.current && !getBot().muted) {
+        const msg = queueRef.current.shift()
+        setMood('speaking')
+        setCaption(msg.text)
+        await talk(msg.say)
+        if (awakeRef.current) break
+        if (msg.mood) {
+          setMood(msg.mood)
+          await new Promise((r) => setTimeout(r, 1600))
+        }
+      }
+    } finally {
+      speakingMsgRef.current = false
+      if (!awakeRef.current) setMood('idle')
+    }
+  }
+
+  // Dozes off after two quiet minutes in the dock; wakes on any message or hover.
+  useEffect(() => {
+    setDrowsy(false)
+    if (awake) return undefined
+    const id = setTimeout(() => setDrowsy(true), 120000)
+    return () => clearTimeout(id)
+  }, [awake, popups, mood])
 
   function stopEverything() {
     listenRef.current?.cancel()
     listenRef.current = null
     stopSpeaking()
-    levelRef.current = 0
+    botLevel.current = 0
+  }
+
+  // Speaking animation: a gentle random "mouth" plus a kick on every word.
+  async function talk(text) {
+    const iv = setInterval(() => {
+      botLevel.current = Math.max(botLevel.current, 0.25 + Math.random() * 0.35)
+    }, 160)
+    try {
+      await speak(text, { onWord: () => (botLevel.current = 0.75 + Math.random() * 0.25) })
+    } finally {
+      clearInterval(iv)
+      botLevel.current = 0
+    }
   }
 
   // ---- the conversation loop ----
-  async function wake(rest) {
+  function openSession() {
     const sid = ++sessionRef.current
+    queueRef.current.length = 0
+    stopEverything()
     wakeRef.current?.pause()
     awakeRef.current = true
     setAwake(true)
-    setTyping(false)
     setHeard('')
-    setSaid('')
-    if (!isLlmConfigReady(getLlmConfig('assistant'))) {
-      setPhase('noconfig')
-      setShowSettings(true)
-      setSaid('Pick an AI provider to wake me up.')
-      return
-    }
-    chime() // like Copilot: a soft tone says "I heard you", then straight to listening
-    if (rest && rest.split(/\s+/).length >= 2) return handle(rest, sid) // "Varuna, plan a mission for this lake"
-    setSaid(greeting())
+    setCaption('')
+    return sid
+  }
+
+  async function wake(rest) {
+    const sid = openSession()
+    gesture('wave')
+    chime() // a soft tone says "I heard you", then straight to listening
+    if (rest && rest.split(/\s+/).length >= 2) return handle(rest, sid) // "Varuna, bring the boat home"
+    setCaption(greeting())
     await new Promise((r) => setTimeout(r, 320)) // let the chime finish so the mic doesn't hear it
     if (sid === sessionRef.current) listen(sid, false)
   }
@@ -166,6 +288,7 @@ export default function VoiceAssistant({ tab, wakeSignal, wakeWordOn, onWakeStat
     stopEverything()
     awakeRef.current = false
     setAwake(false)
+    setShowSettings(false)
     setPhase('idle')
     setConfirm((c) => {
       c?.finish('cancelled')
@@ -179,32 +302,21 @@ export default function VoiceAssistant({ tab, wakeSignal, wakeWordOn, onWakeStat
   async function say(text, sid) {
     if (sid !== sessionRef.current) return
     setPhase('speaking')
-    setSaid(text)
-    // Speaking animation: a gentle random "mouth" plus a kick on every word.
-    const iv = setInterval(() => {
-      levelRef.current = Math.max(levelRef.current, 0.25 + Math.random() * 0.35)
-    }, 160)
-    try {
-      await speak(text, { onWord: () => (levelRef.current = 0.75 + Math.random() * 0.25) })
-    } finally {
-      clearInterval(iv)
-      levelRef.current = 0
-    }
+    setCaption(text)
+    await talk(text)
   }
 
   async function listen(sid, followUp) {
     if (sid !== sessionRef.current) return
     setPhase('listening')
-    // Whisper (Groq) if the assistant provider is Groq — its key is right
-    // there and Whisper is far more accurate for Hinglish. Otherwise the
-    // browser's native speech recognizer (e.g. when the operator picked
-    // Gemini, OpenRouter, or a custom endpoint instead).
+    // Whisper (Groq) if the assistant provider is Groq: more accurate for
+    // Hinglish. Otherwise the browser's own speech recognizer.
     const cfg = getLlmConfig('assistant')
     const useWhisper = cfg?.provider === 'groq' && !!cfg?.apiKey
     let text = null
     listenRef.current?.cancel() // never two recordings at once
     if (useWhisper) {
-      const l = listenUntilSilence({ onLevel: (v) => (levelRef.current = v), startTimeoutMs: followUp ? 6000 : 8000 })
+      const l = listenUntilSilence({ onLevel: (v) => (botLevel.current = v), startTimeoutMs: followUp ? 6000 : 8000 })
       listenRef.current = l
       let clip
       try {
@@ -212,26 +324,21 @@ export default function VoiceAssistant({ tab, wakeSignal, wakeWordOn, onWakeStat
       } catch (e) {
         if (sid !== sessionRef.current) return
         setPhase('error')
-        setSaid(`Microphone unavailable — allow mic access. (${e?.message || e})`)
+        setCaption(`I can’t use the microphone. Allow mic access, or type below. (${e?.message || e})`)
         return
       } finally {
         if (listenRef.current === l) listenRef.current = null
       }
       if (sid !== sessionRef.current) return
-      if (!clip) {
-        if (!followUp) await say('I didn’t catch that. Just say “Varuna” whenever you need me.', sid)
-        if (sid === sessionRef.current) sleep()
-        return
-      }
+      if (!clip) return quiet(sid, followUp)
       setPhase('transcribing')
-      setSaid('')
       try {
         text = await groqTranscribe(clip.blob, { apiKey: cfg.apiKey })
       } catch (e) {
         return fail(e, sid)
       }
     } else if (browserSttSupported) {
-      const l = browserListenToText({ onLevel: (v) => (levelRef.current = v), startTimeoutMs: followUp ? 6000 : 8000 })
+      const l = browserListenToText({ onLevel: (v) => (botLevel.current = v), startTimeoutMs: followUp ? 6000 : 8000 })
       listenRef.current = l
       let result
       try {
@@ -239,23 +346,17 @@ export default function VoiceAssistant({ tab, wakeSignal, wakeWordOn, onWakeStat
       } catch (e) {
         if (sid !== sessionRef.current) return
         setPhase('error')
-        setSaid(`Microphone unavailable — allow mic access. (${e?.message || e})`)
+        setCaption(`I can’t use the microphone. Allow mic access, or type below. (${e?.message || e})`)
         return
       } finally {
         if (listenRef.current === l) listenRef.current = null
       }
       if (sid !== sessionRef.current) return
-      if (!result) {
-        if (!followUp) await say('I didn’t catch that. Just say “Varuna” whenever you need me.', sid)
-        if (sid === sessionRef.current) sleep()
-        return
-      }
+      if (!result) return quiet(sid, followUp)
       text = result.text
     } else {
-      // No STT at all — nudge the operator toward typing.
-      setTyping(true)
       setPhase('idle')
-      setSaid("This browser can't listen to voice. Type instead, or switch to a Groq provider for Whisper.")
+      setCaption('This browser can’t listen to voice. Type your question below.')
       return
     }
     if (sid !== sessionRef.current) return
@@ -264,16 +365,49 @@ export default function VoiceAssistant({ tab, wakeSignal, wakeWordOn, onWakeStat
     handle(text, sid)
   }
 
+  // Nothing heard: stay open (typing still works) but stop the mic.
+  async function quiet(sid, followUp) {
+    if (!followUp) await say('I didn’t catch that. Tap the mic, or type below.', sid)
+    if (sid === sessionRef.current) {
+      setPhase('idle')
+      if (followUp) setCaption('Anything else? Tap the mic or type below.')
+    }
+  }
+
   async function handle(text, sid) {
     if (sid !== sessionRef.current) return
     setHeard(text)
     if (DISMISS_RE.test(text.trim())) {
-      await say(/[ऀ-ॿ]/.test(text) ? 'ठीक है, ज़रूरत हो तो बस “वरुण” कहिए।' : 'Alright. Just say “Varuna” when you need me.', sid)
+      gesture('wave')
+      await say(/[ऀ-ॿ]/.test(text) ? 'ठीक है, ज़रूरत हो तो बस “वरुण” कहिए।' : 'Alright. Just call me when you need me.', sid)
       if (sid === sessionRef.current) sleep()
       return
     }
+    // Boat commands first: instant, and they work without any AI provider.
+    const cmd = matchBoatIntent(text, { boatContext: BOAT_TABS.has(tabRef.current) })
+    if (cmd) {
+      setPhase('thinking')
+      setCaption(cmd === 'stop' ? 'Stopping the boat…' : 'One moment…')
+      const res = await runBoatCommand(cmd)
+      if (sid !== sessionRef.current) return
+      if (res.ok && ['collect', 'home', 'ramp_down', 'ramp_up'].includes(cmd)) {
+        setMood('happy')
+        await new Promise((r) => setTimeout(r, 700))
+      }
+      await say(res.text, sid)
+      if (sid === sessionRef.current) listen(sid, true)
+      return
+    }
+    if (!isLlmConfigReady(getLlmConfig('assistant'))) {
+      setPhase('noconfig')
+      setShowSettings(true)
+      gesture('shake')
+      await say('I can run the boat for you: try “boat status”, “go collect” or “come home”. To answer anything else, pick an AI provider in my settings.', sid)
+      if (sid === sessionRef.current) setPhase('idle')
+      return
+    }
     setPhase('thinking')
-    setSaid('')
+    setCaption('')
     let reply
     try {
       turnSidRef.current = sid
@@ -282,7 +416,7 @@ export default function VoiceAssistant({ tab, wakeSignal, wakeWordOn, onWakeStat
       return fail(e, sid)
     }
     await say(reply, sid)
-    // Keep the conversation going, like Copilot: listen for a follow-up.
+    // Keep the conversation going: listen for a follow-up.
     if (sid === sessionRef.current) listen(sid, true)
   }
 
@@ -299,16 +433,17 @@ export default function VoiceAssistant({ tab, wakeSignal, wakeWordOn, onWakeStat
             : /Could not reach the AI service/.test(msg)
               ? msg
               : 'I could not reach my AI service. Check the internet connection or the provider settings.'
+    gesture('shake')
     setPhase('error')
     await say(line, sid)
     if (sid === sessionRef.current) setPhase('error')
   }
 
-  // Opens the swipe-to-confirm pop-up for ONE request (see Assistant review notes):
+  // Swipe-to-confirm for drone flight commands the assistant asks for:
   // resolves 'confirmed' | 'cancelled' | 'timeout'; the voice can never confirm by itself.
   function requestConfirm(cmdKey, detail) {
     return new Promise((resolve) => {
-      if (!ctxRef.current.active()) return resolve('cancelled') // Varuna was dismissed/interrupted
+      if (!ctxRef.current.active()) return resolve('cancelled')
       const req = { cmd: cmdKey, detail, openId: Date.now() + Math.random(), done: false, swiped: false }
       req.finish = (v) => {
         if (req.done) return
@@ -330,120 +465,122 @@ export default function VoiceAssistant({ tab, wakeSignal, wakeWordOn, onWakeStat
     const t = typed.trim()
     if (!t || phase === 'thinking' || phase === 'transcribing') return
     setTyped('')
-    setTyping(false)
     stopEverything()
     const sid = ++sessionRef.current
     handle(t, sid)
   }
 
-  function tapOrb() {
-    // Tap the orb to talk now (interrupts speaking), or retry after an error.
+  function tapTalk() {
+    // Talk now (interrupts speaking), or retry after an error.
     const sid = ++sessionRef.current
     stopEverything()
     listen(sid, false)
   }
+  function quick(text) {
+    stopEverything()
+    const sid = ++sessionRef.current
+    handle(text, sid)
+  }
 
   function onProviderSaved(cfg) {
-    // If the operator was blocked on "noconfig", start the conversation as
-    // soon as they save a working config.
     if (isLlmConfigReady(cfg)) {
       setShowSettings(false)
-      if (phase === 'noconfig') wake('')
+      setCaption('All set. What would you like to know?')
+      setPhase('idle')
     }
   }
 
-  const orbMode = phase === 'transcribing' ? 'thinking' : phase === 'noconfig' ? 'idle' : phase
+  const onVision = tab === 'vision'
+  const dockBottom = (DOCK_BOTTOM[tab] ?? 18) + (mobile && tab === 'boat' ? 8 : 0)
   const status =
-    phase === 'listening' ? 'Listening…' : phase === 'transcribing' || phase === 'thinking' ? 'Thinking…' : phase === 'speaking' ? 'Varuna' : phase === 'error' ? 'Tap the orb to try again' : ''
-  const bottom = (BOTTOM[tab] ?? 24) + (mobile && (tab === 'detections' || tab === 'system') ? 72 : 0)
+    phase === 'listening' ? ['Listening', 'info'] : phase === 'transcribing' || phase === 'thinking' ? ['Thinking', 'info'] : phase === 'speaking' ? ['Speaking', 'ok'] : phase === 'error' ? ['Needs attention', 'warn'] : ['Ready', '']
+  const chips = BOAT_TABS.has(tab) || demo
+    ? [['How is the boat?', 'boat status'], ['Go collect', 'go collect'], ['Come home', 'come home'], ['Battery?', 'boat battery']]
+    : [['What can you do?', 'What can you do?'], ['Boat status', 'boat status'], ['Plan a mission', 'Plan a cleanup mission for the nearest lake']]
+  const dockMood = drowsy && mood === 'idle' ? 'sleep' : mood
 
   return (
     <>
+      {/* ── dock (asleep) ── */}
       <AnimatePresence>
-        {awake && (
-          <motion.div
-            key="orb"
-            initial={{ opacity: 0, y: 40, scale: 0.6 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 30, scale: 0.6 }}
-            transition={{ type: 'spring', stiffness: 260, damping: 22 }}
-            className="pointer-events-none fixed inset-x-0 z-[60] flex justify-center px-2 md:pl-[80px]"
-            style={{ bottom }}
-            role="dialog"
-            aria-label="Varuna voice assistant"
-          >
-            <div
-              className="pointer-events-auto flex w-[min(92vw,520px)] items-center gap-3 rounded-[28px] py-2 pl-2 pr-3 shadow-elev"
-              style={{ background: 'rgba(5,16,28,0.93)', border: '1px solid rgba(14,165,164,0.4)', backdropFilter: 'blur(20px)', boxShadow: '0 0 32px rgba(14,165,164,0.12)' }}
-            >
-              <button type="button" onClick={tapOrb} title="Tap to talk" className="shrink-0 rounded-full focus:outline-none">
-                <VarunaOrb mode={orbMode} levelRef={levelRef} size={mobile ? 64 : 76} />
-              </button>
-
-              <div className="min-w-0 flex-1">
-                {showSettings ? (
-                  <div className="max-h-[52vh] overflow-y-auto pr-1">
-                    {phase === 'noconfig' && <div className="mb-2 text-[11px] text-muted">{said}</div>}
-                    <VoiceSettings />
-                    <LlmPicker kind="assistant" onSaved={onProviderSaved} compact />
-                  </div>
-                ) : typing ? (
-                  <form onSubmit={submitTyped} className="flex gap-1.5">
-                    <input autoFocus value={typed} onChange={(e) => setTyped(e.target.value)} placeholder="Type to Varuna…" className="inp min-w-0 flex-1 px-2.5 py-1.5 text-sm" />
-                    <button disabled={phase === 'thinking' || phase === 'transcribing'} className="rounded-md bg-accent px-2.5 text-xs font-bold text-white disabled:opacity-40">Send</button>
-                  </form>
-                ) : (
-                  <>
-                    <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest" style={{ color: phase === 'error' ? '#FF9F0A' : 'var(--accent-hex)' }}>
-                      {status}
-                      {phase === 'listening' && (
-                        <span className="flex h-3 items-end gap-[2px]">
-                          {[0, 1, 2, 3].map((i) => (
-                            <motion.span key={i} className="w-[2px] rounded bg-current" animate={{ height: [3, 11, 5, 9, 3] }} transition={{ duration: 0.9, repeat: Infinity, delay: i * 0.12 }} />
-                          ))}
-                        </span>
-                      )}
-                    </div>
-                    {heard && <div className="truncate text-[11px] text-muted">You: “{heard}”</div>}
-                    <AnimatePresence mode="wait">
-                      <motion.div
-                        key={said}
-                        initial={{ opacity: 0, y: 4 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0 }}
-                        className="line-clamp-3 text-[13px] leading-snug" style={{ color: '#86efac' }}
-                      >
-                        {said || (phase === 'listening' ? 'Go ahead, I’m listening.' : '')}
-                      </motion.div>
-                    </AnimatePresence>
-                  </>
-                )}
-              </div>
-
-              <div className="flex shrink-0 flex-col gap-1">
-                <button
-                  type="button"
-                  onClick={() => setShowSettings((v) => !v)}
-                  title={showSettings ? 'Close settings' : 'Voice & AI provider settings'}
-                  className="flex h-7 w-7 items-center justify-center rounded-full hover:bg-white/10"
-                  style={{ color: showSettings ? 'var(--accent-hex)' : 'var(--muted)' }}
-                >
-                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="12" cy="12" r="3" />
-                    <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.9l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.9l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.9l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.9l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
-                  </svg>
-                </button>
-                <button type="button" onClick={() => { setShowSettings(false); setTyping((v) => !v) }} title="Type instead" className="flex h-7 w-7 items-center justify-center rounded-full text-muted hover:bg-white/10 hover:text-ink">
-                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><rect x="2.5" y="6" width="19" height="12" rx="2.5" /><path d="M6 10h.01M9.5 10h.01M13 10h.01M16.5 10h.01M8 14h8" /></svg>
-                </button>
-                <button type="button" onClick={sleep} title="Close" className="flex h-7 w-7 items-center justify-center rounded-full text-lg leading-none text-muted hover:bg-white/10 hover:text-ink">
-                  ×
-                </button>
-              </div>
-            </div>
+        {!awake && !onVision && (
+          <motion.div key="dock" initial={{ opacity: 0, scale: 0.6, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.6, y: 20 }}
+            transition={{ type: 'spring', stiffness: 260, damping: 22 }} className="vb-dock" style={{ bottom: dockBottom }}
+            onMouseEnter={() => { if (drowsy) setDrowsy(false); else if (Math.random() < 0.5) gesture('wave') }}>
+            <VarunaBot state={dockMood} gesture={gest} levelRef={botLevel} className="h-full w-full" onClick={() => wake('')} title="Talk to VARUNA (Alt+V)" />
+            <span className="vb-tip">Talk to VARUNA · Alt+V</span>
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* ── pop-ups next to the dock ── */}
+      {!awake && !onVision && (
+        <div className="vb-pops" style={{ bottom: dockBottom + 8 }} aria-live="polite">
+          <AnimatePresence initial={false}>
+            {/* Boat pop-ups on the Live and Boat tabs; elsewhere only real alarms. */}
+            {popups.filter((p) => showTelemetry || p.level === 'bad').map((p) => <Popup key={p.id} msg={p} />)}
+          </AnimatePresence>
+        </div>
+      )}
+
+      {/* ── conversation panel (awake) ── */}
+      <AnimatePresence>
+        {awake && !onVision && (
+          <motion.div key="panel" role="dialog" aria-label="VARUNA Assistant"
+            initial={{ opacity: 0, y: 30, scale: 0.92 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 24, scale: 0.94 }}
+            transition={{ type: 'spring', stiffness: 280, damping: 26 }} className="vb-panel" style={{ bottom: Math.max(12, dockBottom - 6), transformOrigin: 'bottom right' }}>
+            <div className="vb-panel-head">
+              <b>VARUNA Assistant</b>
+              <span className={`sx-pill ${status[1]} ${phase === 'listening' ? 'pulse' : ''}`}><i />{status[0]}</span>
+              <span className="flex-1" />
+              <button type="button" className={`vb-iconbtn ${muted ? '' : 'on'}`} onClick={() => setMuted(!muted)} title={muted ? 'Boat messages are muted: tap to hear them' : 'Boat messages are spoken: tap to mute'} aria-pressed={!muted}>
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 5L6 9H3v6h3l5 4V5z" />{muted ? <path d="M22 9l-6 6M16 9l6 6" /> : <path d="M15.5 8.5a5 5 0 010 7M18.5 5.5a9 9 0 010 13" />}</svg>
+              </button>
+              <button type="button" className={`vb-iconbtn ${showSettings ? 'on' : ''}`} onClick={() => setShowSettings((v) => !v)} title="Settings" aria-pressed={showSettings}>
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8" /><circle cx="16" cy="7" r="2" /><circle cx="10" cy="17" r="2" /></svg>
+              </button>
+              <button type="button" className="vb-iconbtn" onClick={sleep} title="Close (Esc)">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+              </button>
+            </div>
+
+            {showSettings ? (
+              <div className="vb-settings">
+                <Toggle on={!muted} onChange={(v) => setMuted(!v)} label="Speak boat messages" hint="Pop-ups always show; this reads them out loud." />
+                <Toggle on={demo} onChange={setDemo} label="Demo mode" hint="Plays a pretend boat run, to try the assistant without the boat." />
+                <div className="pt-3 text-[13px] font-bold">Voice</div>
+                <VoiceSettings />
+                <div className="pt-2 text-[13px] font-bold">AI provider (for questions)</div>
+                <LlmPicker kind="assistant" onSaved={onProviderSaved} compact />
+              </div>
+            ) : (
+              <>
+                <div className="vb-stage">
+                  <VarunaBot state={mood} gesture={gest} levelRef={botLevel} size={mobile ? 128 : 150} onClick={tapTalk} title="Tap to talk" />
+                  <AnimatePresence mode="wait">
+                    <motion.div key={caption} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="vb-say">
+                      {caption || (phase === 'listening' ? 'Go ahead, I’m listening.' : phase === 'thinking' || phase === 'transcribing' ? 'Thinking…' : '')}
+                    </motion.div>
+                  </AnimatePresence>
+                  {heard && <div className="vb-heard">You said: “{heard}”</div>}
+                </div>
+                <div className="vb-chips">
+                  <button type="button" className="vb-chip stop" onClick={() => quick('stop the boat')}>■ Stop boat</button>
+                  {chips.map(([l, q]) => <button key={l} type="button" className="vb-chip" onClick={() => quick(q)}>{l}</button>)}
+                </div>
+                <form onSubmit={submitTyped} className="vb-input">
+                  <input value={typed} onChange={(e) => setTyped(e.target.value)} placeholder="Ask or tell VARUNA…" aria-label="Message to VARUNA" />
+                  <button type="button" onClick={tapTalk} className={`vb-mic ${phase === 'listening' ? 'live' : ''}`} title={phase === 'listening' ? 'Listening…' : 'Talk'} aria-label="Talk">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0014 0M12 18v3" /></svg>
+                  </button>
+                </form>
+              </>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <BoatConfirm />
 
       {/* Flight commands the assistant asks for still need the operator's swipe. */}
       <SwipeConfirm
@@ -457,5 +594,65 @@ export default function VoiceAssistant({ tab, wakeSignal, wakeWordOn, onWakeStat
         onConfirm={() => shown?.finish('confirmed')}
       />
     </>
+  )
+}
+
+function Toggle({ on, onChange, label, hint }) {
+  return (
+    <label className="vb-toggle">
+      <span>{label}{hint && <small>{hint}</small>}</span>
+      <button type="button" role="switch" aria-checked={on} className={`vb-switch ${on ? 'on' : ''}`} onClick={() => onChange(!on)} />
+    </label>
+  )
+}
+
+function Popup({ msg }) {
+  useEffect(() => {
+    const id = setTimeout(() => dismissPopup(msg.id), msg.level === 'bad' ? 14000 : msg.level === 'warn' ? 10000 : 7000)
+    return () => clearTimeout(id)
+  }, [msg.id, msg.level])
+  return (
+    <motion.div layout initial={{ opacity: 0, x: 40, scale: 0.95 }} animate={{ opacity: 1, x: 0, scale: 1 }} exit={{ opacity: 0, x: 30, scale: 0.95 }}
+      transition={{ type: 'spring', stiffness: 320, damping: 28 }} className={`vb-pop lv-${msg.level}`} role={msg.level === 'bad' ? 'alert' : 'status'}>
+      <span className="vb-pop-ic"><LevelIcon level={msg.level} /></span>
+      <div className="min-w-0">
+        <div className="vb-pop-who">{KIND_WHO[msg.kind] || 'Boat'}</div>
+        <div className="vb-pop-txt">{msg.text}</div>
+      </div>
+      <button type="button" className="x" onClick={() => dismissPopup(msg.id)} aria-label="Dismiss">×</button>
+    </motion.div>
+  )
+}
+
+/** "Are you sure?" for anything that moves the boat (botStore.askConfirm). */
+export function BoatConfirm() {
+  const c = useBotState((s) => s.confirm)
+  const okRef = useRef(null)
+  useEffect(() => {
+    if (!c) return undefined
+    okRef.current?.focus()
+    const onKey = (e) => { if (e.key === 'Escape') c.resolve(false) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [c])
+  return (
+    <AnimatePresence>
+      {c && (
+        <motion.div key="cf" className="vb-confirm-back" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => c.resolve(false)}>
+          <motion.div className="vb-confirm" role="alertdialog" aria-modal="true" aria-labelledby="vb-cf-t" initial={{ y: 20, scale: 0.96 }} animate={{ y: 0, scale: 1 }} exit={{ y: 10, scale: 0.97 }}
+            onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3">
+              <span className="sx-head-icon" aria-hidden><LevelIcon level="warn" size={22} /></span>
+              <h2 id="vb-cf-t">{c.title}</h2>
+            </div>
+            {c.detail && <p>{c.detail}</p>}
+            <div className="row">
+              <button type="button" className="sx-btn ghost lg" onClick={() => c.resolve(false)}>Cancel</button>
+              <button ref={okRef} type="button" className={`sx-btn lg ${c.danger ? 'danger' : ''}`} onClick={() => c.resolve(true)}>{c.okLabel}</button>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   )
 }

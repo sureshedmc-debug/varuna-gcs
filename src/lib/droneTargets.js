@@ -19,13 +19,31 @@ import { localCall, saveRecords } from './localData'
 const mem = new Map() // boat id → { crop, conf, w, h }
 const rows = new Map() // boat id → last row written (so only changes are re-sent)
 const PREFIX = 'crop:'
-let latest = null // the newest drone sighting's crop: { id, crop, cls, at }
+// The photo of the drone's latest detection (its best one so far): the Boat
+// tab shows it and matches the boat camera against it.
+// { id, key, crop, cls, conf, at } - `id` is the find it belongs to, `key`
+// changes whenever the photo is replaced.
+let latest = null
+let latestSeq = 0
+const MIN_PHOTO_CONF = 0.4
+const latestSubs = new Set()
+function setLatest(v) {
+  latest = v
+  for (const fn of latestSubs) {
+    try { fn(v) } catch { /* a closed screen */ }
+  }
+}
 
 /** The drone's newest plastic picture in this app (GPS or not), or null. */
 export const latestDroneCrop = () => latest
+/** Call `fn(latest)` on every new picture (and on a clear); returns the unsubscribe. */
+export function onLatestDroneCrop(fn) {
+  latestSubs.add(fn)
+  return () => latestSubs.delete(fn)
+}
 /** Forget the newest picture (the Boat tab's Reset). */
 export function clearLatestDroneCrop() {
-  latest = null
+  setLatest(null)
 }
 
 const iso = (ms) => (ms ? new Date(ms).toISOString() : '')
@@ -47,12 +65,20 @@ export function rememberDroneCrop(entry, crop, { confidence = null, w = null, h 
   const id = boatItemId(entry)
   const prev = mem.get(id)
   const cls = entry.class && entry.class !== 'trash' ? entry.class : null
-  if (prev && (prev.conf ?? 0) >= (confidence ?? 0)) {
-    latest = { id, crop: prev.crop, cls, at: Date.now() }
-    return
+  // The Boat tab's picture: one photo per drone detection. A new detection
+  // replaces it at once; while the drone keeps seeing the same one, only a
+  // clearly more confident (sharper) photo of it does - never every frame, so
+  // the boat matches against the detection's best photo, not a blurry one.
+  // An unsure detection (under 40%) is too often not plastic at all (a lamp,
+  // the ceiling): it never becomes the photo the boat matches against.
+  const c = Number.isFinite(confidence) ? confidence : null
+  if (c != null && c < MIN_PHOTO_CONF) {
+    // not shown; still stored below as the find's evidence
+  } else if (!latest || latest.id !== id || (c ?? 0) >= (latest.conf ?? 0) + 0.03) {
+    setLatest({ id, key: ++latestSeq, crop, cls, conf: c, at: Date.now() })
   }
+  if (prev && (prev.conf ?? 0) >= (confidence ?? 0)) return
   mem.set(id, { crop, conf: confidence, w, h })
-  latest = { id, crop, cls, at: Date.now() }
   missing.delete(id)
   savePhotos(PREFIX + id, { boxed: crop }).catch(() => {})
   localCall('/local/drone-image', { id, data: crop }).catch(() => {}) // not in the desktop app: browser copy only

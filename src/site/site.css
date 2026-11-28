@@ -452,6 +452,10 @@ textarea.vs-input { resize: vertical; min-height: 130px; line-height: 1.55; }
   .vs-brand img { width: 30px; height: 30px; }
   .vs-login { padding: 8px 12px; font-size: 13px; }
   .vs-hero-body { padding-top: 110px; padding-bottom: 32px; }
+  /* The opening text is taller than a phone screen. Stretching the 16:9 clip to
+     that whole height showed only a blurry sliver, so keep it one screen tall at
+     the top and let the page's dark background carry on below it. */
+  .vs-xhero .vs-hero-media { bottom: auto; height: 100vh; height: 100svh; }
   .vs-choice { padding: 16px; gap: 14px; border-radius: 18px; }
   .vs-choice-icon { width: 46px; height: 46px; border-radius: 13px; }
   .vs-choice-go { display: none; }
@@ -581,4 +585,260 @@ textarea.vs-input { resize: vertical; min-height: 130px; line-height: 1.55; }
 @media (max-width: 760px) {
   .vs-faq { grid-template-columns: 1fr; margin-top: 32px; }
   .vs-faq-item { padding: 20px; }
+}
+
+/* ── achievements: the competition win (gold) ── */
+.vs { --gold: #f5c451; --gold-grad: linear-gradient(100deg, #fff1b8 0%, #f8d26a 30%, #e7a92f 62%, #fde68a 100%); }
+.vs-gold { background: var(--gold-grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.vs-kicker.gold { color: var(--gold); }
+
+.vs-award-pill {
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 10px; margin-bottom: 18px; max-width: 100%;
+  padding: 7px 14px 7px 7px; border-radius: 999px; font-size: 13px; color: rgba(255, 244, 214, 0.92);
+  background: linear-gradient(100deg, rgba(245, 196, 81, 0.22), rgba(245, 196, 81, 0.06)); border: 1px solid rgba(245, 196, 81, 0.5);
+  box-shadow: 0 10px 34px rgba(245, 196, 81, 0.18), 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); transition: transform 0.4s var(--ease), box-shadow 0.4s var(--ease), border-color 0.3s;
+}
+.vs-award-pill:hover { transform: translateY(-2px); border-color: rgba(253, 230, 138, 0.85); box-shadow: 0 16px 44px rgba(245, 196, 81, 0.3); }
+.vs-award-pill .cup { flex-shrink: 0; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; color: #3a2600; background: var(--gold-grad); box-shadow: 0 0 18px rgba(245, 196, 81, 0.55); }
+.vs-award-pill b { font-weight: 800; color: #fff3c4; letter-spacing: 0.01em; }
+.vs-award-pill i { width: 4px; height: 4px; border-radius: 50%; background: var(--gold); opacity: 0.8; flex-shrink: 0; }
+.vs-award-pill span:not(.cup) { white-space: nowrap; }
+.vs-award-pill .go { flex-shrink: 0; opacity: 0.75; transition: transform 0.35s var(--ease); }
+.vs-award-pill:hover .go { transform: translateX(3px); }
+
+.vs-award-sec { overflow: hidden; background: linear-gradient(180deg, var(--bg2), var(--bg) 60%); }
+.vs-award-glow { position: absolute; left: 50%; top: -120px; width: min(1100px, 120vw); height: 620px; transform: translateX(-50%); pointer-events: none;
+  background: radial-gradient(closest-side, rgba(245, 196, 81, 0.2), rgba(245, 196, 81, 0.06) 55%, transparent); filter: blur(10px); }
+.vs-award-sec .vs-lead b { color: #fff3c4; }
+
+.vs-award-hero { position: relative; display: block; width: 100%; margin-top: clamp(44px, 6vw, 72px); padding: 0; border-radius: 28px; overflow: hidden; cursor: zoom-in;
+  aspect-ratio: 1600 / 734; background: var(--bg2); border: 1px solid rgba(245, 196, 81, 0.35);
+  box-shadow: 0 50px 120px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(245, 196, 81, 0.08) inset, 0 0 80px rgba(245, 196, 81, 0.1); }
+.vs-award-hero img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform 1.4s var(--ease); }
+.vs-award-hero:hover img { transform: scale(1.03); }
+.vs-award-hero::after { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(4, 6, 10, 0.35), transparent 26%, transparent 58%, rgba(4, 6, 10, 0.88)); pointer-events: none; }
+.vs-award-ribbon { position: absolute; z-index: 1; top: 18px; left: 18px; display: inline-flex; align-items: center; gap: 8px; padding: 9px 16px; border-radius: 999px;
+  font-size: 13px; font-weight: 800; letter-spacing: 0.02em; color: #2b1c00; background: var(--gold-grad); box-shadow: 0 10px 30px rgba(245, 196, 81, 0.45); }
+.vs-award-hero-cap { position: absolute; z-index: 1; left: clamp(18px, 3vw, 32px); right: 70px; bottom: clamp(16px, 2.6vw, 28px); text-align: left; font-size: 14px; color: var(--ink2); }
+.vs-award-hero-cap b { display: block; color: #fff; font-size: clamp(18px, 2vw, 24px); font-weight: 800; letter-spacing: -0.02em; margin-bottom: 4px; }
+.vs-award-hero .vs-tile-badge { top: auto; bottom: 18px; right: 18px; }
+
+.vs-award-grid { margin-top: 16px; display: grid; grid-template-columns: 1fr 1.15fr; gap: 16px; }
+.vs-award-card { position: relative; border-radius: 28px; padding: clamp(24px, 3.4vw, 40px); overflow: hidden;
+  background: linear-gradient(165deg, rgba(245, 196, 81, 0.13), rgba(255, 255, 255, 0.03) 45%, rgba(255, 255, 255, 0.02));
+  border: 1px solid rgba(245, 196, 81, 0.32); box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.03) inset; }
+.vs-award-card::before { content: ''; position: absolute; right: -80px; top: -80px; width: 260px; height: 260px; border-radius: 50%; background: radial-gradient(closest-side, rgba(245, 196, 81, 0.25), transparent); pointer-events: none; }
+.vs-medal { position: relative; display: flex; align-items: center; justify-content: center; gap: 4px; color: var(--gold); }
+.vs-laurel { width: clamp(38px, 4.4vw, 54px); height: auto; filter: drop-shadow(0 0 14px rgba(245, 196, 81, 0.35)); }
+.vs-laurel.flip { transform: scaleX(-1); }
+.vs-medal b { font-size: clamp(84px, 10vw, 136px); font-weight: 900; letter-spacing: -0.06em; line-height: 0.9; padding: 0 6px 6px;
+  background: var(--gold-grad); -webkit-background-clip: text; background-clip: text; color: transparent; filter: drop-shadow(0 8px 30px rgba(245, 196, 81, 0.35)); }
+.vs-medal sup { font-size: 0.36em; letter-spacing: -0.02em; vertical-align: 0.95em; margin-left: 2px; }
+.vs-award-pos { position: relative; display: block; text-align: center; margin-top: 10px; font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.32em; text-transform: uppercase; color: var(--gold); }
+.vs-award-card h3 { position: relative; text-align: center; font-size: clamp(22px, 2.3vw, 30px); font-weight: 800; letter-spacing: -0.03em; line-height: 1.15; margin: 10px 0 22px; }
+.vs-award-facts { position: relative; margin: 0; display: grid; border-top: 1px solid var(--line); }
+.vs-award-facts div { display: grid; grid-template-columns: 120px 1fr; gap: 14px; padding: 11px 0; border-bottom: 1px solid var(--line); }
+.vs-award-facts dt { font-family: 'JetBrains Mono', monospace; font-size: 10.5px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink3); padding-top: 2px; }
+.vs-award-facts dd { margin: 0; font-size: 14.5px; line-height: 1.45; color: var(--ink); }
+.vs-award-next { position: relative; margin-top: 20px; display: flex; gap: 14px; align-items: center; padding: 16px 18px; border-radius: 18px;
+  background: linear-gradient(100deg, rgba(245, 196, 81, 0.24), rgba(245, 196, 81, 0.08)); border: 1px solid rgba(245, 196, 81, 0.45); }
+.vs-award-next .ic { flex-shrink: 0; width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; color: #2b1c00; background: var(--gold-grad); box-shadow: 0 8px 22px rgba(245, 196, 81, 0.4); }
+.vs-award-next b { display: block; font-size: 17px; font-weight: 800; color: #fff3c4; }
+.vs-award-next span { display: block; font-size: 13px; color: var(--ink2); margin-top: 2px; line-height: 1.45; }
+
+.vs-award-tiles { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 16px; }
+.vs-award-tile { min-height: 230px; border-color: rgba(245, 196, 81, 0.2); }
+.vs-award-tile:hover { border-color: rgba(245, 196, 81, 0.5); }
+
+.vs-team-award { grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-radius: 16px;
+  background: linear-gradient(100deg, rgba(245, 196, 81, 0.2), rgba(245, 196, 81, 0.05)); border: 1px solid rgba(245, 196, 81, 0.4); transition: border-color 0.3s, transform 0.4s var(--ease); }
+.vs-team-award:hover { border-color: rgba(253, 230, 138, 0.8); transform: translateY(-2px); }
+.vs-team-award .ic { flex-shrink: 0; width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center; color: #2b1c00; background: var(--gold-grad); }
+.vs-team-award small { display: block; font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; margin-bottom: 4px; color: var(--gold); }
+.vs-team-award b { font-size: 14.5px; color: #fff3c4; }
+
+/* ── the boat on the water ── */
+.vs-water { background: radial-gradient(70% 50% at 50% 30%, rgba(45, 212, 191, 0.08), transparent 70%); }
+.vs-reels { margin-top: clamp(50px, 7vw, 80px); display: grid; grid-template-columns: repeat(3, 1fr); gap: clamp(14px, 2.4vw, 28px); align-items: start; }
+.vs-reel { position: relative; display: block; padding: 8px; border-radius: 30px; cursor: zoom-in; text-align: left;
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.03)); border: 1px solid var(--line2);
+  box-shadow: 0 40px 90px rgba(0, 0, 0, 0.5); transition: transform 0.6s var(--ease), border-color 0.4s; }
+.vs-reel:nth-child(2) { margin-top: clamp(0px, 5vw, 64px); }
+.vs-reel:hover { border-color: rgba(103, 232, 249, 0.45); }
+.vs-reel-in { position: relative; display: block; aspect-ratio: 478 / 850; border-radius: 23px; overflow: hidden; background: #0a0e16; }
+.vs-reel-in video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.vs-reel-in::after { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(4, 6, 10, 0.3), transparent 22%, transparent 55%, rgba(4, 6, 10, 0.9)); }
+.vs-reel-tag { position: absolute; z-index: 1; top: 22px; left: 22px; display: inline-flex; align-items: center; gap: 7px; padding: 6px 11px; border-radius: 999px;
+  font-family: 'JetBrains Mono', monospace; font-size: 10.5px; letter-spacing: 0.16em; text-transform: uppercase; background: rgba(4, 6, 10, 0.6); border: 1px solid var(--line2);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+.vs-reel-tag::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: #f43f5e; box-shadow: 0 0 8px #f43f5e; animation: vs-pulse 1.4s infinite; }
+.vs-reel-cap { position: absolute; z-index: 1; left: 26px; right: 26px; bottom: 26px; font-size: 13px; color: var(--ink2); line-height: 1.45; }
+.vs-reel-cap b { display: block; color: #fff; font-size: clamp(17px, 1.7vw, 21px); font-weight: 800; letter-spacing: -0.02em; margin-bottom: 4px; }
+
+.vs-match { margin-top: clamp(80px, 10vw, 130px); display: grid; grid-template-columns: 0.8fr 1.45fr; gap: clamp(28px, 5vw, 70px); align-items: center; }
+.vs-match-txt h3 { font-size: clamp(26px, 3.2vw, 42px); font-weight: 800; letter-spacing: -0.035em; line-height: 1.05; margin: 14px 0 0; }
+.vs-match-txt p { color: var(--ink2); line-height: 1.7; font-size: 16px; margin: 18px 0 0; }
+.vs-match-stats { margin-top: 26px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.vs-match-stats div { padding: 14px; border-radius: 16px; background: var(--glass); border: 1px solid var(--line); }
+.vs-match-stats b { display: block; font-size: clamp(20px, 2vw, 26px); font-weight: 800; letter-spacing: -0.03em; }
+.vs-match-stats span { font-size: 12px; color: var(--ink3); }
+.vs-match-frame { display: block; width: 100%; cursor: zoom-in; text-align: left; }
+.vs-match-frame .vs-frame-in { display: block; aspect-ratio: 1280 / 546; }
+.vs-match-frame .vs-frame-in video { display: block; }
+
+@media (max-width: 860px) {
+  .vs-award-grid { grid-template-columns: 1fr; }
+  .vs-match { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+  .vs-award-pill { gap: 8px; font-size: 12px; padding: 6px 12px 6px 6px; }
+  .vs-award-pill .where, .vs-award-pill .where + i { display: none; }
+  .vs-award-hero { aspect-ratio: 4 / 3; border-radius: 22px; }
+  .vs-award-hero img { object-position: 42% 50%; }
+  .vs-award-ribbon { top: 12px; left: 12px; padding: 7px 12px; font-size: 12px; }
+  .vs-award-hero-cap { left: 16px; bottom: 14px; right: 56px; font-size: 12.5px; }
+  .vs-award-card { border-radius: 22px; }
+  .vs-award-facts div { grid-template-columns: 1fr; gap: 3px; }
+  .vs-award-tiles { gap: 8px; }
+  .vs-award-tile { min-height: 0; aspect-ratio: 3 / 4; }
+  .vs-award-tile .vs-tile-cap span { display: none; }
+  .vs-reels { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; gap: 12px; margin-inline: calc(var(--gut) * -1); padding: 4px var(--gut) 18px; scrollbar-width: none; }
+  .vs-reels::-webkit-scrollbar { display: none; }
+  .vs-reel { flex: 0 0 72%; scroll-snap-align: center; border-radius: 24px; padding: 6px; }
+  .vs-reel:nth-child(2) { margin-top: 0; }
+  .vs-reel-in { border-radius: 19px; }
+  .vs-reel-tag { top: 16px; left: 16px; }
+  .vs-reel-cap { left: 18px; right: 18px; bottom: 18px; }
+  .vs-match-stats div { padding: 12px 10px; }
+}
+@media (prefers-reduced-motion: reduce) { .vs-reel-tag::before { animation: none; } }
+
+/* Downloads: sign in with Google first */
+.vs-dl-gate { position: relative; text-align: center; padding: 8px 4px 2px; }
+.vs-dl-lock { width: 54px; height: 54px; margin: 0 auto 14px; border-radius: 16px; display: grid; place-items: center; background: rgba(103, 232, 249, 0.12); border: 1px solid rgba(103, 232, 249, 0.35); color: var(--cyan); }
+.vs-dl-gate > b { display: block; font-size: 19px; font-weight: 800; letter-spacing: -0.02em; }
+.vs-dl-gate p { margin: 8px auto 20px; max-width: 400px; font-size: 14px; line-height: 1.55; color: var(--ink2); }
+.vs .vs-dl-google { width: 100%; display: inline-flex; align-items: center; justify-content: center; gap: 12px; padding: 15px 20px; border-radius: 16px; border: 0; cursor: pointer;
+  background: #fff; color: #1f2329; font-size: 15.5px; font-weight: 700; box-shadow: 0 12px 34px rgba(103, 232, 249, 0.22); transition: transform 0.3s var(--ease), box-shadow 0.3s; }
+.vs-dl-google:hover { transform: translateY(-2px); box-shadow: 0 18px 44px rgba(103, 232, 249, 0.34); }
+.vs-dl-gate small { display: block; margin-top: 14px; font-size: 12.5px; color: var(--ink3); line-height: 1.5; }
+.vs-dl-gate small b { color: var(--ink2); }
+
+/* Nav: eight links fit on one line; tighter on smaller laptops, menu below that. */
+.vs-links a { white-space: nowrap; }
+@media (max-width: 1439px) {
+  .vs-links a { padding: 8px 8px; font-size: 13px; }
+  .vs-nav-right .vs-btn.vs-hide-sm { display: none; }
+}
+@media (max-width: 1260px) {
+  .vs-links { display: none; }
+  .vs-menu-btn { display: block; }
+}
+.vs-match-frame .vs-frame-tag { top: auto; left: auto; right: 14px; bottom: 14px; }
+@media (max-width: 640px) {
+  .vs-award-hero-cap span { display: none; }
+  .vs-award-hero-cap b { font-size: 14.5px; margin: 0; }
+}
+/* Three competition tiles: trophy and certificate side by side, the stand across. */
+.vs-award-tiles > :nth-child(3) { grid-column: 1 / -1; }
+@media (max-width: 640px) { .vs-award-tiles > :nth-child(3) { aspect-ratio: 16 / 10; } }
+.vs-award-tile img { position: absolute; inset: 0; }
+
+/* ── contact: call Aditya directly ── */
+.vs-contact { position: relative; display: grid; grid-template-columns: 1.25fr 1fr; gap: clamp(28px, 5vw, 70px); align-items: center; overflow: hidden;
+  padding: clamp(28px, 5vw, 64px); border-radius: 32px; border: 1px solid var(--line2);
+  background: radial-gradient(60% 90% at 100% 0%, rgba(103, 232, 249, 0.14), transparent 70%), radial-gradient(50% 80% at 0% 100%, rgba(139, 92, 246, 0.14), transparent 70%), var(--bg2); }
+.vs-contact .vs-h2 { font-size: clamp(34px, 4.6vw, 64px); }
+.vs-contact .vs-lead { max-width: 560px; }
+.vs-contact-topics { list-style: none; margin: 26px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.vs-contact-topics li { padding: 8px 14px; border-radius: 999px; border: 1px solid var(--line2); background: var(--glass); font-size: 13px; color: var(--ink2); }
+.vs-contact-call { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: clamp(24px, 3vw, 36px); border-radius: 26px;
+  background: linear-gradient(150deg, #ffffff, #e9f8ff 60%, #efe9ff); color: #05070a; box-shadow: 0 30px 80px rgba(103, 232, 249, 0.22);
+  transition: transform 0.45s var(--ease), box-shadow 0.45s var(--ease); }
+.vs-contact-call:hover { transform: translateY(-4px); box-shadow: 0 40px 90px rgba(103, 232, 249, 0.34); }
+.vs-contact-call .ic { width: 56px; height: 56px; border-radius: 18px; display: grid; place-items: center; color: #fff; background: #05070a; margin-bottom: 10px; box-shadow: 0 10px 26px rgba(5, 7, 10, 0.3); }
+.vs-contact-call small { font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: rgba(5, 7, 10, 0.6); }
+.vs-contact-call b { font-size: clamp(30px, 3.6vw, 46px); font-weight: 900; letter-spacing: -0.03em; line-height: 1.05; white-space: nowrap; }
+.vs-contact-call .go { margin-top: 14px; display: inline-flex; align-items: center; gap: 8px; padding: 11px 18px; border-radius: 999px; background: #05070a; color: #fff; font-weight: 800; font-size: 14px; }
+.vs-contact-call:hover .go svg { transform: translateX(3px); }
+.vs-contact-call .go svg { transition: transform 0.35s var(--ease); }
+
+.vs-foot-call { margin-top: 22px; display: inline-flex; align-items: center; gap: 12px; padding: 10px 16px 10px 12px; border-radius: 16px; border: 1px solid var(--line2); background: var(--glass); transition: border-color 0.3s; }
+.vs-foot-call:hover { border-color: rgba(103, 232, 249, 0.5); }
+.vs-foot-call svg { color: var(--cyan); flex-shrink: 0; }
+.vs-foot-call small { display: block; font-size: 11.5px; color: var(--ink3); }
+.vs-foot-call b { display: block; font-size: 16px; letter-spacing: 0.01em; }
+
+@media (max-width: 860px) {
+  .vs-contact { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+  .vs-contact { border-radius: 24px; padding: 24px 18px; }
+  .vs-contact-call { border-radius: 20px; }
+  .vs-contact-call b { font-size: 30px; }
+}
+.vs .vs-contact-call { color: #05070a; }
+.vs .vs-contact-call .go { color: #fff; }
+
+/* Contact card: call + WhatsApp */
+.vs { --wa: #25d366; }
+.vs .vs-contact-call .num { font-size: clamp(30px, 3.6vw, 46px); font-weight: 900; letter-spacing: -0.03em; line-height: 1.05; white-space: nowrap; color: #05070a; }
+.vs-contact-call .acts { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 10px; }
+.vs .vs-contact-call .acts .go { margin: 0; color: #fff; transition: transform 0.3s var(--ease), box-shadow 0.3s; }
+.vs .vs-contact-call .acts .go:hover { transform: translateY(-2px); box-shadow: 0 10px 24px rgba(5, 7, 10, 0.25); }
+.vs .vs-contact-call .acts .go.wa { background: var(--wa); color: #fff; }
+.vs .vs-contact-call .acts .go.wa:hover { box-shadow: 0 10px 26px rgba(37, 211, 102, 0.45); }
+.vs-contact-call:hover { transform: none; }
+
+.vs-foot-wa { margin: 22px 0 0 8px; display: inline-flex; align-items: center; gap: 8px; vertical-align: top; padding: 0 16px; height: 63px; border-radius: 16px;
+  background: rgba(37, 211, 102, 0.12); border: 1px solid rgba(37, 211, 102, 0.45); font-weight: 700; font-size: 14px; transition: background 0.3s; }
+.vs-foot-wa svg { color: #25d366; }
+.vs-foot-wa:hover { background: rgba(37, 211, 102, 0.22); }
+
+.vs-drawer-contact { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.vs .vs-wa { background: #25d366; color: #fff; border: 0; }
+.vs .vs-wa:hover { background: #20bd5a; transform: translateY(-2px); }
+
+@media (max-width: 640px) {
+  .vs .vs-contact-call .num { font-size: 30px; }
+  .vs-contact-call .acts { width: 100%; }
+  .vs-contact-call .acts .go { flex: 1; justify-content: center; }
+  .vs-foot-wa { margin: 10px 0 0; height: auto; padding: 12px 16px; }
+}
+/* Phone menu: scrolls if the screen is short; slightly smaller links so all fit. */
+.vs-drawer { overflow-y: auto; overscroll-behavior: contain; }
+.vs-drawer a.big { font-size: clamp(22px, 6.6vw, 34px); padding: 8px 0; }
+.vs .vs-contact-call .acts .go { white-space: nowrap; }
+@media (max-width: 640px) { .vs .vs-contact-call .acts .go { padding: 11px 12px; font-size: 13.5px; } }
+
+/* ── Nirmal Dhara Jalyan 2.0 ── */
+.vs-b2 { background: radial-gradient(60% 45% at 50% 20%, rgba(139, 92, 246, 0.08), transparent 70%); }
+.vs-b2-top { margin-top: clamp(50px, 7vw, 80px); grid-template-columns: 1.3fr 1fr; }
+.vs-b2-frame { display: block; width: 100%; cursor: zoom-in; text-align: left; }
+.vs-b2-frame .vs-frame-in { display: block; aspect-ratio: 16 / 9; }
+.vs-b2-frame .vs-frame-in img { display: block; }
+.vs-b2-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.vs-b2-stats div { padding: 12px 10px; border-radius: 14px; background: var(--glass); border: 1px solid var(--line); }
+.vs-b2-stats b { display: block; font-size: clamp(15px, 1.5vw, 19px); font-weight: 800; letter-spacing: -0.02em; }
+.vs-b2-stats span { font-size: 11.5px; color: var(--ink3); }
+.vs-b2-feats { margin-top: 14px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.vs-b2-feat { padding: 14px 16px; border-radius: 16px; background: var(--glass); border: 1px solid var(--line); }
+.vs-b2-feat b { display: block; font-size: 14.5px; margin-bottom: 4px; }
+.vs-b2-feat span { font-size: 13px; color: var(--ink2); line-height: 1.5; }
+.vs-b2-ai { grid-template-columns: 0.9fr 1.3fr; }
+.vs-b2-pipe { margin-top: clamp(40px, 6vw, 64px); display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.vs-b2-step { padding: 20px; border-radius: 20px; background: var(--glass); border: 1px solid var(--line); }
+.vs-b2-step i { display: block; font-style: normal; font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.1em; color: #67e8f9; margin-bottom: 10px; }
+.vs-b2-step b { display: block; font-size: 16px; margin-bottom: 6px; }
+.vs-b2-step span { font-size: 13.5px; color: var(--ink2); line-height: 1.55; }
+.vs-b2-skills { margin-top: 28px; padding: 22px 24px; border-radius: 22px; border: 1px solid var(--line2); background: linear-gradient(160deg, rgba(255,255,255,0.05), rgba(255,255,255,0.01)); }
+.vs-b2-skills > div { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 8px; }
+.vs-b2-skill { font-size: 13px; padding: 7px 12px; border-radius: 999px; background: rgba(255,255,255,0.05); border: 1px solid var(--line2); color: var(--ink2); }
+.vs-b2-skills p { margin: 14px 0 0; font-size: 13.5px; color: var(--ink3); }
+@media (max-width: 1080px) { .vs-b2-pipe { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 860px) { .vs-b2-top, .vs-b2-ai { grid-template-columns: 1fr; } }
+@media (max-width: 640px) {
+  .vs-b2-stats { grid-template-columns: 1fr 1fr; }
+  .vs-b2-feats, .vs-b2-pipe { grid-template-columns: 1fr; }
 }

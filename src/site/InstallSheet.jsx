@@ -5,6 +5,8 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { Icon } from './parts'
 import { M } from './content'
 import { useInstall, promptInstall, isStandalone, platform, DOWNLOADS } from './pwa'
+import { canDownload } from './downloads'
+import { useUser } from '../lib/auth'
 
 const KEY = 'varuna.installSheet' // closed for this visit
 
@@ -49,7 +51,9 @@ export default function InstallSheet() {
     setHow((h) => !h)
   }
 
-  const hasDownloads = DOWNLOADS.android || DOWNLOADS.windows
+  const user = useUser()
+  // The app files themselves only for visitors signed in with Google.
+  const hasDownloads = canDownload(user) && (DOWNLOADS.android || DOWNLOADS.windows)
 
   return (
     <AnimatePresence>

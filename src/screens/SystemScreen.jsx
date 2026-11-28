@@ -1,13 +1,12 @@
 import { useEffect, useState } from 'react'
-import { motion } from 'framer-motion'
+import { Page, Pill, TabHeader } from '../components/simple/Simple'
 import { api, getApiBase, setApiBase, testConnection, DEFAULT_API_BASE } from '../api/client'
 import { getBoatBase, setBoatBase, testBoatConnection, BOAT_PROXY_BASE } from '../api/boatClient'
 import { useSystem } from '../components/SystemContext'
 import { useBoat } from '../components/BoatContext'
-import { usePolling } from '../hooks/usePolling'
 import { useToast } from '../components/Toast'
-import { Btn, StaleBadge, StatusOrb, TiltCard, Field, Spinner } from '../components/ui'
-import { num, bool, pick } from '../lib/format'
+import { Btn, StatusOrb, Spinner } from '../components/ui'
+import { bool, pick } from '../lib/format'
 import { setAlertSettings, useAlertSettings } from '../lib/alertSettings'
 import { getFovSettings, setFovSettings, useFovSettings, metersPerPixel, DEFAULT_AVG_WEIGHT_G } from '../lib/sizeEstimate'
 import { sendReportReadyEmail } from '../lib/alerts/email'
@@ -48,6 +47,9 @@ function ConnectionResult({ result }) {
   )
 }
 
+// The drone's Raspberry Pi on Tailscale, by its machine name (MagicDNS).
+const DRONE_PI_TAILSCALE = 'http://varuna-drone:8000'
+
 // ── Connection panel (logic unchanged, redesigned inputs) ─────────────────────
 function ConnectionPanel({ shell }) {
   const desktop = shell.kind === 'desktop'
@@ -59,16 +61,22 @@ function ConnectionPanel({ shell }) {
   const [result,  setResult]  = useState(null)
   const changed = val.trim().replace(/\/+$/, '') !== saved.replace(/\/+$/, '')
 
-  async function apply() {
+  async function applyValue(v) {
     if (desktop) {
       setSaving(true)
-      const r = await window.varuna.setPiAddress(val)
+      const r = await window.varuna.setPiAddress(v)
       setSaving(false)
       if (!r?.ok) return setResult({ ok: false, title: 'Invalid address', detail: r?.error || '' })
       setApiBase('')
-    } else { setApiBase(val) }
+    } else { setApiBase(v) }
     window.location.reload()
   }
+  const apply = () => applyValue(val)
+  // One tap for the two usual setups:
+  //  - the drone Pi on Tailscale, by its machine name (MagicDNS)
+  //  - the drone backend on this laptop (phone-link / VARUNA Cam), port 8000
+  const useTailscalePi = () => applyValue(DRONE_PI_TAILSCALE)
+  const useLocal = () => applyValue('http://127.0.0.1:8000')
   async function test() {
     setTesting(true); setResult(null)
     try { setResult(desktop ? await window.varuna.testPiAddress(val) : await testConnection(val)) }
@@ -79,15 +87,15 @@ function ConnectionPanel({ shell }) {
     <div>
       <p className="mb-3 text-xs text-muted">
         {desktop
-          ? 'Enter the Pi\'s Netbird address — the desktop app forwards to it, so no CORS is needed on the Pi. Saved on this PC.'
-          : <>Leave <strong className="text-ink">blank</strong> to go through the Vite proxy (recommended), or enter the Pi's Netbird address to call it directly.</>}
+          ? <>Tap <strong className="text-ink">Drone Pi on Tailscale</strong> for the drone's Pi (Tailscale name <span className="font-mono">varuna-drone</span>), or <strong className="text-ink">Drone on this computer</strong> when the drone backend runs on this laptop (phone camera link). The desktop app forwards to it, so no CORS is needed. Saved on this PC.</>
+          : <>Leave <strong className="text-ink">blank</strong> to go through the Vite proxy (recommended), or enter the drone Pi's Tailscale address (<span className="font-mono">{DRONE_PI_TAILSCALE}</span>) to call it directly.</>}
       </p>
       <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted">
-        {desktop ? 'Pi address (Netbird)' : 'Backend base URL'}
+        {desktop ? 'Drone address (Tailscale name, IP or this computer)' : 'Backend base URL'}
       </label>
       <input
         value={val} onChange={(e) => setVal(e.target.value)}
-        placeholder={desktop ? 'http://varuna-pi.netbird.cloud:8000' : 'blank = via Vite proxy   ·   or http://varuna-pi.netbird.cloud:8000'}
+        placeholder={desktop ? DRONE_PI_TAILSCALE : `blank = via Vite proxy   ·   or ${DRONE_PI_TAILSCALE}`}
         className="inp mb-3 w-full px-3 py-2 font-mono text-sm"
         spellCheck={false} autoCapitalize="off" autoCorrect="off"
       />
@@ -95,6 +103,8 @@ function ConnectionPanel({ shell }) {
         <Btn disabled={!changed || saving} onClick={apply}>
           {saving ? <Spinner /> : desktop ? 'Save & reconnect' : 'Apply & reconnect'}
         </Btn>
+        <Btn variant="secondary" onClick={useTailscalePi} disabled={saving}>Drone Pi on Tailscale</Btn>
+        <Btn variant="secondary" onClick={useLocal} disabled={saving}>Drone on this computer</Btn>
         <Btn variant="secondary" onClick={test} disabled={testing}>
           {testing ? <Spinner /> : 'Test connection'}
         </Btn>
@@ -102,7 +112,7 @@ function ConnectionPanel({ shell }) {
       </div>
       <ConnectionResult result={result} />
       <p className="mt-2 text-[11px] text-faint">
-        Plain <span className="font-mono">http://</span> is correct for Netbird — WireGuard already encrypts the link.
+        Plain <span className="font-mono">http://</span> is correct over Tailscale — WireGuard already encrypts the link.
         {desktop ? '' : ' Calling the Pi directly needs CORS on FastAPI.'} AI trash detection runs fully on this device (local ONNX models).
       </p>
     </div>
@@ -145,7 +155,8 @@ function BoatConnectionPanel({ shell }) {
   // One tap for the common setup: the boat backend ("Start VARUNA Boat") runs on
   // this same laptop on port 8001. Both the desktop app (via its own proxy) and
   // the browser (direct — the backend sends CORS) talk straight to loopback, so
-  // this bypasses any stale Netbird address in settings or .env.local.
+  // this bypasses any stale address in settings or .env.local. The laptop's
+  // boat program finds the boat phone over Tailscale (varuna-boat) by itself.
   const useLocal = () => applyValue('http://127.0.0.1:8001')
   async function test() {
     setTesting(true); setResult(null)
@@ -157,15 +168,15 @@ function BoatConnectionPanel({ shell }) {
     <div>
       <p className="mb-3 text-xs text-muted">
         {desktop
-          ? <>Tap <strong className="text-ink">Boat on this computer</strong> when "Start VARUNA Boat" runs on this laptop (it listens on 127.0.0.1:8001). For a remote boat, enter its Netbird/LAN address. Saved on this PC.</>
-          : <>Tap <strong className="text-ink">Boat on this computer</strong> to talk straight to 127.0.0.1:8001, leave <strong className="text-ink">blank</strong> for the Vite proxy, or enter the boat's Netbird/LAN address.</>}
+          ? <>Tap <strong className="text-ink">Boat on this computer</strong> (the normal setup): "Start VARUNA Boat" runs on this laptop on 127.0.0.1:8001 and reaches the boat phone over Tailscale (<span className="font-mono">varuna-boat</span>) by itself. For a boat program on another computer, enter its Tailscale/LAN address. Saved on this PC.</>
+          : <>Tap <strong className="text-ink">Boat on this computer</strong> to talk straight to 127.0.0.1:8001, leave <strong className="text-ink">blank</strong> for the Vite proxy, or enter a Tailscale/LAN address.</>}
       </p>
       <label className="mb-1 block text-[11px] uppercase tracking-wider text-muted">
-        {desktop ? 'Boat Pi address (Netbird)' : 'Boat base URL'}
+        {desktop ? 'Boat program address' : 'Boat base URL'}
       </label>
       <input
         value={val} onChange={(e) => setVal(e.target.value)}
-        placeholder={desktop ? 'http://varuna-boat.netbird.cloud:8000' : 'blank = via Vite proxy   ·   or http://varuna-boat.netbird.cloud:8000'}
+        placeholder={desktop ? 'http://127.0.0.1:8001' : 'blank = via Vite proxy   ·   or http://127.0.0.1:8001'}
         className="inp mb-3 w-full px-3 py-2 font-mono text-sm"
         spellCheck={false} autoCapitalize="off" autoCorrect="off"
       />
@@ -182,7 +193,7 @@ function BoatConnectionPanel({ shell }) {
       <ConnectionResult result={result} />
       <p className="mt-2 text-[11px] text-faint">
         The address must answer as the VARUNA boat backend (boat-pi) — boat commands stay locked otherwise, so they can never reach the drone.
-        No boat yet? Run the simulator on this laptop: <span className="font-mono">cd boat-pi &amp;&amp; python main.py --sim --port 8001</span>{desktop ? " and enter this PC's own address with port 8001 (its loopback or Netbird IP)" : ''}.
+        No boat yet? Run the simulator on this laptop: <span className="font-mono">cd boat-pi &amp;&amp; python main.py --sim --port 8001</span>{desktop ? ' and tap Boat on this computer' : ''}.
       </p>
     </div>
   )
@@ -207,47 +218,6 @@ function BoatConnectionSection() {
 }
 
 // ── Health light (redesigned with icon slot) ───────────────────────────────────
-function HealthLight({ label, ok, icon }) {
-  const level = ok === true ? 'ok' : ok === false ? 'bad' : 'idle'
-  const bg    = ok === true ? 'rgba(50,215,75,0.1)' : ok === false ? 'rgba(255,69,58,0.1)' : 'rgba(255,255,255,0.04)'
-  const border = ok === true ? 'rgba(50,215,75,0.2)' : ok === false ? 'rgba(255,69,58,0.2)' : 'rgba(255,255,255,0.07)'
-  return (
-    <div className="flex items-center gap-3 rounded-xl px-4 py-3"
-      style={{ background: bg, border: `1px solid ${border}` }}>
-      {icon && (
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-lg"
-          style={{ background: 'rgba(255,255,255,0.05)' }}>
-          {icon}
-        </div>
-      )}
-      <StatusOrb level={level} size={12} pulse={ok === false} />
-      <div>
-        <div className="text-sm font-semibold text-ink">{label}</div>
-        <div className="text-xs text-muted">
-          {ok === true ? 'Connected' : ok === false ? 'Disconnected' : 'Unknown'}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ── Bar metric with animated fill ─────────────────────────────────────────────
-function Bar({ label, pct, level = 'ok' }) {
-  const v = Math.max(0, Math.min(100, Number(pct) || 0))
-  const c = level === 'bad' ? '#EF4444' : level === 'warn' ? '#F59E0B' : '#22D3EE'
-  return (
-    <div>
-      <div className="mb-1.5 flex justify-between text-xs">
-        <span className="text-muted">{label}</span>
-        <span className="font-mono tnum text-ink">{num(pct, 0)}%</span>
-      </div>
-      <div className="h-2 overflow-hidden rounded-full bg-chip2">
-        <motion.div className="h-full rounded-full" style={{ background: c }} initial={{ width: 0 }} animate={{ width: `${v}%` }} />
-      </div>
-    </div>
-  )
-}
-
 // ── Tuning panel (logic unchanged, redesigned cards) ──────────────────────────
 function TuningPanel() {
   const [cfg,   setCfg]   = useState(null)
@@ -510,179 +480,133 @@ function FovPanel() {
   )
 }
 
-// ── Section wrapper ────────────────────────────────────────────────────────────
+// ── Section wrapper (the app's titled card) ────────────────────────────────────
 function Section({ title, children, right }) {
   return (
-    <TiltCard tilt={false} className="p-5">
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-base font-semibold text-ink">{title}</h2>
+    <section className="sx-section">
+      <div className="sx-section-head">
+        <h2>{title}</h2>
         {right}
       </div>
-      {children}
-    </TiltCard>
+      <div className="sx-section-body">{children}</div>
+    </section>
+  )
+}
+
+const STATUS_ICON = {
+  drone: <><path d="M12 9v6M9 12h6" /><circle cx="5" cy="5" r="2.5" /><circle cx="19" cy="5" r="2.5" /><circle cx="5" cy="19" r="2.5" /><circle cx="19" cy="19" r="2.5" /><path d="M7 7l3 3M17 7l-3 3M7 17l3-3M17 17l-3-3" /></>,
+  camera: <><path d="M4 8h3l2-3h6l2 3h3v11H4z" /><circle cx="12" cy="13" r="3.5" /></>,
+  boat: <><path d="M3 15l2.5 4h13L21 15H3z" /><path d="M12 4v11M12 5l6 7h-6" /></>,
+  chip: <><rect x="6" y="6" width="12" height="12" rx="2" /><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4" /></>,
+}
+
+function StatusTile({ label, sub, ok, icon }) {
+  const tone = ok === true ? 'ok' : ok === false ? 'bad' : ''
+  return (
+    <div className="sx-well flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3.5">
+      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl" style={{ background: 'var(--sx-card)', border: '1px solid var(--sx-line)', color: 'var(--sx-sub)' }}>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{STATUS_ICON[icon]}</svg>
+      </span>
+      <div className="min-w-[150px] flex-1">
+        <div className="text-[14px] font-semibold text-ink">{label}</div>
+        <div className="truncate text-[12.5px] text-muted">{sub}</div>
+      </div>
+      <Pill tone={tone}>{ok === true ? 'Connected' : ok === false ? 'Not connected' : 'Checking'}</Pill>
+    </div>
   )
 }
 
 // The drone Pi's camera_source / source values, as the operator calls them.
-const CAMERA_NAMES = {
-  auto: 'Auto-detect',
-  usb: 'USB webcam',
-  csi: 'Pi camera module',
-  test: 'Test picture',
-  off: 'Off',
-  none: 'None found',
-}
+const PANES = [
+  ['connections', 'Connections'],
+  ['alerts', 'Alerts'],
+  ['camera', 'Size estimate'],
+  ['maps', 'Offline maps'],
+  ['tuning', 'Tuning'],
+  ['advanced', 'Advanced'],
+]
 
 // ── Main screen ───────────────────────────────────────────────────────────────
 export default function SystemScreen() {
-  const { pi, health } = useSystem()
+  const { health } = useSystem()
   const boat = useBoat()
-  const cam = usePolling(api.cameraStatus, 6000)
-  const ai  = usePolling(api.aiStatus,     6000)
-  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [pane, setPaneRaw] = useState(() => {
+    try { return localStorage.getItem('varuna.systemPane') || 'connections' } catch { return 'connections' }
+  })
+  const setPane = (p) => {
+    setPaneRaw(p)
+    try { localStorage.setItem('varuna.systemPane', p) } catch { /* private mode */ }
+  }
 
   const pixhawk = bool(pick(health.data, ['pixhawk_connected', 'pixhawk']))
   const camOk   = bool(pick(health.data, ['camera_connected', 'camera']))
-  const p       = pi.data || {}
-  const cpuCores = p.cpu_per_core || p.per_core || p.cpu_cores || (Array.isArray(p.cpu) ? p.cpu : null)
-  const ram  = pick(p, ['ram_percent', 'memory_percent', 'ram', 'mem'])
-  const disk = pick(p, ['disk_percent', 'disk'])
-  const temp = pick(p, ['temperature', 'temp', 'cpu_temp'])
+  const boatBrain = boat.reachable === true ? boat.fcConnected : boat.reachable === false ? false : undefined
+  const okCount = [pixhawk, camOk, boat.reachable === true, boatBrain === true].filter(Boolean).length
+  const allOk = okCount === 4
 
   return (
-    <div className="mx-auto grid max-w-5xl gap-4">
+    <Page>
+      <TabHeader icon="system" title="System"
+        hint="What is connected, and the settings for the drone, the boat and the app.">
+        <Pill tone={allOk ? 'ok' : okCount >= 2 ? 'warn' : 'bad'}>{allOk ? 'All systems ready' : `${okCount} of 4 connected`}</Pill>
+      </TabHeader>
 
-      {/* ── Health lights — 2×2 grid ── */}
-      <div className="grid gap-3 sm:grid-cols-2">
-        <HealthLight label="Pixhawk (flight controller)" ok={pixhawk} icon="🧭" />
-        <HealthLight label="Camera"                      ok={camOk}   icon="📷" />
-        <HealthLight label="Boat Pi (link)"              ok={boat.reachable} icon="🚤" />
-        <HealthLight label="Boat Pixhawk"                ok={boat.reachable === true ? boat.fcConnected : boat.reachable === false ? false : undefined} icon="⚓" />
-      </div>
+      <Section title="Status" right={!allOk && <span className="text-[12.5px] text-muted">Not connected? Check Connections below.</span>}>
+        <div className="grid gap-3 md:grid-cols-2">
+          <StatusTile icon="drone"  label="Drone flight controller" sub="The drone's autopilot" ok={pixhawk} />
+          <StatusTile icon="camera" label="Drone camera"            sub="Video for the plastic finder" ok={camOk} />
+          <StatusTile icon="boat"   label="Boat link"               sub="The laptop's boat program" ok={boat.reachable} />
+          <StatusTile icon="chip"   label="Boat controller"         sub="The boat's brain on its phone" ok={boatBrain} />
+        </div>
+      </Section>
 
-      {/* ── Connection ── */}
-      <ConnectionSection />
+      <div className="flex flex-col gap-3">
+        <div className="sx-seg max-w-full self-start overflow-x-auto whitespace-nowrap" role="tablist" aria-label="Settings">
+          {PANES.map(([k, l]) => (
+            <button key={k} type="button" role="tab" aria-selected={pane === k} aria-pressed={pane === k} onClick={() => setPane(k)}>{l}</button>
+          ))}
+        </div>
 
-      {/* ── Boat connection ── */}
-      <BoatConnectionSection />
-
-      {/* ── Raspberry Pi metrics ── */}
-      <Section title="Raspberry Pi" right={<StaleBadge lastUpdate={pi.lastUpdate} connected={!pi.error} />}>
-        {pi.loading && !pi.data ? (
-          <Spinner label="Reading Pi metrics" />
-        ) : (
-          <div className="grid gap-5 sm:grid-cols-2">
-            {/* Bars */}
-            <div className="flex flex-col gap-3">
-              <Bar label="RAM"  pct={ram}  level={Number(ram)  > 90 ? 'bad' : Number(ram)  > 75 ? 'warn' : 'ok'} />
-              <Bar label="Disk" pct={disk} level={Number(disk) > 90 ? 'bad' : 'ok'} />
-              {/* Per-core CPU bars */}
-              {Array.isArray(cpuCores) && (
-                <div>
-                  <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted">CPU per core</div>
-                  <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${Math.min(cpuCores.length, 4)}, 1fr)` }}>
-                    {cpuCores.map((c, i) => {
-                      const pct = typeof c === 'object' ? c.percent : c
-                      const lvl = Number(pct) > 90 ? 'warn' : 'ok'
-                      const col = lvl === 'warn' ? '#F59E0B' : '#22D3EE'
-                      return (
-                        <div key={i} className="flex flex-col items-center gap-1">
-                          <div className="text-[9px] text-faint">C{i}</div>
-                          <div className="w-full overflow-hidden rounded-full bg-chip2" style={{ height: 4 }}>
-                            <motion.div className="h-full rounded-full" style={{ background: col }}
-                              initial={{ width: 0 }} animate={{ width: `${Math.max(0, Math.min(100, Number(pct) || 0))}%` }} />
-                          </div>
-                          <div className="font-mono text-[9px] tnum text-muted">{num(pct, 0)}%</div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-              {/* Fallback single bar if no per-core */}
-              {!Array.isArray(cpuCores) && p.cpu_count && (
-                <Bar label="CPU" pct={pick(p, ['cpu_percent', 'cpu'])} level="ok" />
-              )}
-            </div>
-            {/* Fields */}
-            <div className="grid grid-cols-2 gap-4">
-              <Field label="Temp"  value={num(temp, 0)} unit="°C" level={Number(temp) >= 80 ? 'warn' : 'ok'} />
-              <Field label="Cores" value={Array.isArray(cpuCores) ? cpuCores.length : num(p.cpu_count, 0)} />
-            </div>
+        {pane === 'connections' && (
+          <div className="grid gap-4">
+            <ConnectionSection />
+            <BoatConnectionSection />
           </div>
         )}
-      </Section>
-
-      {/* ── Camera + AI — side by side ── */}
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Section title="Camera" right={<StatusOrb level={camOk ? 'ok' : 'bad'} size={12} />}>
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            <Field label="Status"       value={pick(cam.data, ['status_text']) || (camOk ? 'ACTIVE' : 'OFFLINE')} mono={false} />
-            <Field label="Measured FPS" value={num(pick(cam.data, ['measured_fps']), 1)} />
-            <Field label="Resolution"   value={pick(cam.data, ['resolution']) || '—'} mono={false} />
-            <Field label="Frames"       value={num(pick(cam.data, ['frames_captured']), 0)} />
-            <Field label="Camera"       value={CAMERA_NAMES[pick(cam.data, ['source'])] || '—'} mono={false} />
-            <Field label="Choice"       value={CAMERA_NAMES[pick(cam.data, ['camera_source'])] || '—'} mono={false} />
-            <Field label="Video"        value={cam.data?.codec ? `${cam.data.codec === 'h264' ? 'H.264' : 'MJPEG'} · ${num(cam.data.stream_kbps, 0)} kbit/s` : '—'} mono={false} />
-          </div>
-          {pick(cam.data, ['last_error']) && <div className="mt-2 text-xs text-warn">{cam.data.last_error}</div>}
-        </Section>
-
-        <Section title="AI detection" right={<StatusOrb level={bool(pick(ai.data, ['model_loaded'])) ? 'ok' : 'warn'} size={12} />}>
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            <Field label="Enabled"    value={bool(pick(ai.data, ['ai_enabled'])) ? 'Yes' : 'No'} mono={false} />
-            <Field label="Model"      value={bool(pick(ai.data, ['model_loaded'])) ? 'Loaded' : 'No'} mono={false} />
-            <Field label="Confidence" value={num(pick(ai.data, ['confidence_threshold']), 2)} />
-            <Field label="Live boxes" value={num(pick(ai.data, ['live_boxes', 'people_in_last_frame']), 0)} />
-          </div>
-        </Section>
-      </div>
-
-      {/* ── Alerts ── */}
-      <Section title="Alerts">
-        <p className="mb-3 text-xs text-muted">
-          Send big-dump alerts and report-ready notifications through WhatsApp or email. All keys stay in this browser — nothing leaves except the message itself.
-        </p>
-        <AlertsPanel />
-      </Section>
-
-      {/* ── Camera FOV & weight estimates ── */}
-      <Section title="Camera FOV & size estimate">
-        <p className="mb-3 text-xs text-muted">
-          Rough estimate — the report labels these numbers "rough" and prints the FOV assumption you chose here.
-        </p>
-        <FovPanel />
-      </Section>
-
-      {/* ── Offline maps ── */}
-      <Section title="Offline maps">
-        <OfflineMapsPanel />
-      </Section>
-
-      {/* ── Live tuning ── */}
-      <Section title="Live tuning">
-        <TuningPanel />
-      </Section>
-
-      {/* ── Advanced ── */}
-      <Section
-        title="Advanced"
-        right={
-          <button onClick={() => setShowAdvanced((s) => !s)} className="text-xs text-accent">
-            {showAdvanced ? 'Hide' : 'Show'}
-          </button>
-        }
-      >
-        {showAdvanced ? (
-          <div>
-            <div className="mb-2 text-xs uppercase tracking-wider text-muted">MAVLink link preference (USB / TELEM2)</div>
+        {pane === 'alerts' && (
+          <Section title="Alerts">
+            <p className="mb-3 text-[13px] text-muted">
+              Big-dump alerts and report-ready notices by WhatsApp or email. Keys stay in this browser; only the message itself is sent.
+            </p>
+            <AlertsPanel />
+          </Section>
+        )}
+        {pane === 'camera' && (
+          <Section title="Camera view and size estimate">
+            <p className="mb-3 text-[13px] text-muted">
+              Used to estimate how big each item is. Reports mark these numbers as rough and print the setting chosen here.
+            </p>
+            <FovPanel />
+          </Section>
+        )}
+        {pane === 'maps' && (
+          <Section title="Offline maps">
+            <OfflineMapsPanel />
+          </Section>
+        )}
+        {pane === 'tuning' && (
+          <Section title="Tuning">
+            <TuningPanel />
+          </Section>
+        )}
+        {pane === 'advanced' && (
+          <Section title="Advanced">
+            <div className="sx-label mb-2">MAVLink link preference (USB / TELEM2)</div>
             <LinkPreference />
-            <p className="mt-2 text-[11px] text-muted">Which physical link the vehicle connection prefers. Leave on AUTO unless troubleshooting.</p>
-          </div>
-        ) : (
-          <div className="text-sm text-muted">Physical link preference and low-level settings.</div>
+            <p className="mt-2 text-[12.5px] text-muted">Which physical link the drone connection prefers. Leave on AUTO unless troubleshooting.</p>
+          </Section>
         )}
-      </Section>
-    </div>
+      </div>
+    </Page>
   )
 }

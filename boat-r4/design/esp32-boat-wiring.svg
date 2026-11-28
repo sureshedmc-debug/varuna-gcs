@@ -1,0 +1,217 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1330" width="1600" height="1330" font-family="Segoe UI, Arial, sans-serif">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#dc2626"/></marker>
+    <style>
+      .box { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.5; }
+      .t { font-size: 17px; font-weight: 700; fill: #0f172a; }
+      .s { font-size: 13px; fill: #475569; }
+      .k { font-size: 12px; fill: #64748b; }
+      .w { fill: none; stroke-width: 3.2; stroke-linejoin: round; stroke-linecap: round; }
+      .pinU { font-size: 12.5px; font-weight: 700; fill: #ffffff; }
+      .pinN { font-size: 12px; fill: #64748b; }
+      .h { font-size: 20px; font-weight: 800; fill: #0f172a; }
+    </style>
+  </defs>
+  <rect width="1600" height="1330" fill="#f8fafc"/>
+
+  <!-- Title -->
+  <text x="60" y="58" font-size="28" font-weight="800" fill="#0f172a">VARUNA air boat · ESP32 brain wiring</text>
+  <text x="60" y="86" class="s">Matches the firmware boat-r4/varuna_boat_brain_esp32 (two fin servos, scoop servo, 2 ESCs, 2 relays, FS-iA6B on PPM). Go by the labels printed on your board.</text>
+  <text x="60" y="108" class="s">Signal wiring on top; power and ground underneath. Every GND is joined together.</text>
+
+  <!-- ===================== ESP32 board ===================== -->
+  <rect x="650" y="160" width="300" height="580" rx="16" fill="#1e293b"/>
+  <rect x="720" y="176" width="160" height="118" rx="6" fill="#94a3b8"/>
+  <text x="800" y="230" text-anchor="middle" font-size="14" font-weight="700" fill="#1e293b">ESP32-WROOM-32</text>
+  <text x="800" y="250" text-anchor="middle" font-size="11" fill="#1e293b">(antenna end)</text>
+  <text x="800" y="335" text-anchor="middle" font-size="18" font-weight="800" fill="#ffffff">ESP32 DevKit</text>
+  <text x="800" y="357" text-anchor="middle" font-size="13" fill="#cbd5e1">VARUNA boat brain</text>
+  <text x="800" y="420" text-anchor="middle" font-size="12" fill="#94a3b8">blue LED = GPIO2</text>
+  <text x="800" y="438" text-anchor="middle" font-size="12" fill="#94a3b8">slow blink: disarmed</text>
+  <text x="800" y="456" text-anchor="middle" font-size="12" fill="#94a3b8">on: armed · fast: failsafe</text>
+  <rect x="742" y="600" width="34" height="22" rx="4" fill="#334155"/><text x="759" y="615" text-anchor="middle" font-size="9" fill="#cbd5e1">EN</text>
+  <rect x="824" y="600" width="34" height="22" rx="4" fill="#334155"/><text x="841" y="615" text-anchor="middle" font-size="9" fill="#cbd5e1">BOOT</text>
+  <rect x="770" y="726" width="60" height="26" rx="4" fill="#94a3b8"/>
+  <text x="800" y="712" text-anchor="middle" font-size="11" fill="#94a3b8">USB</text>
+
+  <!-- left header pins: EN VP VN 34 35 32 33 25 26 27 14 12 13 GND VIN (y = 215 + 34 i) -->
+  <g>
+    <circle cx="650" cy="215" r="5" fill="#475569"/><text x="664" y="219" class="pinN">EN</text>
+    <circle cx="650" cy="249" r="5" fill="#475569"/><text x="664" y="253" class="pinN">VP·36</text>
+    <circle cx="650" cy="283" r="5" fill="#475569"/><text x="664" y="287" class="pinN">VN·39</text>
+    <circle cx="650" cy="317" r="5" fill="#475569"/><text x="664" y="321" class="pinN">GPIO34</text>
+    <circle cx="650" cy="351" r="6" fill="#fff"/><text x="664" y="355" class="pinU">GPIO35</text>
+    <circle cx="650" cy="385" r="6" fill="#fff"/><text x="664" y="389" class="pinU">GPIO32</text>
+    <circle cx="650" cy="419" r="6" fill="#fff"/><text x="664" y="423" class="pinU">GPIO33</text>
+    <circle cx="650" cy="453" r="6" fill="#fff"/><text x="664" y="457" class="pinU">GPIO25</text>
+    <circle cx="650" cy="487" r="6" fill="#fff"/><text x="664" y="491" class="pinU">GPIO26</text>
+    <circle cx="650" cy="521" r="6" fill="#fff"/><text x="664" y="525" class="pinU">GPIO27</text>
+    <circle cx="650" cy="555" r="5" fill="#475569"/><text x="664" y="559" class="pinN">GPIO14</text>
+    <circle cx="650" cy="589" r="5" fill="#475569"/><text x="664" y="593" class="pinN">GPIO12</text>
+    <circle cx="650" cy="623" r="5" fill="#475569"/><text x="664" y="627" class="pinN">GPIO13 spare</text>
+    <circle cx="650" cy="657" r="6" fill="#fff"/><text x="664" y="661" class="pinU">GND</text>
+    <circle cx="650" cy="691" r="5" fill="#475569"/><text x="664" y="695" class="pinN">VIN (empty)</text>
+  </g>
+  <!-- right header pins: 23 22 TX0 RX0 21 19 18 5 TX2 RX2 4 2 15 GND 3V3 -->
+  <g text-anchor="end">
+    <circle cx="950" cy="215" r="6" fill="#fff"/><text x="936" y="219" class="pinU">GPIO23</text>
+    <circle cx="950" cy="249" r="5" fill="#475569"/><text x="936" y="253" class="pinN">GPIO22</text>
+    <circle cx="950" cy="283" r="5" fill="#475569"/><text x="936" y="287" class="pinN">TX0</text>
+    <circle cx="950" cy="317" r="5" fill="#475569"/><text x="936" y="321" class="pinN">RX0</text>
+    <circle cx="950" cy="351" r="5" fill="#475569"/><text x="936" y="355" class="pinN">GPIO21</text>
+    <circle cx="950" cy="385" r="6" fill="#fff"/><text x="936" y="389" class="pinU">GPIO19</text>
+    <circle cx="950" cy="419" r="6" fill="#fff"/><text x="936" y="423" class="pinU">GPIO18</text>
+    <circle cx="950" cy="453" r="5" fill="#475569"/><text x="936" y="457" class="pinN">GPIO5</text>
+    <circle cx="950" cy="487" r="5" fill="#475569"/><text x="936" y="491" class="pinN">TX2·17</text>
+    <circle cx="950" cy="521" r="5" fill="#94a3b8"/><text x="936" y="525" class="pinN">RX2·16</text>
+    <circle cx="950" cy="555" r="5" fill="#475569"/><text x="936" y="559" class="pinN">GPIO4</text>
+    <circle cx="950" cy="589" r="5" fill="#475569"/><text x="936" y="593" class="pinN">GPIO2 (LED)</text>
+    <circle cx="950" cy="623" r="5" fill="#475569"/><text x="936" y="627" class="pinN">GPIO15</text>
+    <circle cx="950" cy="657" r="6" fill="#fff"/><text x="936" y="661" class="pinU">GND</text>
+    <circle cx="950" cy="691" r="5" fill="#475569"/><text x="936" y="695" class="pinN">3V3 (nothing)</text>
+  </g>
+
+  <!-- ===================== left: signal wires ===================== -->
+  <path class="w" stroke="#a16207" d="M650 351 H620 V230 H440"/>
+  <path class="w" stroke="#ea580c" d="M650 385 H600 V330 H440"/>
+  <path class="w" stroke="#ea580c" d="M650 419 H520 V430 H440"/>
+  <path class="w" stroke="#2563eb" d="M650 453 H540 V530 H440"/>
+  <path class="w" stroke="#2563eb" d="M650 487 H560 V630 H440"/>
+  <path class="w" stroke="#2563eb" d="M650 521 H580 V730 H440"/>
+  <!-- GND stubs -->
+  <path class="w" stroke="#111827" d="M650 657 H626"/><path d="M626 649 V665 M620 652 V662 M614 655 V659" stroke="#111827" stroke-width="2.5"/>
+  <path class="w" stroke="#111827" d="M950 657 H974"/><path d="M974 649 V665 M980 652 V662 M986 655 V659" stroke="#111827" stroke-width="2.5"/>
+  <text x="996" y="662" class="k">common GND</text>
+
+  <!-- left boxes (x 80..440) -->
+  <rect class="box" x="80" y="192" width="360" height="76" rx="12"/>
+  <text x="96" y="216" class="t">Battery voltage sense</text>
+  <text x="96" y="237" class="s">Batt + → 10 kΩ → GPIO35 → 1 kΩ → GND</text>
+  <text x="96" y="256" class="k">BATT_MONITOR 1 · keep the pin under 3.3 V</text>
+
+  <rect class="box" x="80" y="292" width="360" height="76" rx="12"/>
+  <text x="96" y="316" class="t">LEFT ESC → left air motor</text>
+  <text x="96" y="337" class="s">signal (white/yellow) + GND only · OUT3</text>
+  <text x="96" y="356" class="k">1000 µs stop … 2000 µs full · forward only</text>
+
+  <rect class="box" x="80" y="392" width="360" height="76" rx="12"/>
+  <text x="96" y="416" class="t">RIGHT ESC → right air motor</text>
+  <text x="96" y="437" class="s">signal (white/yellow) + GND only · OUT4</text>
+  <text x="96" y="456" class="k">ESC power wires go to the battery (below)</text>
+
+  <rect class="box" x="80" y="492" width="360" height="76" rx="12"/>
+  <text x="96" y="516" class="t">LEFT fin servo</text>
+  <text x="96" y="537" class="s">signal here · + / − from the BEC rail · OUT1</text>
+  <text x="96" y="556" class="k">SERVO1_FUNCTION 26 (steering)</text>
+
+  <rect class="box" x="80" y="592" width="360" height="76" rx="12"/>
+  <text x="96" y="616" class="t">Scoop (ramp) servo</text>
+  <text x="96" y="637" class="s">signal here · + / − from the BEC rail · OUT2</text>
+  <text x="96" y="656" class="k">SERVO2_MIN 1000 = raised · MAX 2000 = lowered</text>
+
+  <rect class="box" x="80" y="692" width="360" height="76" rx="12"/>
+  <text x="96" y="716" class="t">RIGHT fin servo</text>
+  <text x="96" y="737" class="s">signal here · + / − from the BEC rail · OUT5</text>
+  <text x="96" y="756" class="k">moves together with the left fin</text>
+
+  <!-- ===================== right: receiver + relays ===================== -->
+  <path class="w" stroke="#7c3aed" d="M950 215 H1160"/>
+  <path class="w" stroke="#16a34a" d="M950 385 H1160"/>
+  <path class="w" stroke="#16a34a" d="M950 419 H1160"/>
+  <path class="w" stroke="#7c3aed" stroke-dasharray="7 6" d="M950 521 H1040"/>
+  <text x="1048" y="517" class="k">iBUS (optional,</text>
+  <text x="1048" y="533" class="k">instead of PPM)</text>
+
+  <rect class="box" x="1160" y="170" width="360" height="132" rx="12"/>
+  <text x="1176" y="196" class="t">FlySky FS-iA6B receiver</text>
+  <text x="1176" y="219" class="s">PPM out = its CH1 signal pin (set to PPM)</text>
+  <text x="1176" y="240" class="s">+ from the BEC 5 V rail · − to GND</text>
+  <text x="1176" y="262" class="k">CH3 throttle · CH4 fins · CH5 SwD manual / auto</text>
+  <text x="1176" y="280" class="k">CH6 SwA brushes · CH7 VrB scoop</text>
+
+  <rect class="box" x="1160" y="340" width="360" height="180" rx="12"/>
+  <text x="1176" y="366" class="t">Relay board</text>
+  <text x="1176" y="390" class="s"><tspan font-weight="700" fill="#16a34a">IN2</tspan>  ← GPIO19 · brush motors</text>
+  <text x="1176" y="424" class="s"><tspan font-weight="700" fill="#16a34a">IN1</tspan>  ← GPIO18 · LED strip + buzzer</text>
+  <text x="1176" y="456" class="s">VCC 5 V from the BEC · GND to common GND</text>
+  <text x="1176" y="480" class="k">High-level trigger (or 3.3 V) board is best.</text>
+  <text x="1176" y="498" class="k">Low-level trigger board: set AB_RELAY_LOW 1.</text>
+
+  <path class="w" stroke="#dc2626" d="M1245 520 V572"/>
+  <path class="w" stroke="#dc2626" d="M1435 520 V572"/>
+  <rect class="box" x="1160" y="572" width="172" height="96" rx="12"/>
+  <text x="1174" y="596" class="t">LED strip + buzzer</text>
+  <text x="1174" y="617" class="k">relay 1 COM → NO</text>
+  <text x="1174" y="634" class="k">switches their +</text>
+  <text x="1174" y="651" class="k">flashes on a plastic find</text>
+  <rect class="box" x="1348" y="572" width="172" height="96" rx="12"/>
+  <text x="1362" y="596" class="t">2 brush motors</text>
+  <text x="1362" y="617" class="k">relay 2 COM → NO</text>
+  <text x="1362" y="634" class="k">batt + → fuse → COM</text>
+  <text x="1362" y="651" class="k">diode across each motor</text>
+
+  <!-- phone -->
+  <path class="w" stroke="#475569" stroke-width="5" d="M800 752 V800"/>
+  <rect class="box" x="600" y="800" width="400" height="92" rx="12"/>
+  <text x="616" y="826" class="t">Phone · VARUNA Boat Link 2.4</text>
+  <text x="616" y="848" class="s">USB OTG cable into the ESP32's USB socket</text>
+  <text x="616" y="868" class="k">powers the ESP32 · GPS, compass, gyro · AI captain</text>
+
+  <!-- notes -->
+  <rect x="60" y="800" width="500" height="112" rx="12" fill="#fff7ed" stroke="#fdba74"/>
+  <text x="76" y="824" font-size="15" font-weight="800" fill="#9a3412">Before you power up</text>
+  <text x="76" y="846" class="s">• Take the propellers off for bench tests.</text>
+  <text x="76" y="866" class="s">• Servos, receiver, relays: BEC power, never the ESP32's 3V3 / 5V.</text>
+  <text x="76" y="886" class="s">• ESC red wires unconnected: only ONE BEC feeds the rail.</text>
+  <text x="76" y="904" class="s">• Only the phone powers the ESP32: leave VIN empty.</text>
+
+  <!-- colour key -->
+  <rect x="1040" y="700" width="480" height="192" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
+  <text x="1056" y="724" font-size="15" font-weight="800" fill="#0f172a">Wire colours in this drawing</text>
+  <path class="w" stroke="#ea580c" d="M1056 748 H1096"/><text x="1106" y="752" class="s">ESC signal</text>
+  <path class="w" stroke="#2563eb" d="M1270 748 H1310"/><text x="1320" y="752" class="s">servo signal</text>
+  <path class="w" stroke="#7c3aed" d="M1056 778 H1096"/><text x="1106" y="782" class="s">receiver (PPM)</text>
+  <path class="w" stroke="#16a34a" d="M1270 778 H1310"/><text x="1320" y="782" class="s">relay control</text>
+  <path class="w" stroke="#a16207" d="M1056 808 H1096"/><text x="1106" y="812" class="s">battery sense</text>
+  <path class="w" stroke="#475569" d="M1270 808 H1310"/><text x="1320" y="812" class="s">USB to phone</text>
+  <path class="w" stroke="#dc2626" d="M1056 838 H1096"/><text x="1106" y="842" class="s">battery / 5–6 V power</text>
+  <path class="w" stroke="#111827" d="M1270 838 H1310"/><text x="1320" y="842" class="s">GND (all joined)</text>
+  <text x="1056" y="874" class="k">Pin order is the common 30-pin DevKit V1; read your board's labels.</text>
+
+  <!-- ===================== power ===================== -->
+  <line x1="60" y1="950" x2="1540" y2="950" stroke="#e2e8f0" stroke-width="2"/>
+  <text x="60" y="984" class="h">Power and ground</text>
+
+  <rect x="60" y="1010" width="220" height="86" rx="12" fill="#fee2e2" stroke="#fca5a5"/>
+  <text x="76" y="1038" class="t">Boat battery (LiPo)</text>
+  <text x="76" y="1060" class="s">+ red · − black (to GND)</text>
+  <text x="76" y="1080" class="k">charged · balanced</text>
+  <path class="w" stroke="#dc2626" d="M280 1053 H330" marker-end="url(#arr)"/>
+  <rect x="334" y="1018" width="170" height="70" rx="12" class="box"/>
+  <text x="350" y="1046" class="t">Switch + fuse</text>
+  <text x="350" y="1068" class="k">main power off = boat dead</text>
+  <path class="w" stroke="#dc2626" stroke-width="6" d="M504 1053 H1530"/>
+  <text x="560" y="1040" class="k">battery + bus</text>
+
+  <path class="w" stroke="#dc2626" d="M620 1053 V1110"/>
+  <path class="w" stroke="#dc2626" d="M800 1053 V1110"/>
+  <path class="w" stroke="#dc2626" d="M1010 1053 V1110"/>
+  <path class="w" stroke="#dc2626" d="M1230 1053 V1110"/>
+  <path class="w" stroke="#dc2626" d="M1440 1053 V1110"/>
+  <rect class="box" x="540" y="1110" width="160" height="66" rx="12"/>
+  <text x="556" y="1136" class="t">Left ESC</text><text x="556" y="1157" class="k">thick + / − wires</text>
+  <rect class="box" x="720" y="1110" width="160" height="66" rx="12"/>
+  <text x="736" y="1136" class="t">Right ESC</text><text x="736" y="1157" class="k">thick + / − wires</text>
+  <rect class="box" x="900" y="1110" width="220" height="66" rx="12"/>
+  <text x="916" y="1136" class="t">BEC 5–6 V, 3 A+</text><text x="916" y="1157" class="k">makes the servo / receiver rail</text>
+  <rect class="box" x="1140" y="1110" width="180" height="66" rx="12"/>
+  <text x="1156" y="1136" class="t">Relay 2 COM</text><text x="1156" y="1157" class="k">(fused) → brush motors</text>
+  <rect class="box" x="1340" y="1110" width="190" height="66" rx="12"/>
+  <text x="1356" y="1136" class="t">10 kΩ divider top</text><text x="1356" y="1157" class="k">→ GPIO35 sense</text>
+
+  <path class="w" stroke="#dc2626" d="M1010 1176 V1222 H540"/>
+  <text x="560" y="1214" class="s" font-weight="700" fill="#b91c1c">5–6 V rail (+) → 2 fin servos, scoop servo, receiver, relay VCC</text>
+
+  <path class="w" stroke="#111827" stroke-width="6" d="M60 1268 H1530"/>
+  <text x="60" y="1300" class="s" font-weight="700" fill="#0f172a">COMMON GND: battery −, both ESCs −, BEC −, ESP32 GND, receiver −, all servos −, relay board GND, brush motors −, 1 kΩ divider bottom</text>
+</svg>

@@ -1,20 +1,32 @@
 @echo off
 rem VARUNA drone backend on this laptop, with the phone on the drone.
-rem   Telemetry: Pixhawk -> ESP32 -> phone (relay.py) -> Wi-Fi -> here
-rem   Video:     phone VARUNA Cam app -> Wi-Fi -> here
-rem The phone and this laptop must be on the same Wi-Fi (or the laptop on the
-rem phone's hotspot). Over the internet, use the phone's NetBird IP instead.
+rem   Telemetry: Pixhawk -> ESP32 -> phone (relay.py) -> Tailscale / Wi-Fi -> here
+rem   Video:     phone VARUNA Cam app -> Tailscale / Wi-Fi -> here
+rem Tailscale (normal): Tailscale ON on this laptop and the phone, and the phone
+rem named "varuna-drone-cam" in the admin console - found by itself, anywhere.
+rem Wi-Fi: the phone and this laptop on the same Wi-Fi (or the phone's hotspot).
 rem Then the VARUNA app connects to http://localhost:8000 as it did to the Pi.
 rem
-rem   start_laptop_backend.bat              (asks for the phone's IP the first time)
+rem   start_laptop_backend.bat              (finds the phone on Tailscale, then Wi-Fi, then asks)
 rem   start_laptop_backend.bat 192.168.1.3  (use and remember this IP)
 rem   start_laptop_backend.bat 192.168.1.23 192.168.1.40
 rem                                         (several drone phones: whichever runs VARUNA Cam is used)
 setlocal
 cd /d "%~dp0"
 set "PHONES=%*"
+set "FPY=py"
+where py >nul 2>nul || set "FPY=python"
+rem No IP given? Ask Tailscale for the phone by name, then ask out loud on this Wi-Fi.
+if "%PHONES%"=="" (
+  echo Looking for the drone phone on Tailscale ^(varuna-drone-cam^)...
+  for /f "usebackq delims=" %%a in (`"%FPY%" "%~dp0find_phone_tailscale.py" "%~dp0phone_ip.txt"`) do set "PHONES=%%a"
+)
+if "%PHONES%"=="" (
+  echo Looking for the drone phone on this Wi-Fi ^(VARUNA Cam must be open^)...
+  for /f "usebackq delims=" %%a in (`"%FPY%" "%~dp0find_phone_wifi.py" "%~dp0phone_ip.txt"`) do set "PHONES=%%a"
+)
 if "%PHONES%"=="" if exist phone_ip.txt set /p PHONES=<phone_ip.txt
-if "%PHONES%"=="" set /p "PHONES=Phone's IP (shown in the VARUNA Cam app, e.g. 192.168.1.3): "
+if "%PHONES%"=="" set /p "PHONES=Phone's IP (shown in the VARUNA Cam app, e.g. 100.x.x.x or 192.168.1.3): "
 if "%PHONES%"=="" (
   echo No phone IP given.
   exit /b 1

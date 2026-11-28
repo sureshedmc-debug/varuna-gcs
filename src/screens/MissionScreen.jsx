@@ -1,4 +1,5 @@
-import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Pill, TabHeader } from '../components/simple/Simple'
 import { MapContainer, Marker, Polyline, Polygon, Circle, useMap, useMapEvents } from 'react-leaflet'
 import CachedTileLayer from '../components/CachedTileLayer'
 import L from 'leaflet'
@@ -8,10 +9,10 @@ import { api } from '../api/client'
 import { useSystem } from '../components/SystemContext'
 import { useToast } from '../components/Toast'
 import { usePolling } from '../hooks/usePolling'
-import { Btn, StatusOrb, CommandButton, CommandPanel } from '../components/ui'
+import { Btn, StatusOrb, CommandButton } from '../components/ui'
 import { fmtCoord, num } from '../lib/format'
 import { useLivePosition, useHomePoint } from '../hooks/useLaptopGps'
-import { homeIcon, Drone3DMarker } from '../components/MapCanvas'
+import { homeIcon } from '../components/MapCanvas'
 import { cmd, isOk } from '../lib/commands'
 import { planKey, useActiveMission, getActiveMission, missionFor } from '../lib/missionStore'
 import { usePlanDraft, consumePlanDraft, setMissionMapView } from '../lib/planDraftStore'
@@ -21,7 +22,6 @@ import MissionFenceLayer from '../components/MissionFenceLayer'
 import { useLivePlan, setActiveSection, endLivePlan, claimPlanName, isSectionUploaded } from '../lib/liveMissionPlan'
 
 const DEFAULT_HOME = [17.385, 78.4867]
-const HoloDrone   = lazy(() => import('../components/HoloDrone'))
 const SAT_URL     = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
 const BLUE        = '#3B9EFF'
 
@@ -127,7 +127,7 @@ function Slider({ label, value, set, min, max, step, unit }) {
   return (
     <div>
       <div className="mb-1.5 flex items-center justify-between">
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">{label}</span>
+        <span className="sx-label">{label}</span>
         <span className="font-mono text-sm font-bold tnum text-accent">
           {value}<span className="ml-0.5 text-[10px] font-normal text-muted">{unit}</span>
         </span>
@@ -138,7 +138,7 @@ function Slider({ label, value, set, min, max, step, unit }) {
         className="w-full accent-accent"
         style={{ height: 4 }}
       />
-      <div className="mt-1 flex justify-between font-mono text-[9px] tnum text-faint">
+      <div className="mt-1 flex justify-between font-mono text-[10.5px] tnum text-muted">
         <span>{min}{unit}</span><span>max {max}{unit}</span>
       </div>
     </div>
@@ -169,7 +169,7 @@ function PipelineSteps({ isSaved, isUploaded }) {
             >
               {s.done ? '✓' : i + 1}
             </div>
-            <span className="text-[9px] font-semibold uppercase tracking-wider"
+            <span className="text-[10.5px] font-bold uppercase tracking-wider"
               style={{ color: s.done || s.active ? 'var(--muted)' : 'var(--faint)' }}>
               {s.label}
             </span>
@@ -191,15 +191,15 @@ const WaypointRows = memo(function WaypointRows({ wps, onPatch, onReorder, onRem
   return (
     <div className="mb-3 flex max-h-[28vh] flex-col gap-1.5 overflow-y-auto pr-1">
       {wps.length === 0 && (
-        <div className="py-5 text-center text-sm text-muted">
-          No waypoints yet — tap the map to add.
+        <div className="mp-empty">
+          <b>Add your first waypoint</b>
+          <span>Click anywhere on the map. Points join in the order you add them.</span>
         </div>
       )}
       {wps.map((w, i) => (
         <motion.div
           key={w.id} layout
-          className="flex items-center gap-2 rounded-xl px-3 py-2"
-          style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}
+          className="sx-well flex items-center gap-2 px-3 py-2"
         >
           {/* Number badge */}
           <span
@@ -209,7 +209,7 @@ const WaypointRows = memo(function WaypointRows({ wps, onPatch, onReorder, onRem
             {i + 1}
           </span>
           {/* Coords */}
-          <span className="flex-1 font-mono text-[10px] tnum text-muted">
+          <span className="flex-1 font-mono text-[11px] tnum text-muted">
             {fmtCoord(w.lat)}, {fmtCoord(w.lng)}
           </span>
           {/* Action */}
@@ -301,7 +301,6 @@ export default function MissionScreen() {
   const live        = useLivePosition(telemetry.data)
   const homePoint   = useHomePoint(telemetry.data, live, simulated)
   const home        = homePoint || DEFAULT_HOME
-  const dronePos    = live.position
   const activeMission = missionFor(useActiveMission(), target)
   const running     = activeMission?.status === 'running'
 
@@ -393,14 +392,6 @@ export default function MissionScreen() {
   )
   const savedList = saved.data?.missions || saved.data?.items || (Array.isArray(saved.data) ? saved.data : [])
 
-  // GPS source badge style
-  const gpsStyle = live.source === 'drone'
-    ? { bg: 'rgba(50,215,75,0.14)', color: '#32D74B' }
-    : live.source === 'laptop'
-      ? { bg: 'rgba(255,159,10,0.14)', color: '#FF9F0A' }
-      : { bg: 'rgba(255,69,58,0.14)', color: '#FF453A' }
-  const gpsLabel = live.source === 'drone' ? 'DRONE GPS' : live.source === 'laptop' ? 'LAPTOP GPS · TEST' : 'NO GPS · DEFAULT'
-
   return (
     <div className="relative" style={{ height: 'calc(100vh - 66px)' }}>
 
@@ -421,55 +412,26 @@ export default function MissionScreen() {
           ))}
           {aiDraft?.polygon && <Polygon positions={lakePositions} pathOptions={LAKE_STYLE} interactive={false} />}
           {live.source && <Marker position={home} icon={homeIcon()} interactive={false} />}
-          {dronePos && <Drone3DMarker position={dronePos} size={64} />}
           <MissionFenceLayer home={home} waypoints={wps} />
           {planLayers}
         </MapContainer>
       </div>
 
-      {/* ── Floating title pill (top-left) ── */}
-      <div className="absolute left-3 top-3 z-20 flex items-center gap-2">
-        <div
-          className="flex items-center gap-2 rounded-xl px-3 py-2"
-          style={{
-            background: 'rgba(0,0,0,0.72)',
-            border: '1px solid rgba(255,255,255,0.08)',
-            backdropFilter: 'blur(12px)',
-          }}
-        >
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="var(--accent-hex)" style={{ flexShrink: 0 }}>
-            <path d="M12 2l7 4v12l-7 4-7-4V6l7-4z" />
-          </svg>
-          <span className="text-[13px] font-bold text-ink">MISSION PLANNER</span>
-          <span className="hidden text-xs text-muted sm:inline">· tap map to add waypoints</span>
-          <span className="rounded-full px-2 py-0.5 text-[10px] font-bold"
-            style={{ background: gpsStyle.bg, color: gpsStyle.color }}
-            title={live.error || undefined}>
-            {gpsLabel}
-          </span>
-          {simulated && (
-            <span className="rounded-full px-2 py-0.5 text-[10px] font-bold"
-              style={{ background: 'rgba(245,158,11,0.14)', color: '#F59E0B' }}>
-              SIM
-            </span>
-          )}
-        </div>
-      </div>
+      {/* ── Plain header (top-left) ── */}
+      <TabHeader floating icon="mission" title="Missions" className="mission-head"
+        hint="Click the map to add waypoints, then Save, Upload and Start.">
+        {simulated && <Pill tone="warn">Simulator</Pill>}
+      </TabHeader>
 
       {/* ── Floating editor panel (top-right) ── */}
-      <motion.div className="absolute right-3 top-3 z-30 w-[330px] max-w-[calc(100vw-24px)]">
-        <div
-          className="max-h-[calc(100vh-66px-24px)] overflow-y-auto rounded-2xl p-4"
-          style={{
-            background: 'rgba(11,14,22,0.92)',
-            border: '1px solid rgba(255,255,255,0.09)',
-            backdropFilter: 'blur(18px)',
-            boxShadow: '0 8px 32px rgba(0,0,0,0.55)',
-          }}
-        >
-          <div className="mb-3 flex items-center justify-between">
-            <span className="eyebrow">Flight Plan · {wps.length} WP</span>
-            <button onClick={() => setOpen((o) => !o)} className="text-xs text-accent">{open ? 'Hide' : 'Show'}</button>
+      <motion.div className="absolute right-3 top-3 z-30 w-[340px] max-w-[calc(100vw-24px)]">
+        <div className="mp-panel max-h-[calc(100vh-66px-24px)] overflow-y-auto">
+          <div className="mp-panel-head">
+            <div>
+              <div className="mp-title">Flight plan</div>
+              <div className="mp-sub">{wps.length ? `${wps.length} waypoint${wps.length === 1 ? '' : 's'}` : 'No waypoints yet'}</div>
+            </div>
+            <button type="button" onClick={() => setOpen((o) => !o)} className="sx-btn ghost sm">{open ? 'Collapse' : 'Expand'}</button>
           </div>
 
           {/* Live Mission Plan banner */}
@@ -532,29 +494,22 @@ export default function MissionScreen() {
           {open && (
             <>
               {/* Mission name */}
-              <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="inp mb-3 w-full px-3 py-2 text-sm"
-                placeholder="Mission name"
-              />
+              <label className="mp-field">
+                <span className="sx-label">Mission name</span>
+                <input value={name} onChange={(e) => setName(e.target.value)} className="sx-input" placeholder="Mission name" />
+              </label>
 
               {/* Alt + speed sliders */}
-              <div
-                className="mb-3 flex flex-col gap-3 rounded-xl p-3"
-                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}
-              >
+              <div className="sx-well mb-3 flex flex-col gap-3 p-3">
                 <Slider label="Altitude" value={alt}   set={setAlt}   min={2} max={MAX_ALT}   step={1}   unit="m" />
                 <Slider label="Speed"    value={speed} set={setSpeed} min={1} max={MAX_SPEED} step={0.5} unit="km/h" />
-                <div className="text-[10px] text-faint">All waypoints · altitude capped at {MAX_ALT} m</div>
+                <div className="text-[11.5px] text-muted">Applies to every waypoint · altitude is capped at {MAX_ALT} m</div>
               </div>
 
               {/* Waypoint count + delete all */}
               {wps.length > 0 && (
                 <div className="mb-2 flex items-center justify-between gap-2">
-                  <span className="text-[11px] font-semibold text-muted">
-                    {wps.length} waypoint{wps.length === 1 ? '' : 's'}
-                  </span>
+                  <span className="sx-label">Waypoints</span>
                   <button
                     type="button"
                     onClick={clearAllWps}
@@ -563,7 +518,7 @@ export default function MissionScreen() {
                       ? { background: 'rgba(255,69,58,0.9)', color: '#fff', border: '1px solid rgba(255,69,58,0.9)' }
                       : { background: 'rgba(255,69,58,0.10)', color: '#FF8A80', border: '1px solid rgba(255,69,58,0.35)' }}
                   >
-                    {confirmClear ? `Tap again to delete all ${wps.length}` : '🗑 Clear all waypoints'}
+                    {confirmClear ? `Click again to delete all ${wps.length}` : 'Clear all'}
                   </button>
                 </div>
               )}
@@ -587,7 +542,7 @@ export default function MissionScreen() {
               {/* Start */}
               <div className="flex flex-col items-center gap-1.5">
                 <CommandButton cmd="mission" disabled={!isUploaded || running || busy === 'start'} onConfirm={start} />
-                <span className="text-center text-[10px] text-faint">
+                <span className="text-center text-[12px] text-muted">
                   {!isSaved
                     ? 'Save the plan, then upload it, then Start.'
                     : !isUploaded
@@ -602,26 +557,22 @@ export default function MissionScreen() {
 
       {/* ── Saved missions (bottom-left) ── */}
       <div className="absolute bottom-3 left-3 z-20 w-[260px] max-w-[calc(100vw-24px)]">
-        <div
-          className="rounded-xl p-3"
-          style={{
-            background: 'rgba(11,14,22,0.88)',
-            border: '1px solid rgba(255,255,255,0.08)',
-            backdropFilter: 'blur(14px)',
-          }}
-        >
-          <div className="mb-2 eyebrow">Saved Missions</div>
+        <div className="mp-panel">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="mp-title" style={{ fontSize: 14 }}>Saved missions</span>
+            <span className="sx-pill">{savedList.length}</span>
+          </div>
           {savedList.length === 0 ? (
-            <div className="text-xs text-muted">None saved.</div>
+            <div className="text-[13px] text-muted">Saved plans appear here.</div>
           ) : (
             <div className="flex max-h-32 flex-col gap-1 overflow-y-auto">
               {savedList.map((m, i) => (
                 <div key={i}
                   className="flex items-center justify-between rounded-lg px-2.5 py-1.5"
-                  style={{ background: 'rgba(255,255,255,0.05)' }}
+                  style={{ background: 'var(--sx-card2)', border: '1px solid var(--sx-line)' }}
                 >
-                  <span className="truncate text-xs font-medium text-ink">{m.name || m.id || `Mission ${i + 1}`}</span>
-                  <span className="ml-2 shrink-0 font-mono text-[10px] tnum text-muted">
+                  <span className="truncate text-[13px] font-semibold text-ink">{m.name || m.id || `Mission ${i + 1}`}</span>
+                  <span className="ml-2 shrink-0 font-mono text-[11.5px] tnum text-muted">
                     {num(m.waypoint_count ?? m.count ?? (m.waypoints ? m.waypoints.length : undefined), 0)} wp
                   </span>
                 </div>
@@ -633,39 +584,12 @@ export default function MissionScreen() {
 
       {/* ── Emergency stop (bottom-center) ── */}
       <div className="absolute bottom-3 left-1/2 z-20 -translate-x-1/2">
-        <div
-          className="flex items-center rounded-[40px] px-4 py-2.5"
-          style={{
-            background: 'rgba(10,14,24,0.88)',
-            border: '1px solid rgba(255,255,255,0.08)',
-            backdropFilter: 'blur(16px)',
-          }}
-        >
-          <CommandPanel>
-            <CommandButton cmd="stop" disabled={busy === 'stop'} onConfirm={emergencyStop} />
-          </CommandPanel>
-        </div>
-      </div>
-
-      {/* ── Aircraft 3D preview (bottom-right) ── */}
-      <div className="absolute bottom-3 right-3 z-20 w-[220px]">
-        <div
-          className="overflow-hidden rounded-xl p-2"
-          style={{
-            background: 'rgba(11,14,22,0.88)',
-            border: '1px solid rgba(255,255,255,0.08)',
-            backdropFilter: 'blur(14px)',
-          }}
-        >
-          <div className="mb-1 flex items-center justify-between px-1">
-            <span className="eyebrow">Aircraft</span>
-            <span className="text-[10px] font-bold text-accent">VARUNA-01</span>
+        <div className="mp-panel mp-stop">
+          <div className="text-left">
+            <div className="mp-title" style={{ fontSize: 14 }}>Emergency stop</div>
+            <div className="mp-sub">The drone holds where it is</div>
           </div>
-          <div className="rounded-lg" style={{ background: 'rgba(0,0,0,0.25)' }}>
-            <Suspense fallback={<div style={{ height: 120 }} />}>
-              <HoloDrone height={120} wire={false} />
-            </Suspense>
-          </div>
+          <CommandButton cmd="stop" disabled={busy === 'stop'} onConfirm={emergencyStop} />
         </div>
       </div>
 
@@ -674,7 +598,7 @@ export default function MissionScreen() {
         {confirming && (
           <motion.div
             className="absolute inset-0 z-40 flex items-center justify-center p-4"
-            style={{ background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(4px)' }}
+            style={{ background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)' }}
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             onClick={() => setConfirming(false)}
           >
@@ -682,21 +606,19 @@ export default function MissionScreen() {
               onClick={(e) => e.stopPropagation()}
               initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }}
               transition={{ type: 'spring', stiffness: 300, damping: 24 }}
-              className="w-full max-w-sm rounded-2xl p-5"
-              style={{ background: 'rgba(14,18,28,0.97)', border: '1px solid rgba(255,255,255,0.1)', boxShadow: '0 24px 64px rgba(0,0,0,0.7)' }}
+              className="mp-panel w-full max-w-sm p-5"
             >
               <div className="mb-3 flex items-center gap-2">
                 <StatusOrb level="warn" size={14} pulse />
                 <h3 className="text-lg font-bold text-ink">Confirm mission upload</h3>
               </div>
-              <div className="mb-4 space-y-1.5 rounded-xl p-3 text-sm"
-                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}>
+              <div className="sx-well mb-4 space-y-1.5 p-3 text-sm">
                 <Row k="Waypoints" v={`${wps.length}`} />
                 <Row k="Altitude"  v={`${Math.min(alt, MAX_ALT)} m`} />
                 <Row k="Speed"     v={`${speed} km/h`} />
               </div>
               <p className="mb-4 text-xs leading-relaxed text-warn">
-                ⚠ Ensure the airspace is clear, the flight is within your local regulations, and the aircraft has sufficient battery. The vehicle may begin autonomous flight once started.
+                Make sure the airspace is clear, the flight is within your local regulations, and the aircraft has sufficient battery. The vehicle may begin autonomous flight once started.
               </p>
               <div className="grid grid-cols-2 gap-2">
                 <Btn variant="secondary" onClick={() => setConfirming(false)}>Cancel</Btn>

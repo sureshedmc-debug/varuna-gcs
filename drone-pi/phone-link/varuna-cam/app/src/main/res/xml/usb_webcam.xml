@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- USB video devices (webcams): class 14, on the device or on any of its
+     interfaces (Android checks both). -->
+<resources>
+    <usb-device class="14" />
+</resources>

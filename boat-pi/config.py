@@ -120,6 +120,11 @@ DEFAULTS = {
     "camera_plastic_hits": 2,         # …and be seen in this many passes in a row
     "camera_lock_lost_s": 1.2,        # the locked item out of sight this long → let it go
     "camera_target_max_m": 15.0,      # farther ahead than this: too rough to act on
+    "camera_max_box_frac": 0.25,      # a box over this share of the picture is the scene, not an item
+    # Long range (Boat tab switch): the app also scans zoomed-in pieces of the
+    # far water, and the boat may act on plastic out to camera_long_range_max_m.
+    "camera_long_range": False,
+    "camera_long_range_max_m": 30.0,
 
     # ---- Last-metre homing
     "homing_enabled": True,
@@ -177,7 +182,7 @@ DEFAULTS = {
 }
 
 _BOOL_KEYS = {"disarm_on_complete", "homing_enabled", "wildlife_enabled", "turbidity_enabled",
-              "collector_relay_active_low", "verify_lookback"}
+              "collector_relay_active_low", "verify_lookback", "camera_long_range"}
 _INT_KEYS = {"mav_baud", "http_port", "max_waypoints", "collector_servo", "collector_pwm_on", "collector_pwm_off",
              "collector_relay_gpio", "scoop_pwm_zero", "scoop_pwm_extreme", "collect_max_retries",
              "operator_lost_s", "camera_width", "camera_height", "camera_fps", "camera_quality", "stream_fps",
@@ -189,7 +194,8 @@ _INT_KEYS = {"mav_baud", "http_port", "max_waypoints", "collector_servo", "colle
 _FLOAT_KEYS = {"default_hold_s", "default_speed_mps", "max_distance_m", "sim_home_lat", "sim_home_lng",
                "camera_height_m", "camera_tilt_deg", "camera_hfov_deg", "ramp_top", "count_line",
                "zone_x1", "zone_x2", "zone_y1",
-               "camera_plastic_conf", "camera_lock_lost_s", "camera_target_max_m",
+               "camera_plastic_conf", "camera_lock_lost_s", "camera_target_max_m", "camera_max_box_frac",
+               "camera_long_range_max_m",
                "homing_start_m", "homing_speed_mps", "homing_accept_m", "homing_search_s", "homing_lost_s",
                "homing_capture_m", "homing_drive_through_m", "homing_confirm_s",
                "live_arrive_m", "live_roller_on_m", "live_dwell_s", "live_merge_m", "live_return_after_s",
@@ -229,6 +235,8 @@ TUNABLE = {
     "zone_x1": ("float", 0, 0.5), "zone_x2": ("float", 0.5, 1), "zone_y1": ("float", 0, 0.95),
     "camera_plastic_conf": ("float", 0.1, 0.95), "camera_plastic_hits": ("int", 1, 10),
     "camera_lock_lost_s": ("float", 0.2, 10), "camera_target_max_m": ("float", 2, 40),
+    "camera_max_box_frac": ("float", 0.05, 0.9),
+    "camera_long_range": ("bool",), "camera_long_range_max_m": ("float", 15, 40),
     "measure_s": ("float", 5, 120), "turb_divider": ("float", 1, 3),
     "gamepad_max_throttle": ("float", 0.1, 1),
     "gamepad_throttle_expo": ("float", 0, 0.9),

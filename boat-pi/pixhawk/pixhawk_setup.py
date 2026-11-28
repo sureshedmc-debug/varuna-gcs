@@ -45,7 +45,7 @@ WANTED = [
     ("WP_RADIUS", 3.0, "phone GPS is good to ~3-5 m; the camera does the last metres"),
     ("WP_SPEED", 0.5, "slow, safe speed (m/s)"),
     ("CRUISE_SPEED", 0.5, "speed the Pixhawk holds (m/s)"),
-    ("MOT_THR_MAX", 50, "motor capped at 50%"),
+    ("MOT_THR_MAX", 100, "full motor power (was capped at 50%)"),
     # Transmitter, modes, failsafes
     ("RCMAP_ROLL", 4, "rudder on CH4"),
     ("RCMAP_THROTTLE", 3, "throttle on CH3"),

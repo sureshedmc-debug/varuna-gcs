@@ -16,9 +16,11 @@ where to send), and:
      (every 15 frames = 0.5 s). Equivalent to appsink drop=true sync=false.
   2. A GPS thread keeps the last 60 s of fixes (thread-safe) and answers
      "where was the drone at Pi-time t" by interpolating between fixes.
-  3. The main thread runs the plastic model (public/models/plastic.onnx, the
-     app's "TACO groups" model) with onnxruntime, choosing CUDA, then DirectML,
-     then the CPU, whichever this PC's onnxruntime has.
+  3. A detector thread runs the plastic model (public/models/plastic.onnx, the
+     app's "TACO groups" model) with onnxruntime on the newest frame, choosing
+     CUDA, then DirectML, then the CPU, whichever this PC's onnxruntime has.
+     The --show window draws every frame (smooth, at the drone's frame rate)
+     with the latest boxes; it never waits for the model.
   4. Every plastic detection is tagged with the drone's lat / lng / alt at the
      moment that frame was taken (each frame carries its capture time), logged
      to drone-pi/data/ground_station_detections.jsonl, and forwarded in the
@@ -57,13 +59,14 @@ GPS_PORT = 5001
 RTP_HELLO = b"VARUNA_RTP_HELLO"          # must match camera.py
 GPS_HELLO = b"VARUNA_GPS_HELLO"          # must match mav_link.py
 HELLO_EVERY_S = 0.5                      # the Pi forgets a PC 5 s after its last hello
-PI_CANDIDATES = ("varuna-drone", "varuna-drone.local", "raspberrypi.local")   # Tailscale first
+PI_CANDIDATES = ("varuna-drone", "varuna-drone.local", "varuna-pi.local", "raspberrypi.local")   # Tailscale first; the card's Imager hostname is varuna-pi
 SWITCH_AFTER_S = 3.0                     # nothing from this Pi address: try the next one
 GPS_KEEP_S = 60.0
 GPS_MAX_GAP_S = 1.5                      # a fix further than this from the frame's time isn't trusted
 DEDUP_M = 3.0
 DEDUP_S = 30.0
 DEFAULT_CONF = 0.35
+BOX_HOLD_S = 0.6      # --show: boxes stay drawn this long after the detection that found them
 
 log = logging.getLogger("ground")
 
@@ -422,7 +425,7 @@ def pick_providers(ort, want="auto"):
     order = ["CUDAExecutionProvider", "DmlExecutionProvider", "CPUExecutionProvider"]
     if want != "auto":
         order = [p for p in order if p.lower().startswith(want.lower())] + ["CPUExecutionProvider"]
-    return [p for p in order if p in have] or have
+    return list(dict.fromkeys(p for p in order if p in have)) or have
 
 
 class PlasticDetector:
@@ -439,7 +442,15 @@ class PlasticDetector:
         self.conf, self.iou = conf, iou
         so = ort.SessionOptions()
         so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        # Leave a core for the decoder and the window, and don't let idle model
+        # threads spin (busy-waiting would steal CPU from the video between passes).
+        so.intra_op_num_threads = max(1, min(4, (os.cpu_count() or 2) // 2))
+        so.add_session_config_entry("session.intra_op.allow_spinning", "0")
         provs = pick_providers(ort, provider)
+        if provs and provs[0] == "DmlExecutionProvider":
+            # DirectML (any Windows GPU, e.g. Intel Iris Xe) needs these two off.
+            so.enable_mem_pattern = False
+            so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
         self.sess = ort.InferenceSession(model, so, providers=provs)
         self.provider = self.sess.get_providers()[0]
         self.input = self.sess.get_inputs()[0].name
@@ -690,34 +701,60 @@ def main(argv=None):
     disp.start()
     log.info("Waiting for the drone on UDP %d (video) and %d (GPS); boat: %s", a.video_port, a.gps_port, boat or "off")
 
-    seq, shown_at, n_det, frames_done = 0, time.time(), 0, 0
+    # Detection runs in its own thread on the newest frame (it takes longer than
+    # a frame); the window shows EVERY decoded frame with the latest boxes, so
+    # the video stays smooth at the drone's frame rate however slow the model is.
+    found = {"dets": [], "at": 0.0, "passes": 0, "n": 0}
+
+    def detect_loop():
+        dseq = 0
+        while True:
+            dseq, dimg, dcap, _rx = slot.wait_newer(dseq, 1.0)
+            if dimg is None:
+                continue
+            try:
+                dets = det(dimg)
+            except Exception as exc:          # noqa: BLE001 - one bad frame must not stop detection
+                log.warning("detector: %s", exc)
+                continue
+            found.update(dets=dets, at=time.time(), passes=found["passes"] + 1)
+            if dets:
+                found["n"] += len(dets)
+                for rec in geotag(dets, dimg, dcap, gps, time.time(), dseq):
+                    disp.submit(rec)
+
+    threading.Thread(target=detect_loop, name="detector", daemon=True).start()
+
+    seq, shown_at, shown, cap_us = 0, time.time(), 0, None
     while True:
-        seq, img, cap_us, rx = slot.wait_newer(seq, 1.0)
+        if a.show:
+            seq, img, cap, rx = slot.wait_newer(seq, 0.1)
+            if img is not None:
+                cap_us = cap
+                fresh = time.time() - found["at"] < BOX_HOLD_S
+                show(img, found["dets"] if fresh else [], det)
+                shown += 1
+        else:
+            time.sleep(0.25)
+            cap_us = slot.capture_us
         now = time.time()
         if gcs is None and (a.gcs or "").lower() != "off" and pi.ip:
             gcs = f"http://{pi.ip}:8000"
             disp.gcs_url = gcs
-        if img is not None:
-            dets = det(img)
-            frames_done += 1
-            if dets:
-                n_det += len(dets)
-                for rec in geotag(dets, img, cap_us, gps, time.time(), seq):
-                    disp.submit(rec)
-            if a.show:
-                show(img, dets, det)
         if now - shown_at >= 2.0:
+            dt = now - shown_at
             age = None
             if cap_us and gps.offset is not None:
                 age = (time.time() - (cap_us / 1e6 + gps.offset)) * 1000
             fx = gps.latest()
-            log.info("video %s fps rx / %d decoded, lost %d pkts | detect %.0f ms (%s) | frame age %s | GPS %s | finds %d | sent boat %d/%d",
-                     round(grab.frames / (now - shown_at), 1), frames_done, grab.dep.lost,
-                     det.ms or 0, det.provider.replace("ExecutionProvider", ""),
+            log.info("video %s fps rx%s, lost %d pkts | detect %.1f/s, %.0f ms (%s) | frame age %s | GPS %s | finds %d | sent boat %d/%d",
+                     round(grab.frames / dt, 1), f" / {shown / dt:.1f} shown" if a.show else "", grab.dep.lost,
+                     found["passes"] / dt, det.ms or 0, det.provider.replace("ExecutionProvider", ""),
                      f"~{age:.0f} ms" if age is not None else "?",
                      f"{fx['lat']:.6f},{fx['lng']:.6f} fix {fx.get('fix')}" if fx else "none",
-                     n_det, disp.stats["boat_ok"], disp.stats["boat_ok"] + disp.stats["boat_fail"])
-            grab.frames, frames_done, shown_at = 0, 0, now
+                     found["n"], disp.stats["boat_ok"], disp.stats["boat_ok"] + disp.stats["boat_fail"])
+            grab.frames, shown, shown_at = 0, 0, now
+            found["passes"] = 0
 
 
 def check_links(pi, video_port, gps_port, seconds, pi_video_port=None, pi_gps_port=None):

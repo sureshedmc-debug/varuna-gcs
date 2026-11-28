@@ -32,14 +32,14 @@ final class Quality {
     /** Lightest: a very weak 4G uplink. */
     static final Quality SD = new Quality("480p", "480p light", 640, 480, 25, 70, 1000);
     /**
-     * The default, made for NetBird over 4G: 540p at 25 fps in about 1.5 Mbit/s.
+     * The default, made for Tailscale over 4G: 540p at 25 fps in about 1.5 Mbit/s.
      * A WireGuard tunnel over mobile data carries far less than Wi-Fi and jitters,
      * so the video has to be lean to stay smooth and live. The detector resizes
      * every frame to 640 wide anyway, so 960 wide loses it nothing, and the
      * bitrate adapts down further by itself when the link tightens.
      */
-    static final Quality NB = new Quality("nb540", "NetBird 540p (4G / VPN)", 960, 540, 25, 70, 1800);
-    /** Sharper: a strong NetBird link (good 4G/5G) or the same Wi-Fi. */
+    static final Quality NB = new Quality("nb540", "540p (4G / Tailscale)", 960, 540, 25, 70, 1800);
+    /** Sharper: a strong Tailscale link (good 4G/5G) or the same Wi-Fi. */
     static final Quality HD = new Quality("720p", "720p (strong link / Wi-Fi)", 1280, 720, 30, 78, 2800);
     /** Sharpest; only a fast local Wi-Fi (5 GHz) carries this, not 4G. */
     static final Quality FHD = new Quality("1080p", "1080p (LAN Wi-Fi only)", 1920, 1080, 30, 85, 5000);

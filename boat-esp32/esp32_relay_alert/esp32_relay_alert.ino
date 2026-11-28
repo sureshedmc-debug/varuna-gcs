@@ -34,10 +34,10 @@ unsigned long alertUntil = 0;
 unsigned long nextPulseTime = 0;
 int pulseStep = 0;
 
-// Alert rhythm: exactly 4 beeps/flashes (250ms ON, 200ms OFF x 4 times)
-const int CADENCE_STEPS = 8;
-const int CADENCE_DURS[CADENCE_STEPS] = {250, 200, 250, 200, 250, 200, 250, 200};
-const bool CADENCE_STATES[CADENCE_STEPS] = {true, false, true, false, true, false, true, false};
+// Alert rhythm: exactly 8 beeps/flashes (250ms ON, 200ms OFF x 8 times)
+const int CADENCE_STEPS = 16;
+const int CADENCE_DURS[CADENCE_STEPS] = {250, 200, 250, 200, 250, 200, 250, 200, 250, 200, 250, 200, 250, 200, 250, 200};
+const bool CADENCE_STATES[CADENCE_STEPS] = {true, false, true, false, true, false, true, false, true, false, true, false, true, false, true, false};
 
 void setRelay(bool on) {
   if (on) {

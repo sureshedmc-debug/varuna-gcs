@@ -183,7 +183,7 @@ export default function BoatScreen({ onNavigate }) {
             <>
               {!boat.fcConnected && (
                 <div className="mb-3 rounded-xl p-3 text-[12px]" style={{ background: 'rgba(255,159,10,0.08)', border: '1px solid rgba(255,159,10,0.3)' }}>
-                  <div className="font-bold text-warn">Pixhawk not connected</div>
+                  <div className="font-bold text-warn">Boat brain not connected</div>
                   <div className="mt-0.5 text-muted">{t.link_error || 'The boat Pi is online but has no heartbeat from its flight controller.'}</div>
                 </div>
               )}
@@ -217,7 +217,7 @@ export default function BoatScreen({ onNavigate }) {
                       {mission.state === 'running' && mission.current_index ? `Heading to item ${mission.current_index} of ${mission.total}` : null}
                       {mission.state === 'returning' ? 'All items done — driving back to launch.' : null}
                       {mission.state === 'paused' ? 'Paused — press Resume to continue.' : null}
-                      {mission.state === 'uploaded' ? 'Uploaded to the Pixhawk — start it from the Collect tab.' : null}
+                      {mission.state === 'uploaded' ? 'Uploaded to the boat brain — start it from the Collect tab.' : null}
                       {mission.state === 'completed' ? `Finished ${mission.ended_at ? relTime(mission.ended_at * 1000) : ''}.${armed ? ' Disarm the boat once it is safely back.' : ''}` : null}
                     </div>
                     <div className={`mt-2.5 grid gap-2 ${mission.state === 'completed' ? 'grid-cols-1' : 'grid-cols-2'}`}>
@@ -257,7 +257,7 @@ export default function BoatScreen({ onNavigate }) {
 
               {/* Pixhawk messages */}
               <div>
-                <div className="mb-1.5 eyebrow">Pixhawk messages</div>
+                <div className="mb-1.5 eyebrow">Boat brain messages</div>
                 {(t.messages || []).length === 0 ? (
                   <div className="text-[11px] text-muted">No messages yet.</div>
                 ) : (

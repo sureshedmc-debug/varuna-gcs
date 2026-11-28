@@ -1,68 +1,50 @@
-# VARUNA GCS — one-click launcher
-# Starts the Vite dev server in the background, waits for it to be ready,
-# then opens the Electron window on top of it.
-# Double-click the desktop shortcut to run this.
+﻿# VARUNA GCS — one-click launcher (the desktop shortcut runs this via launch-varuna.vbs)
+# Opens VARUNA in its own desktop window on the OPTIMISED build: no Chrome, no
+# Vite dev server (its debug React and live reloading caused the jerks and
+# pauses). The build is only redone when the app's code has changed since the
+# last one, so a normal start takes a few seconds.
 
 Set-Location -Path $PSScriptRoot
 
 $npmCmd  = "C:\Program Files\nodejs\npm.cmd"
 $nodeExe = "C:\Program Files\nodejs\node.exe"
-$port    = 5173
-$url     = "http://localhost:$port/"
+$dist    = Join-Path $PSScriptRoot "dist\index.html"
 
-# ── 1. Kill anything already on port 5173 so a stale process never blocks startup ──
-$existing = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
-if ($existing) {
-    $pid = ($existing | Select-Object -First 1).OwningProcess
-    Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Milliseconds 400
+Add-Type -AssemblyName System.Windows.Forms
+
+# ── 1. Rebuild only when src/, public/, index.html, vite.config.js or .env.local is newer than the last build ──
+function Get-Newest($paths) {
+    $newest = [datetime]::MinValue
+    foreach ($p in $paths) {
+        $full = Join-Path $PSScriptRoot $p
+        if (-not (Test-Path $full)) { continue }
+        $item = Get-Item -Force $full
+        if ($item.PSIsContainer) {
+            $f = Get-ChildItem -Force -Recurse -File $full -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            if ($f -and $f.LastWriteTime -gt $newest) { $newest = $f.LastWriteTime }
+        } elseif ($item.LastWriteTime -gt $newest) { $newest = $item.LastWriteTime }
+    }
+    return $newest
 }
 
-# ── 2. Start the Vite dev server hidden in the background ──
-$viteJob = Start-Process -FilePath $npmCmd `
-    -ArgumentList "run", "dev" `
-    -WorkingDirectory $PSScriptRoot `
-    -WindowStyle Hidden `
-    -PassThru
-
-# ── 3. Wait up to 45 s for Vite to be ready (retries every 500 ms) ──
-$ready    = $false
-$deadline = (Get-Date).AddSeconds(45)
-while ((Get-Date) -lt $deadline) {
-    try {
-        $resp = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
-        if ($resp.StatusCode -lt 500) { $ready = $true; break }
-    } catch { }
-    Start-Sleep -Milliseconds 500
+$needBuild = -not (Test-Path $dist)
+if (-not $needBuild) {
+    $built = (Get-Item -Force $dist).LastWriteTime
+    $needBuild = (Get-Newest @("src", "public", "index.html", "vite.config.js", ".env.local")) -gt $built
+}
+if ($needBuild) {
+    $build = Start-Process -FilePath $npmCmd -ArgumentList "run", "build" `
+        -WorkingDirectory $PSScriptRoot -WindowStyle Hidden -PassThru -Wait
+    if ($build.ExitCode -ne 0 -or -not (Test-Path $dist)) {
+        [System.Windows.Forms.MessageBox]::Show(
+            "Building the app failed. Run 'npm run build' in the project folder to see why.",
+            "VARUNA GCS — Launch Failed",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null
+        exit 1
+    }
 }
 
-if (-not $ready) {
-    [System.Windows.Forms.MessageBox]::Show(
-        "Vite dev server did not start within 45 seconds.`nCheck that Node.js and npm are installed correctly.",
-        "VARUNA GCS — Launch Failed",
-        [System.Windows.Forms.MessageBoxButtons]::OK,
-        [System.Windows.Forms.MessageBoxIcon]::Error
-    ) | Out-Null
-    $viteJob | Stop-Process -Force -ErrorAction SilentlyContinue
-    exit 1
-}
-
-# ── 4. Open the Electron window on the running Vite server ──
-# electron/launch.cjs --local  polls localhost:5173 once more (fast, already up)
-# then opens the BrowserWindow.
-$electronProc = Start-Process -FilePath $nodeExe `
-    -ArgumentList "$PSScriptRoot\electron\launch.cjs", "--local" `
-    -WorkingDirectory $PSScriptRoot `
-    -WindowStyle Hidden `
-    -PassThru
-
-# ── 5. When Electron exits, shut Vite down too ──
-$electronProc.WaitForExit()
-$viteJob | Stop-Process -Force -ErrorAction SilentlyContinue
-
-# Also clean up any lingering node process on port 5173
-$leftover = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
-if ($leftover) {
-    $pid = ($leftover | Select-Object -First 1).OwningProcess
-    Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
-}
+# ── 2. Open the desktop window on the build (electron/launch.cjs, no flags = serves dist/) ──
+Start-Process -FilePath $nodeExe -ArgumentList "`"$PSScriptRoot\electron\launch.cjs`"" `
+    -WorkingDirectory $PSScriptRoot -WindowStyle Hidden

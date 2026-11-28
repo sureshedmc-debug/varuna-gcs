@@ -1,8 +1,9 @@
-﻿
+﻿import { hasNativeAI, nativeSession, pixelsToInput } from './nativeAI.js'
+import { letterbox } from './framePrep.js'
+
 const DEFAULT_IN = 640
 // One colour per model class (by class index), used for its on-screen boxes.
 const CLASS_PALETTE = ['#22D3EE', '#a78bfa', '#FF6B6B', '#34d399', '#fbbf24', '#f472b6', '#60a5fa', '#fb923c']
-const PAD_RGB = [114, 114, 114]
 
 let ortPromise = null
 /** Shared, cached onnxruntime-web module â€” reused by every local model
@@ -160,6 +161,19 @@ async function workerSession(w, modelUrl) {
 }
 
 function buildSession(ort, modelUrl, onProgress) {
+  // Desktop app: the native engine on the GPU (nativeAI.js); the page's own AI
+  // only if it can't be reached.
+  if (hasNativeAI()) {
+    onProgress && onProgress('Loading model (native GPU)…')
+    return nativeSession(new URL(modelUrl, location.href).href).catch((e) => {
+      console.warn('[ort] native AI engine could not load', modelUrl, '- using the page:', e?.message ?? e)
+      return buildPageSession(ort, modelUrl, onProgress)
+    })
+  }
+  return buildPageSession(ort, modelUrl, onProgress)
+}
+
+function buildPageSession(ort, modelUrl, onProgress) {
   const w = getWorker()
   if (!w) return buildSessionHere(ort, modelUrl, onProgress)
   onProgress && onProgress('Loading model…')
@@ -297,37 +311,16 @@ export async function createDetector(onProgress, modelUrl = '/models/plastic.onn
   const inputName = session.inputNames[0]
   const outputName = session.outputNames[0]
 
-  // reusable scratch canvas for letterboxing
-  const cv = document.createElement('canvas')
-  cv.width = inputSize
-  cv.height = inputSize
-  const cx = cv.getContext('2d', { willReadFrequently: true })
   const buf = new Float32Array(3 * inputSize * inputSize)
 
   /**
-   * Letterbox a CROP of `source` (pixel rect [cx1,cy1,cx2,cy2]) into the fixed
-   * input buffer. Returns the transform needed to map model-space boxes
-   * back to full-source pixel coords.
+   * Letterbox a CROP of `source` (pixel rect [cx1,cy1,cw,ch]) into the model's
+   * square, off the page's thread (framePrep.js). Returns the pixels and the
+   * transform needed to map model-space boxes back to full-source pixel coords.
    */
-  function preprocess(source, crop) {
-    const { cx1, cy1, cw, ch } = crop
-    const ratio = Math.min(inputSize / cw, inputSize / ch)
-    const nw = Math.round(cw * ratio)
-    const nh = Math.round(ch * ratio)
-    const padX = Math.floor((inputSize - nw) / 2)
-    const padY = Math.floor((inputSize - nh) / 2)
-    cx.fillStyle = `rgb(${PAD_RGB[0]},${PAD_RGB[1]},${PAD_RGB[2]})`
-    cx.fillRect(0, 0, inputSize, inputSize)
-    // 9-arg drawImage: crop [cx1,cy1,cw,ch] from source, scaled into the pad box.
-    cx.drawImage(source, cx1, cy1, cw, ch, padX, padY, nw, nh)
-    const { data } = cx.getImageData(0, 0, inputSize, inputSize)
-    const area = inputSize * inputSize
-    for (let i = 0; i < area; i++) {
-      buf[i] = data[i * 4] / 255 // R
-      buf[area + i] = data[i * 4 + 1] / 255 // G
-      buf[area * 2 + i] = data[i * 4 + 2] / 255 // B
-    }
-    return { ratio, padX, padY, cx1, cy1, cw, ch }
+  async function preprocess(source, crop) {
+    const { data, ratio, padX, padY } = await letterbox(source, crop, inputSize)
+    return { pixels: data, meta: { ratio, padX, padY, ...crop } }
   }
 
   const naming = { names: classNames, colors: CLASS_PALETTE }
@@ -404,8 +397,8 @@ export async function createDetector(onProgress, modelUrl = '/models/plastic.onn
     const cy1 = Math.round(r.y1 * sh)
     const cw = Math.max(2, Math.round((r.x2 - r.x1) * sw))
     const ch = Math.max(2, Math.round((r.y2 - r.y1) * sh))
-    const meta = preprocess(source, { cx1, cy1, cw, ch })
-    const tensor = new ort.Tensor('float32', buf, [1, 3, inputSize, inputSize])
+    const { pixels, meta } = await preprocess(source, { cx1, cy1, cw, ch })
+    const tensor = pixelsToInput(ort, session, pixels, inputSize, buf)
     const result = await session.run({ [inputName]: tensor })
     const out = result[outputName]
     // getData() downloads from the GPU on WebGPU; on WASM it returns .data.

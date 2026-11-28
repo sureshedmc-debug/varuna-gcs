@@ -4,7 +4,7 @@
 #
 # VARUNA Cam streams the camera on port 8080 (http://<phone>:8080/video). Opened
 # with "background", it starts streaming and steps aside so this window comes back.
-# Keep NetBird connected so the laptop can reach the phone.
+# Keep Tailscale connected so the laptop can reach the phone (name it varuna-drone-cam).
 
 if am start -n ai.varuna.cam/.MainActivity --ez background true >/dev/null 2>&1; then
   echo "VARUNA Cam is streaming on port 8080 (stop it from its notification)."

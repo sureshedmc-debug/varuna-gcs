@@ -4,7 +4,7 @@
 // Dev (`npm run electron:dev`): opens a window on the Vite dev server instead,
 // so hot reload and Vite's own proxy work exactly as in the browser.
 
-const { app, BrowserWindow, Menu, ipcMain, session, shell, dialog, screen } = require('electron')
+const { app, BrowserWindow, Menu, ipcMain, session, shell, dialog, screen, utilityProcess, MessageChannelMain } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
 const http = require('node:http')
@@ -22,6 +22,13 @@ let appOrigin = ''
 let portChangedFrom = null
 
 app.setAppUserModelId('com.varuna.gcs')
+
+// Smooth like a game, not a browser tab: always the fast GPU, WebGPU on even if
+// Chromium's list says no, and never slowed down when another window covers it.
+for (const sw of ['force_high_performance_gpu', 'ignore-gpu-blocklist', 'enable-gpu-rasterization',
+  'enable-zero-copy', 'disable-renderer-backgrounding', 'disable-background-timer-throttling',
+  'disable-backgrounding-occluded-windows']) app.commandLine.appendSwitch(sw)
+app.commandLine.appendSwitch('enable-unsafe-webgpu')
 
 if (!app.requestSingleInstanceLock()) {
   app.quit()
@@ -64,7 +71,9 @@ async function boot() {
       // Operator records (CSV) and sign-in live in the per-user folder, which
       // survives app updates: %APPDATA%\VARUNA GCS\data on Windows.
       localData: createLocalData({
-        dataDir: path.join(app.getPath('userData'), 'data'),
+        // VARUNA_DATA_DIR: started from the project folder (launch.cjs), use the
+        // same records as `npm run dev` (the project's data/ folder).
+        dataDir: process.env.VARUNA_DATA_DIR || path.join(app.getPath('userData'), 'data'),
         seedFile: path.join(distRoot(), 'config', 'rivers.json'),
       }),
     })
@@ -82,6 +91,7 @@ async function boot() {
   appOrigin = new URL(url).origin
   setupSecurity()
   setupIpc()
+  setupNativeAI()
   buildMenu()
   createWindow(url)
 }
@@ -502,6 +512,55 @@ function createWindow(url) {
   })
 
   loadWithRetry(url)
+}
+
+// ── Native AI engine (electron/aiEngine.cjs) ─────────────────────────────────
+// The detectors run in their own process on the GPU (DirectML). The page asks
+// for a connection (preload: varuna.connectAI) and gets a MessagePort straight
+// to the engine, so pictures and results never pass through this process.
+let aiEngine = null
+function startAIEngine() {
+  if (aiEngine) return aiEngine
+  // Its GPU/CPU choice per model is kept next to the app's settings.
+  const choices = path.join(app.getPath('userData'), 'ai-engine-choices.json')
+  aiEngine = utilityProcess.fork(path.join(__dirname, 'aiEngine.cjs'), [choices], { serviceName: 'VARUNA AI engine', stdio: 'pipe' })
+  // Its messages (which model went to the GPU or the CPU, errors) go to
+  // ai-engine.log in the same folder, and to this process's console.
+  const logFile = path.join(app.getPath('userData'), 'ai-engine.log')
+  try { if (fs.statSync(logFile).size > 1e6) fs.rmSync(logFile) } catch { /* no log yet */ }
+  const toLog = (chunk) => {
+    const text = String(chunk)
+    process.stdout.write(text)
+    const lines = text.split(/\r?\n/).filter(Boolean)
+    fs.appendFile(logFile, lines.map((l) => new Date().toISOString() + ' ' + l + '\n').join(''), () => {})
+  }
+  aiEngine.stdout?.on('data', toLog)
+  aiEngine.stderr?.on('data', toLog)
+  aiEngine.on('exit', (code) => {
+    console.error('[ai engine] stopped, code', code)
+    aiEngine = null
+    // The page falls back to its own AI, or reconnects on its next model load.
+    if (win && !win.isDestroyed()) win.webContents.send('varuna:ai-lost')
+  })
+  return aiEngine
+}
+
+function setupNativeAI() {
+  ipcMain.on('varuna:ai-connect', (event) => {
+    if (!isAppFrame(event)) return
+    const engine = startAIEngine()
+    const { port1, port2 } = new MessageChannelMain()
+    engine.postMessage({ type: 'port' }, [port1])
+    event.sender.postMessage('varuna:ai-port', null, [port2])
+  })
+}
+
+function isAppFrame(event) {
+  try {
+    return new URL(event.senderFrame.url).origin === appOrigin
+  } catch {
+    return false
+  }
 }
 
 // In dev the Vite server may still be starting; keep retrying instead of

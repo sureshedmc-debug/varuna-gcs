@@ -12,8 +12,8 @@
 //     networks (an Android hotspot drops broadcasts, and gives the phone a new
 //     address now and then). It follows the phone when its address changes.
 //     The drone's phone shares this computer's Wi-Fi, and that address is
-//     always preferred: the video then crosses the Wi-Fi directly. NetBird
-//     peers (netbird.cjs) are asked as well and used only when nothing answers
+//     always preferred: the video then crosses the Wi-Fi directly. Tailscale
+//     peers (tailscale.cjs) are asked as well and used only when nothing answers
 //     locally — for a drone flown somewhere else entirely.
 //   - answers the drone API the app uses (/api/ping, /api/health,
 //     /api/telemetry, /api/ws, /api/camera/status, /api/camera/h264, /video_feed
@@ -29,7 +29,7 @@ const dgram = require('node:dgram')
 const os = require('node:os')
 const fs = require('node:fs')
 const crypto = require('node:crypto')
-const netbird = require('./netbird.cjs')
+const tailscale = require('./tailscale.cjs')
 
 const DISCOVERY_PORT = 47800
 const ASK_EVERY_MS = 1000          // ask the phone's last addresses this often
@@ -309,20 +309,20 @@ function captureStamp(data) {
 
 // ---------------------------------------------------------------- networks
 /**
- * A NetBird address (100.64.0.0/10, the carrier-grade NAT range NetBird hands
+ * A Tailscale address (100.64.0.0/10, the carrier-grade NAT range Tailscale hands
  * out). Those peers are reached one by one, never by sweeping or broadcasting
  * a /24 — and they are not "the same network" as this computer even when this
  * computer has an address in the same range, because the traffic still goes
- * through NetBird.
+ * through Tailscale.
  */
-function isNetbirdAddress(ip) {
+function isTailnetAddress(ip) {
   const p = String(ip).split('.')
   return p[0] === '100' && Number(p[1]) >= 64 && Number(p[1]) <= 127
 }
 
 /** True if `ip` is on a real network this computer is on (so: a direct hop). */
 function isLocalAddress(ip) {
-  if (isNetbirdAddress(ip)) return false
+  if (isTailnetAddress(ip)) return false
   if (String(ip).startsWith('127.')) return true // this computer itself
   return localNetworks().nets.includes(String(ip).split('.').slice(0, 3).join('.'))
 }
@@ -333,7 +333,7 @@ function localNetworks() {
     for (const a of list || []) {
       if (a.family !== 'IPv4' && a.family !== 4) continue
       if (a.internal || a.address.startsWith('169.254.')) continue
-      if (isNetbirdAddress(a.address)) continue // asked peer by peer, never swept
+      if (isTailnetAddress(a.address)) continue // asked peer by peer, never swept
       ips.push(a.address)
     }
   }
@@ -367,12 +367,12 @@ function createDroneDirect({ ipFile = null, log = console } = {}) {
   let lastUsed = 0
   let saved = ipFile ? readIpFile(ipFile) : []
   let lastFileRead = Date.now()
-  // The NetBird peers to ask as well as the local network (netbird.cjs reads
-  // them from NetBird itself and keeps its own 15 s cache). Asking a peer is a
+  // The Tailscale peers to ask as well as the local network (tailscale.cjs reads
+  // them from Tailscale itself and keeps its own 15 s cache). Asking a peer is a
   // single UDP packet, exactly like asking a Wi-Fi address.
-  let netbirdIps = []
-  let netbirdAt = 0
-  let netbirdSaid = false
+  let tailnetIps = []
+  let tailnetAt = 0
+  let tailnetSaid = false
   const aiDetections = []
 
   // ---- finding the phone
@@ -433,15 +433,15 @@ function createDroneDirect({ ipFile = null, log = console } = {}) {
       stopFinding()
       return
     }
-    if (now - netbirdAt > 15000) {
-      netbirdAt = now
-      netbird
+    if (now - tailnetAt > 15000) {
+      tailnetAt = now
+      tailscale
         .phoneIps()
         .then(async (ips) => {
-          netbirdIps = ips
-          if (!netbirdSaid && ips.length) {
-            netbirdSaid = true
-            log.info?.(`  [drone] ${await netbird.describe()} — asking its peers for VARUNA Cam too`)
+          tailnetIps = ips
+          if (!tailnetSaid && ips.length) {
+            tailnetSaid = true
+            log.info?.(`  [drone] ${await tailscale.describe()} — asking its peers for VARUNA Cam too`)
           }
         })
         .catch(() => {})
@@ -453,7 +453,7 @@ function createDroneDirect({ ipFile = null, log = console } = {}) {
       if (fromFile.length) saved = [...new Set([...fromFile, ...saved])].slice(0, 8)
     }
     const { ips: own, nets } = localNetworks()
-    const ask = [...new Set([phone?.ip, ...saved, ...netbirdIps].filter(Boolean))]
+    const ask = [...new Set([phone?.ip, ...saved, ...tailnetIps].filter(Boolean))]
     for (const ip of ask) send(ip)
     for (const b of nets) send(`${b}.255`)
     send('255.255.255.255')
@@ -479,16 +479,16 @@ function createDroneDirect({ ipFile = null, log = console } = {}) {
     if (!live.length) return
     if (phone && live.some(([ip]) => ip === phone.ip)) return // still where it was
     // The drone's phone is normally on the SAME Wi-Fi as this computer, and a
-    // phone that is also on NetBird answers over both. Take the local address:
+    // phone that is also on Tailscale answers over both. Take the local address:
     // the video then goes straight across the Wi-Fi instead of through
-    // NetBird, which is what keeps the picture close to live. NetBird is used
+    // Tailscale, which is what keeps the picture close to live. Tailscale is used
     // only when no local address answers (the drone somewhere else entirely).
     const rank = ([ip]) => (saved.includes(ip) && isLocal(ip) ? 3 : isLocal(ip) ? 2 : saved.includes(ip) ? 1 : 0)
     const pick = [...live].sort((x, y) => rank(y) - rank(x) || y[1].at - x[1].at)[0]
     const [ip, a] = pick
     const was = phone?.ip
     phone = { ip, port: a.port }
-    log.info?.(`  [drone] VARUNA Cam found at ${ip}:${a.port}${isNetbirdAddress(ip) ? ' (over NetBird)' : ''}${was ? `, was ${was}` : ''}`)
+    log.info?.(`  [drone] VARUNA Cam found at ${ip}:${a.port}${isTailnetAddress(ip) ? ' (over Tailscale)' : ''}${was ? `, was ${was}` : ''}`)
     if (ipFile && saved[0] !== ip) {
       saved = [ip, ...saved.filter((s) => s !== ip)]
       try {
@@ -1019,4 +1019,4 @@ function codecOf(data) {
   return null
 }
 
-module.exports = { createDroneDirect, createSplitter, captureStamp, isKeyframe, createPhoneGps, isLocalAddress, isNetbirdAddress }
+module.exports = { createDroneDirect, createSplitter, captureStamp, isKeyframe, createPhoneGps, isLocalAddress, isTailnetAddress }

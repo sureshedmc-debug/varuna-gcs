@@ -96,7 +96,7 @@ export function Btn({ children, variant = 'primary', className = '', disabled, .
       transition={{ type: 'spring', stiffness: 400, damping: 22 }}
       disabled={disabled}
       style={bg[variant]}
-      className={`${base} ${textColor[variant]} ${className}`}
+      className={`${base} ui-btn-${variant} ${textColor[variant]} ${className}`}
       {...rest}
     >
       {children}

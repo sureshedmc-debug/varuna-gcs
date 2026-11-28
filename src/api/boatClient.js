@@ -1,6 +1,6 @@
 // VARUNA boat API client — talks to the boat's Raspberry Pi (boat-pi/ backend).
 //
-// The boat is a second vehicle with its own Pi and its own Netbird address, so
+// The boat is a second vehicle with its own backend and its own address, so
 // it has its own base URL, resolved at runtime like the drone's (client.js):
 //   1. localStorage 'varuna.boatBase'  (browser: set from System → Boat connection)
 //   2. build-time VITE_BOAT_BASE       (the hosted web build: Render's /boat)
@@ -82,6 +82,8 @@ export const boatApi = {
   opsScoop: (action) => post('/api/ops/scoop', { action }, 10000),
   opsMotor: (action) => post('/api/ops/motor', { action }, 10000),
   opsAlert: (action) => post('/api/ops/alert', { action }, 10000),
+  // The AI captain on the boat phone: the laptop can only STOP it (full control is switched on at the phone).
+  opsCaptainStop: () => post('/api/ops/captain', { action: 'stop' }, 10000),
   liveTargets: (targets) => post('/api/live/targets', { targets }, 15000),
   liveStart: ({ whenEmpty = 'wait', speedMps } = {}) => post('/api/live/start', { when_empty: whenEmpty, speed_mps: speedMps }, 30000),
   livePause: () => post('/api/live/pause', undefined, 15000),
@@ -196,7 +198,7 @@ export async function testBoatConnection(base) {
         ok: false,
         ms: r.ms,
         title: 'That address is not the boat',
-        detail: 'A VARUNA backend answered, but it is not the boat backend (it may be the drone\'s Pi). Enter the boat Pi\'s Netbird address.',
+        detail: 'A VARUNA backend answered, but it is not the boat backend (it may be the drone\'s Pi). Enter the boat program\'s address (http://127.0.0.1:8001 when Start VARUNA Boat runs on this PC).',
       }
     }
   } catch {

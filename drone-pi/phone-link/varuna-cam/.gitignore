@@ -2,3 +2,5 @@
 app/build/
 build/
 local.properties
+.cxx/
+app/.cxx/

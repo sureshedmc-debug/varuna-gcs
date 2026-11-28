@@ -107,7 +107,7 @@ function LookToggle() {
 }
 
 /** Top mission status bar spanning the app. */
-export function TopBar({ onLock, onMenu, navPinned, onAssistant, wakeState, onToggleWake }) {
+export function TopBar({ onLock, onMenu, navPinned, onAssistant, wakeState, onToggleWake, showTelemetry = true }) {
   const { telemetry, backendReachable } = useSystem()
   const online = useOnline()
   const t = telemetry.data || {}
@@ -117,7 +117,7 @@ export function TopBar({ onLock, onMenu, navPinned, onAssistant, wakeState, onTo
   const mode  = pick(t, ['flight_mode', 'mode', 'custom_mode']) || DASH
   const armed = bool(pick(t, ['armed', 'is_armed']))
   // Flight details only earn header space while there's a live link to report on
-  const showFlight = s === 'live' && backendReachable !== false
+  const showFlight = showTelemetry && s === 'live' && backendReachable !== false
   const user = useUser()
 
   return (
@@ -159,11 +159,13 @@ export function TopBar({ onLock, onMenu, navPinned, onAssistant, wakeState, onTo
           </span>
         )}
 
-        {/* Link status pill */}
-        <div className="flex items-center gap-2 rounded-lg bg-chip px-3 py-1.5">
-          <StatusOrb level={level} size={9} pulse={s === 'polling' || s === 'connecting'} />
-          <span className="text-[11px] font-semibold tracking-wider text-ink">{conn}</span>
-        </div>
+        {/* Link status pill (Live and Boat tabs only) */}
+        {showTelemetry && (
+          <div className="flex items-center gap-2 rounded-lg bg-chip px-3 py-1.5">
+            <StatusOrb level={level} size={9} pulse={s === 'polling' || s === 'connecting'} />
+            <span className="text-[11px] font-semibold tracking-wider text-ink">{conn}</span>
+          </div>
+        )}
 
         {/* Theme toggle, and the New / Classic look slider beside it */}
         <ThemeToggle />

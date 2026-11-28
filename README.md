@@ -35,12 +35,12 @@ npm run dev
 
 Edit `.env.local` so the dev server proxies to your real backend — you'll see
 **live** video/telemetry/detections while iterating. The Pi is reached over
-**Netbird** (a private WireGuard mesh), so use its mesh address — run
-`netbird status` on the Pi to find it:
+**Tailscale** (a private WireGuard mesh), so use its Tailscale name (MagicDNS)
+or address — run `tailscale ip -4` on the Pi to find it:
 
 ```
-VITE_DEV_API_TARGET=http://varuna-pi.netbird.cloud:8000
-# or by IP, if you'd rather not rely on Netbird DNS:
+VITE_DEV_API_TARGET=http://varuna-drone:8000
+# or by IP, if you'd rather not rely on MagicDNS:
 # VITE_DEV_API_TARGET=http://100.92.14.7:8000
 ```
 
@@ -56,7 +56,7 @@ blocking**. Leave `VITE_API_BASE` unset to keep it that way. Set it (or fill in
 System → Connection) only if you want the browser to call the Pi directly, which
 does require CORS headers from FastAPI.
 
-**The Pi must bind `0.0.0.0:8000`, not `127.0.0.1`** — otherwise the Netbird peer
+**The Pi must bind `0.0.0.0:8000`, not `127.0.0.1`** — otherwise the Tailscale peer
 cannot reach it. Endpoints the app expects: `/api/ws` (telemetry WebSocket),
 `/video_feed` (MJPEG), and the `/api/*` routes in the table below.
 
@@ -69,7 +69,7 @@ npm run check:clean  # verifies dist/ has no dev host baked in
 
 `check:clean` is the zero-edit guarantee: it fails loudly if `localhost`,
 `127.0.0.1`, or any hardcoded LAN `http://IP:port` leaked into the bundle.
-Netbird addresses (`100.64.x.x`–`100.127.x.x`, `*.netbird.cloud`) are allowed —
+Tailscale addresses (`100.64.x.x`–`100.127.x.x`, `*.ts.net`) are allowed —
 they're private to the mesh and meaningless to anyone outside it. The app calls
 the API via **relative paths** resolved against `window.location.origin`, so the
 same `dist/` works unmodified whether it's served from the Pi, from the Vite
@@ -119,7 +119,7 @@ place they all are:
   need a real HTTP origin, which `file://` isn't.
 - The webcam and microphone need a **secure context** — `file://` isn't one, but
   Chromium treats loopback as trustworthy.
-- The Pi is plain `http://` over Netbird. An `http` page calling `http` is fine;
+- The Pi is plain `http://` over Tailscale. An `http` page calling `http` is fine;
   an `https` (or custom-scheme) page would get those calls **blocked as mixed
   content**.
 

@@ -156,9 +156,12 @@ def main():
     mp.stop("test done")
     st["motor_on_signal"] = True
     st["motor_power_pct"] = 80
+    cap_before = mp.params.get("MOT_THR_MAX")
+    mp.params["MOT_THR_MAX"] = 50.0  # a Pixhawk that caps the motor at 50 %
     ok, msg = mp.signal(["p7"])
     check(ok and "capped to 50 %" in msg, f"above MOT_THR_MAX: told it is capped ({msg})")
     mp.stop("done")
+    mp.params["MOT_THR_MAX"] = cap_before
     st["motor_power_pct"] = 50
 
     print("Pixhawk's own RC3 values")

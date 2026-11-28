@@ -1,9 +1,9 @@
 // VARUNA API client.
 //
-// The Raspberry Pi (FastAPI backend) is reached over Netbird — a private
-// WireGuard mesh. The Pi has a stable private address on that mesh, e.g.
-// http://varuna-pi.netbird.cloud:8000 or http://100.x.x.x:8000, reachable only
-// from devices joined to the same Netbird network. WireGuard encrypts the link
+// The drone's Raspberry Pi (FastAPI backend) is reached over Tailscale — a
+// private WireGuard mesh. The Pi has a stable private address on it, e.g.
+// http://varuna-drone:8000 (MagicDNS name) or http://100.x.x.x:8000, reachable
+// only from devices logged in to the same Tailscale account. WireGuard encrypts the link
 // itself, so plain http:// is expected here; there is no TLS cert to manage.
 //
 // The API base URL is CONFIGURABLE and resolved at runtime, so the same build
@@ -13,7 +13,7 @@
 //   3. DEFAULT_API_BASE below         ('' = same-origin)
 //
 // DEFAULT is same-origin on purpose: in dev/preview the Vite proxy forwards
-// /api, /video_feed, /stream and /tune to VITE_DEV_API_TARGET (the Netbird
+// /api, /video_feed, /stream and /tune to VITE_DEV_API_TARGET (the Tailscale
 // address) server-side, so the browser only ever talks to http://localhost.
 // That means no CORS, and no mixed-content blocking. Pointing the base straight
 // at the Pi also works, but then the backend must send CORS headers.
@@ -77,11 +77,45 @@ try {
 // rest of this visit, so the live video doesn't hang on a dead address.
 let savedBaseDead = false
 let sameOriginCheck = null
+// A Pi on weak Wi-Fi answers some calls only after a few seconds (TCP waits
+// 1, 2, 4 s to resend a lost packet). That is slow, not dead: it takes this
+// many unanswered pings in a row, each given PING_TIMEOUT_MS, before the saved
+// address is given up — and while given up, it is pinged now and then and
+// used again the moment it answers.
+const PING_TIMEOUT_MS = 6000
+const DEAD_AFTER_PINGS = 3
+const RECHECK_DEAD_MS = 10000
+let pingStrikes = 0
+let recheckTimer = null
 
 function pingAnswers(base) {
-  return fetch(`${base}/api/ping`, { cache: 'no-store', signal: AbortSignal.timeout(3000) })
+  return fetch(`${base}/api/ping`, { cache: 'no-store', signal: AbortSignal.timeout(PING_TIMEOUT_MS) })
     .then((r) => r.ok)
     .catch(() => false)
+}
+
+/** Ping the saved address; true once it has failed DEAD_AFTER_PINGS times in a row. */
+async function savedBaseGone(base) {
+  if (await pingAnswers(base)) {
+    pingStrikes = 0
+    return false
+  }
+  return ++pingStrikes >= DEAD_AFTER_PINGS
+}
+
+function watchSavedBase(base) {
+  if (recheckTimer) return
+  recheckTimer = setInterval(async () => {
+    if (!savedBaseDead) { clearInterval(recheckTimer); recheckTimer = null; return }
+    if (await pingAnswers(base)) {
+      savedBaseDead = false
+      sameOriginCheck = null
+      pingStrikes = 0
+      clearInterval(recheckTimer)
+      recheckTimer = null
+      console.info('[api] the saved backend address answers again; using it')
+    }
+  }, RECHECK_DEAD_MS)
 }
 
 function sameOriginAnswers() {
@@ -149,9 +183,10 @@ async function request(path, opts) {
     // caller cancelling its own request does not.
     if (!/^https?:\/\//i.test(base) || opts?.signal?.aborted) throw e
     // One slow or failed call doesn't make the address dead: only when its
-    // ping goes unanswered too.
-    if (savedBaseDead === false && (await pingAnswers(base))) throw e
+    // ping goes unanswered several times in a row (savedBaseGone).
+    if (savedBaseDead === false && !(await savedBaseGone(base))) throw e
     if (!(await sameOriginAnswers())) throw e
+    watchSavedBase(base)
     return requestUrl(path, opts)
   }
 }
@@ -205,8 +240,8 @@ export const api = {
   raw: request,
 
   // --- Liveness / health ---
-  // 8s, not 5s: Netbird's first WireGuard handshake can be slow when it falls
-  // back to a relay instead of direct P2P. A ping failure before any successful
+  // 8s, not 5s: Tailscale's first WireGuard handshake can be slow when it falls
+  // back to a DERP relay instead of direct P2P. A ping failure before any successful
   // contact drops the whole app into the simulator (SystemContext.jsx), i.e.
   // fake telemetry for a real, connected drone.
   ping: () => request('/api/ping', { timeout: 8000 }),
@@ -288,7 +323,7 @@ export const api = {
 }
 
 // WebSocket URL for live push. Follows the configured API base — ws:// for a
-// plain-http Netbird address, wss:// if the base is ever https — and falls back
+// plain-http Tailscale address, wss:// if the base is ever https — and falls back
 // to same-origin (the Vite proxy in dev/preview) when no base is configured.
 export function wsUrl() {
   const base = getApiBase()
@@ -303,7 +338,7 @@ export function controlWsUrl() {
 }
 
 /**
- * Diagnose the link, for System → Connection. Netbird has more distinct failure
+ * Diagnose the link, for System → Connection. Tailscale has more distinct failure
  * modes than a public tunnel did (peer offline, laptop not joined to the mesh,
  * FastAPI bound to loopback) and the browser collapses nearly all of them into
  * one opaque "Failed to fetch". This narrows it down: a `no-cors` retry that
@@ -344,7 +379,7 @@ export async function testConnection(base) {
         ok: false,
         ms,
         title: 'That address is not the Pi',
-        detail: "A web page answered instead of the Pi's API. Enter the Pi's Netbird address, e.g. http://varuna-pi.netbird.cloud:8000",
+        detail: "A web page answered instead of the Pi's API. Enter the drone Pi's Tailscale address, e.g. http://varuna-drone:8000",
       }
     }
     return { ok: true, ms, title: 'Connected', detail: `/api/ping answered in ${ms} ms.` }
@@ -373,8 +408,8 @@ export async function testConnection(base) {
       ms,
       title: timedOut ? 'Timed out' : 'Could not reach the Pi',
       detail:
-        'Check that the Pi reports Connected in `netbird status`, that this laptop is joined to the ' +
-        'same Netbird network, that the address is correct, and that FastAPI is bound to all ' +
+        'Check that the Pi shows as Connected in Tailscale (`tailscale status`), that this laptop is ' +
+        'logged in to the same Tailscale account, that the address is correct, and that FastAPI is bound to all ' +
         'interfaces (0.0.0.0:8000) rather than loopback only.',
     }
   }

@@ -140,7 +140,7 @@ function SizeWatcher({ size }) {
 
 const SOURCE_LABEL = { phone: 'Phone GPS', pixhawk: 'Pixhawk GPS' }
 
-export default function DroneMiniMap({ g, trail, onOpenMap }) {
+export default function DroneMiniMap({ g, trail, onOpenMap, embedded = false }) {
   const [big, setBig] = useState(false)
   const [follow, setFollow] = useState(true)
   const [homeMsg, setHomeMsg] = useState('')
@@ -159,7 +159,9 @@ export default function DroneMiniMap({ g, trail, onOpenMap }) {
   return (
     <div
       className="flex flex-col overflow-hidden rounded-2xl transition-[width] duration-200"
-      style={{
+      style={embedded ? {
+        width: '100%', background: 'var(--sx-card)', border: '1px solid var(--sx-line)', boxShadow: 'var(--sx-shadow)', borderRadius: 14,
+      } : {
         width: big ? 'min(440px, calc(100vw - 1.5rem))' : 'min(270px, calc(100vw - 1.5rem))',
         background: 'rgba(13,17,26,0.9)',
         border: '1px solid rgba(255,255,255,0.12)',
@@ -168,9 +170,11 @@ export default function DroneMiniMap({ g, trail, onOpenMap }) {
       }}
     >
       {/* Header */}
-      <div className="flex items-center gap-2 px-3 py-1.5">
+      <div className={`flex items-center gap-2 ${embedded ? 'border-b px-4 py-2.5' : 'px-3 py-1.5'}`} style={embedded ? { borderColor: 'var(--sx-line)' } : undefined}>
         <StatusOrb level={level} size={8} pulse={!g.hasFix} />
-        <span className="text-[11px] font-bold uppercase tracking-wider text-ink">Drone</span>
+        {embedded
+          ? <span className="text-[14px] font-semibold text-ink">Drone position</span>
+          : <span className="text-[11px] font-bold uppercase tracking-wider text-ink">Drone</span>}
         {g.source && (
           <span className="rounded-md px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider"
             style={{ background: 'rgba(59,158,255,0.16)', color: '#9CCBFF' }}>
@@ -182,8 +186,8 @@ export default function DroneMiniMap({ g, trail, onOpenMap }) {
           <button onClick={() => setFollow(true)} title="Follow the drone"
             className="rounded-md px-1.5 py-0.5 text-[10px] font-bold text-accent hover:bg-white/10">Follow</button>
         )}
-        <button onClick={() => setBig((v) => !v)} title={big ? 'Smaller' : 'Bigger'}
-          className="rounded-md px-1.5 text-[13px] text-muted hover:bg-white/10 hover:text-ink">{big ? '▭' : '⤢'}</button>
+        {!embedded && <button onClick={() => setBig((v) => !v)} title={big ? 'Smaller' : 'Bigger'}
+          className="rounded-md px-1.5 text-[13px] text-muted hover:bg-white/10 hover:text-ink">{big ? '▭' : '⤢'}</button>}
         {onOpenMap && (
           <button onClick={onOpenMap} title="Full map"
             className="rounded-md px-1.5 text-[13px] text-muted hover:bg-white/10 hover:text-ink">⛶</button>
@@ -191,7 +195,7 @@ export default function DroneMiniMap({ g, trail, onOpenMap }) {
       </div>
 
       {/* Map */}
-      <div className="relative isolate" style={{ height: big ? 300 : 150 }}>
+      <div className="relative isolate" style={{ height: embedded ? 180 : big ? 300 : 150 }}>
         <MapContainer
           center={g.pos || [17.385, 78.4867]}
           zoom={g.pos ? 18 : 3}
@@ -217,7 +221,7 @@ export default function DroneMiniMap({ g, trail, onOpenMap }) {
       </div>
 
       {/* Readout */}
-      <div className="px-3 py-1.5">
+      <div className={embedded ? 'px-4 py-2.5' : 'px-3 py-1.5'}>
         <div className="font-mono text-[12.5px] font-bold leading-tight tnum text-ink">
           {g.hasFix ? `${fmtCoord(g.pos[0])}, ${fmtCoord(g.pos[1])}` : '—'}
         </div>
@@ -229,7 +233,7 @@ export default function DroneMiniMap({ g, trail, onOpenMap }) {
           {g.hasFix && g.heading != null && <span>{num(g.heading, 0)}°</span>}
           {g.fix === 'network' && <span style={{ color: '#FFC46B' }}>rough (no GPS fix yet)</span>}
         </div>
-        {big && g.source === 'phone' && g.hasFix && (
+        {(big || embedded) && g.source === 'phone' && g.hasFix && (
           <div className="mt-1 flex items-center gap-2">
             <button onClick={setHome}
               className="rounded-md px-2 py-0.5 text-[10px] font-bold text-ink"

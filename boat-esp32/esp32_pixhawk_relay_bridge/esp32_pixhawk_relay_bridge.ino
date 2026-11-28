@@ -26,18 +26,22 @@ const int RELAY_OUT_PIN = 23;       // D23: Controls 5V Relay IN
 const int ONBOARD_LED = 2;          // Blue LED on ESP32 board
 const bool RELAY_ACTIVE_LOW = true; // true for standard Arduino 5V relay modules
 
-// Alert duration: 8 seconds once triggered
-const unsigned long ALERT_DURATION_MS = 8000;
+// The signal must stay OFF this long before a new detection can beep again,
+// so a flickering, held, or PWM signal can never give more than 8 beeps.
+const unsigned long REARM_LOW_MS = 300;
 
-// Alert rhythm: exactly 4 beeps/flashes (250ms ON, 200ms OFF x 4 times)
-const int CADENCE_STEPS = 8;
-const int CADENCE_DURS[CADENCE_STEPS] = {250, 200, 250, 200, 250, 200, 250, 200};
-const bool CADENCE_STATES[CADENCE_STEPS] = {true, false, true, false, true, false, true, false};
+// Alert rhythm: exactly 8 beeps/flashes (250ms ON, 200ms OFF x 8 times)
+const int CADENCE_STEPS = 16;
+const int CADENCE_DURS[CADENCE_STEPS] = {250, 200, 250, 200, 250, 200, 250, 200, 250, 200, 250, 200, 250, 200, 250, 200};
+const bool CADENCE_STATES[CADENCE_STEPS] = {true, false, true, false, true, false, true, false, true, false, true, false, true, false, true, false};
 
 bool alerting = false;
 unsigned long nextPulseTime = 0;
 int pulseStep = 0;
 bool lastPixState = false;
+bool armed = true;              // ready to beep on the next detection
+bool lowTiming = false;         // signal is OFF and we are timing it
+unsigned long lowSince = 0;
 
 // Hardware Relay Drive (Open-Drain Floating trick)
 void setRelay(bool on) {
@@ -83,19 +87,31 @@ void loop() {
   // Read Pixhawk AUX 1 signal (HIGH = 3.3V = Trigger from Pixhawk)
   bool pixState = (digitalRead(PIXHAWK_IN_PIN) == HIGH);
 
-  // Trigger when Pixhawk signal goes HIGH (rising edge)
-  if (pixState && !lastPixState) {
-    Serial.println("-> PLASTIC DETECTED! Starting 4 Buzzer Beeps...");
+  // Re-arm only after the signal has stayed OFF for REARM_LOW_MS
+  if (pixState) {
+    lowTiming = false;
+  } else if (!lowTiming) {
+    lowTiming = true;
+    lowSince = now;
+  }
+  if (!armed && !alerting && lowTiming && now - lowSince >= REARM_LOW_MS) {
+    armed = true;
+  }
+
+  // Trigger once when Pixhawk signal goes HIGH (rising edge), never mid-alert
+  if (pixState && !lastPixState && armed && !alerting) {
+    Serial.println("-> PLASTIC DETECTED! Starting 8 Buzzer Beeps...");
     alerting = true;
+    armed = false;
     pulseStep = 0;
     nextPulseTime = now;
   }
   lastPixState = pixState;
 
-  // Execute rhythmic alert pulsing (exactly 4 beeps)
+  // Execute rhythmic alert pulsing (exactly 8 beeps)
   if (alerting) {
     if (pulseStep >= CADENCE_STEPS) {
-      Serial.println("-> 4 beeps finished. Relay OFF.");
+      Serial.println("-> 8 beeps finished. Relay OFF.");
       alerting = false;
       setRelay(false);
     } else if (now >= nextPulseTime) {

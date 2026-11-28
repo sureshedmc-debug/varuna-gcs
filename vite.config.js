@@ -2,7 +2,10 @@ import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import { createRequire } from 'node:module'
 import path from 'node:path'
-import { FAQ, TEAM } from './src/site/content.js'
+import { FAQ, TEAM, AWARD, CONTACT } from './src/site/content.js'
+
+// The competition win, as one line for search data.
+const AWARD_LINE = `1st place (Position I), ${AWARD.category}, ${AWARD.event}, ${AWARD.org}, ${AWARD.centre}; ${AWARD.next}`
 
 // The production bundle NEVER contains a backend host: the app calls the API via
 // relative paths (see src/api/client.js), resolved against window.location.origin
@@ -10,9 +13,9 @@ import { FAQ, TEAM } from './src/site/content.js'
 // is never emitted into `dist/`.
 //
 // Point dev at the real Pi by setting VITE_DEV_API_TARGET in .env.local. Over
-// Netbird that is the Pi's private mesh address (plain http — WireGuard already
+// Tailscale that is the Pi's private mesh address (plain http — WireGuard already
 // encrypts the link):
-//   VITE_DEV_API_TARGET=http://varuna-pi.netbird.cloud:8000
+//   VITE_DEV_API_TARGET=http://varuna-drone:8000
 //   VITE_DEV_API_TARGET=http://100.92.14.7:8000
 // Proxying server-side is what keeps the browser on http://localhost, so there
 // is no CORS and no mixed-content blocking to deal with.
@@ -30,7 +33,7 @@ export default defineConfig(({ mode }) => {
   const proxyPaths = ['/api', '/video_feed', '/stream', '/tune']
 
   // The app polls eight endpoints every few seconds and opens a WebSocket, so
-  // when the Pi is off (or Netbird is down) the default proxy logging prints
+  // when the Pi is off (or Tailscale is down) the default proxy logging prints
   // hundreds of identical stack traces a minute and the terminal becomes
   // unusable. The Pi being unreachable is a normal state during UI work, not a
   // crash — so it gets ONE actionable line every 15s per error kind instead.
@@ -44,7 +47,7 @@ export default defineConfig(({ mode }) => {
       lastLogged.set(key, now)
       const hint =
         code === 'ENOTFOUND'
-          ? `cannot resolve it — is Netbird connected? (\`netbird status\`)`
+          ? `cannot resolve it — is Tailscale connected? (\`tailscale status\`)`
           : code === 'ECONNREFUSED'
             ? 'nothing is listening there — is the Pi backend running?'
             : err?.message || code
@@ -331,7 +334,7 @@ function siteOnlyAssets(mode) {
 function siteSeo(mode) {
   const URL_ = 'https://varuna-gcs.vercel.app/'
   const TITLE = 'VARUNA GCS by Aditya Gautam & Samar Garg · VARUNA AI drone and river-cleaning boat'
-  const DESC = 'VARUNA AI, created by Aditya Gautam and Samar Garg: an AI drone that finds floating plastic and Nirmal Dhara Jalyan, a solar autonomous boat that collects it, run from the VARUNA GCS ground-control app.'
+  const DESC = 'VARUNA AI, created by Aditya Gautam and Samar Garg: an AI drone that finds floating plastic and Nirmal Dhara Jalyan, a solar autonomous boat that collects it, run from the VARUNA GCS ground-control app. 1st place at DoE Science Centre No. 4, selected for Skill Expo.'
   const ld = {
     '@context': 'https://schema.org',
     '@graph': [
@@ -341,6 +344,8 @@ function siteSeo(mode) {
         name: 'Aditya Gautam',
         jobTitle: 'Creator of VARUNA AI',
         affiliation: { '@type': 'EducationalOrganization', name: 'Bhai Parmanand Vidya Mandir' },
+        award: AWARD_LINE,
+        telephone: CONTACT.tel,
         url: URL_,
       },
       {
@@ -349,6 +354,7 @@ function siteSeo(mode) {
         name: 'Samar Garg',
         jobTitle: 'Co-creator of VARUNA AI',
         affiliation: { '@type': 'EducationalOrganization', name: 'Bhai Parmanand Vidya Mandir' },
+        award: AWARD_LINE,
         url: URL_,
       },
       {
@@ -370,6 +376,7 @@ function siteSeo(mode) {
         description: DESC,
         author: [{ '@id': `${URL_}#aditya-gautam` }, { '@id': `${URL_}#samar-garg` }],
         creator: [{ '@id': `${URL_}#aditya-gautam` }, { '@id': `${URL_}#samar-garg` }],
+        award: AWARD_LINE,
         offers: { '@type': 'Offer', price: '0', priceCurrency: 'INR' },
       },
     ],
@@ -397,6 +404,8 @@ function siteSeo(mode) {
       <h1>VARUNA GCS · VARUNA AI by Aditya Gautam &amp; Samar Garg</h1>
       <p>${esc(DESC)}</p>
       <p>VARUNA AI and the VARUNA GCS ground-control app were created by Aditya Gautam and Samar Garg, Bhai Parmanand Vidya Mandir (theme: Environment &amp; Sustainability).</p>
+      <p>Award: ${esc(AWARD_LINE)}.</p>
+      <p>Contact: for any enquiry or funding, call or WhatsApp ${esc(CONTACT.name)} on <a href="tel:${CONTACT.tel}">${esc(CONTACT.phone)}</a>.</p>
     </noscript>`
   return {
     name: 'varuna-site-seo',
@@ -442,6 +451,8 @@ function aboutPage(URL_, esc) {
         name: p.name,
         jobTitle: p.role.split(' · ')[0],
         affiliation: { '@type': 'EducationalOrganization', name: TEAM.school },
+        award: AWARD_LINE,
+        ...(p.name === CONTACT.name ? { telephone: CONTACT.tel } : {}),
         url: PAGE,
       })),
       {
@@ -510,7 +521,24 @@ function aboutPage(URL_, esc) {
       .links a { display: inline-block; padding: 11px 18px; border-radius: 999px; border: 1px solid rgba(255,255,255,.16); color: var(--ink); text-decoration: none; font-weight: 600; font-size: 15px; }
       .links a:hover { border-color: #7dd3fc; }
       footer { border-top: 1px solid var(--line); padding: 26px 0 40px; font-size: 13px; color: var(--ink3); }
-      @media (max-width: 560px) { .facts { grid-template-columns: 1fr; } .makers { padding: 4px 18px; } }
+      .call { display: block; margin: 0 0 44px; padding: 20px 24px; border-radius: 20px; text-decoration: none; color: #05070a; background: linear-gradient(150deg, #fff, #e9f8ff 60%, #efe9ff); }
+      .call small { display: block; font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: rgba(5,7,10,.6); }
+      .call .num { display: block; font-weight: 800; color: #05070a; text-decoration: none; font-size: clamp(26px, 5vw, 36px); letter-spacing: -.02em; margin-top: 4px; }
+      .call .acts { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+      .call .acts a { padding: 10px 18px; border-radius: 999px; background: #05070a; color: #fff; text-decoration: none; font-weight: 700; font-size: 14px; }
+      .call .acts a.wa { background: #25d366; }
+      .award { margin: 0 0 44px; border: 1px solid rgba(245,196,81,.4); border-radius: 24px; overflow: hidden; background: linear-gradient(165deg, rgba(245,196,81,.14), rgba(255,255,255,.02) 55%); }
+      .award img { display: block; width: 100%; height: auto; }
+      .award-body { padding: 22px 24px 24px; }
+      .award .kicker { color: #f5c451; }
+      .award h2 { margin: 8px 0 6px; }
+      .award h2 .gold { background: linear-gradient(100deg, #fff1b8, #f8d26a 30%, #e7a92f 62%, #fde68a); -webkit-background-clip: text; background-clip: text; color: transparent; }
+      .award dl { margin: 14px 0 0; display: grid; gap: 8px; }
+      .award dl div { display: grid; grid-template-columns: 130px 1fr; gap: 12px; }
+      .award dt { font-size: 11px; letter-spacing: .18em; text-transform: uppercase; color: var(--ink3); padding-top: 4px; }
+      .award dd { margin: 0; color: var(--ink); }
+      .award .next { display: inline-block; margin-top: 16px; padding: 8px 14px; border-radius: 999px; font-weight: 800; font-size: 14px; color: #2b1c00; background: linear-gradient(100deg, #fff1b8, #f8d26a 30%, #e7a92f 62%, #fde68a); }
+      @media (max-width: 560px) { .facts { grid-template-columns: 1fr; } .makers { padding: 4px 18px; } .award dl div { grid-template-columns: 1fr; gap: 0; } .award-body { padding: 18px; } }
     </style>
   </head>
   <body>
@@ -526,6 +554,26 @@ function aboutPage(URL_, esc) {
         <div><small>Theme</small>${esc(TEAM.theme)}</div>
         <div><small>Drone</small>Varuna, the AI aerial scout</div>
         <div><small>Boat</small>Nirmal Dhara Jalyan</div>
+      </div>
+      <section class="award">
+        <img src="/site/award-stage-photo.jpg" alt="${esc(TEAM.makers.map((p) => p.name).join(' and '))} on stage with their 1st-place trophies at DoE Science Centre No. 4" loading="lazy" />
+        <div class="award-body">
+          <div class="kicker">Achievement</div>
+          <h2><span class="gold">1st place</span> at DoE Science Centre No. 4</h2>
+          <p>VARUNA AI won Position I in ${esc(AWARD.category)} and was selected for Skill Expo.</p>
+          <dl>
+            <div><dt>Event</dt><dd>${esc(AWARD.event)}</dd></div>
+            <div><dt>Organised by</dt><dd>${esc(AWARD.org)}</dd></div>
+            <div><dt>Centre</dt><dd>${esc(AWARD.centre)}</dd></div>
+            <div><dt>Venue</dt><dd>${esc(AWARD.venue)}</dd></div>
+          </dl>
+          <span class="next">${esc(AWARD.next)}</span>
+        </div>
+      </section>
+      <div class="call">
+        <small>Enquiries, funding &amp; partnerships · call or WhatsApp ${esc(CONTACT.name)}</small>
+        <a class="num" href="tel:${CONTACT.tel}">${esc(CONTACT.phone)}</a>
+        <div class="acts"><a href="tel:${CONTACT.tel}">Call now</a><a class="wa" href="${esc(CONTACT.whatsapp)}" target="_blank" rel="noopener noreferrer">WhatsApp</a></div>
       </div>
       <figure>
         <img src="/site/p-poster.jpg" alt="VARUNA AI, the river-cleaning drone and boat by ${esc(TEAM.makers.map((p) => p.name).join(' and '))}" loading="lazy" />

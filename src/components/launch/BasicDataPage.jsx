@@ -1,6 +1,18 @@
 // What the app has saved: the CSV files, where they are, and the river list.
 import { useEffect, useState } from 'react'
 import { fetchDataStatus, fetchCatalog, exportHref, useDataSaveStatus, flushOutbox } from '../../lib/localData'
+import { Kpi, Section } from '../simple/Simple'
+
+function Notice({ tone = 'info', children }) {
+  return (
+    <div className="rounded-xl px-4 py-3 text-[13.5px]" role={tone === 'bad' ? 'alert' : 'status'}
+      style={{ background: `var(--sx-${tone}-soft)`, color: `var(--sx-${tone})` }}>
+      {children}
+    </div>
+  )
+}
+
+const when = (t) => new Date(t).toLocaleString([], { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
 
 export default function BasicDataPage() {
   const [st, setSt] = useState(null)
@@ -20,65 +32,90 @@ export default function BasicDataPage() {
     }
   }, [n, save.lastSavedAt])
 
+  const files = st?.files || []
+  const rows = files.reduce((a, f) => a + (f.missing ? 0 : Number(f.rows) || 0), 0)
+  const last = files.reduce((a, f) => Math.max(a, f.updatedAt ? new Date(f.updatedAt).getTime() : 0), 0)
+  const rivers = (cat?.states || []).reduce((a, s) => a + s.rivers.length, 0)
+
   return (
     <>
-      <h2 className="vl-h1">Data</h2>
-      <p className="vl-sub">Everything below is saved automatically as you sign in, plan, fly and detect.</p>
-
-      {error && <div className="vl-msg bad">{error} <button type="button" className="vl-link" onClick={() => setN((x) => x + 1)}>Try again</button></div>}
+      {error && <Notice tone="bad">{error} <button type="button" className="font-bold underline" onClick={() => setN((x) => x + 1)}>Try again</button></Notice>}
       {save.pending > 0 && (
-        <div className="vl-msg info">
+        <Notice tone="warn">
           {save.pending} save{save.pending > 1 ? 's' : ''} waiting{save.lastError ? `: ${save.lastError}` : ''}.{' '}
-          <button type="button" className="vl-link" onClick={() => flushOutbox()}>Retry now</button>
-        </div>
+          <button type="button" className="font-bold underline" onClick={() => flushOutbox()}>Retry now</button>
+        </Notice>
       )}
-      {!save.pending && save.lastError && <div className="vl-msg bad">{save.lastError}</div>}
-      {save.dropped > 0 && <div className="vl-msg bad">{save.dropped} older unsaved records were dropped while the store was unreachable.</div>}
+      {!save.pending && save.lastError && <Notice tone="bad">{save.lastError}</Notice>}
+      {save.dropped > 0 && <Notice tone="bad">{save.dropped} older unsaved records were dropped while the store was unreachable.</Notice>}
 
       {st && (
-        <>
-          <div className="vl-section-title">Data folder</div>
-          <div className="vl-mono">{st.dataDir}</div>
-          <div className="vl-section-title">Files</div>
-          <div className="vl-scroll-x">
-            <table className="vl-table">
-              <thead><tr><th>File</th><th>Rows</th><th>Last change</th><th /></tr></thead>
+        <div className="sx-kpis">
+          <Kpi label="Files" value={files.filter((f) => !f.missing).length} unit={`of ${files.length}`} />
+          <Kpi label="Records" value={rows.toLocaleString()} />
+          <Kpi label="Last saved" value={last ? new Date(last).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
+            note={last ? new Date(last).toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' }) : 'nothing saved yet'} />
+          <Kpi label="Rivers" value={rivers} unit={cat ? `in ${cat.states.length} states` : ''} />
+        </div>
+      )}
+
+      {st && (
+        <Section title="Saved files" sub="Saved automatically as you plan, fly and detect. Each one opens in Excel."
+          actions={<button type="button" className="sx-btn ghost sm" onClick={() => setN((x) => x + 1)}>Refresh</button>} flush>
+          <div className="overflow-x-auto">
+            <table className="sx-table">
+              <thead><tr><th>File</th><th className="num">Rows</th><th>Last change</th><th /></tr></thead>
               <tbody>
-                {st.files.map((f) => (
+                {files.map((f) => (
                   <tr key={f.name}>
-                    <td className="vl-mono">{f.name}</td>
-                    <td>{f.missing ? '—' : f.rows}</td>
-                    <td>{f.error ? <span style={{ color: '#b91c1c' }}>{f.error}</span> : f.updatedAt ? new Date(f.updatedAt).toLocaleString() : 'not created yet'}</td>
-                    <td>{!f.missing && f.name !== 'users.csv' && <a className="vl-link" href={exportHref(f.name.replace(/\.csv$/, ''))} download={f.name}>Download</a>}</td>
+                    <td><span className="font-mono text-[13px] font-semibold">{f.name}</span></td>
+                    <td className="num">{f.missing ? '—' : Number(f.rows).toLocaleString()}</td>
+                    <td>{f.error ? <span style={{ color: 'var(--sx-bad)' }}>{f.error}</span> : f.updatedAt ? when(f.updatedAt) : <span className="text-muted">Not created yet</span>}</td>
+                    <td className="text-right">
+                      {!f.missing && f.name !== 'users.csv' && (
+                        <a className="sx-btn ghost sm" href={exportHref(f.name.replace(/\.csv$/, ''))} download={f.name}>Download</a>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          {st.warnings?.length > 0 && (
-            <>
-              <div className="vl-section-title">Recovered problems</div>
-              {st.warnings.map((w, i) => <div key={i} className="vl-msg info">{new Date(w.at).toLocaleString()}: {w.text}</div>)}
-            </>
-          )}
-          <p style={{ fontSize: 12, marginTop: 10 }}>
-            Passwords are never written to these files: only a salted hash is kept, in credentials.json, and Google sign-in keeps no token.
-          </p>
-        </>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t px-[18px] py-3 text-[12.5px] text-muted" style={{ borderColor: 'var(--sx-line)' }}>
+            <span>Folder: <span className="font-mono text-[12px] text-ink">{st.dataDir}</span></span>
+            <span>Passwords are never stored in these files: only a salted hash, in credentials.json.</span>
+          </div>
+        </Section>
+      )}
+
+      {st?.warnings?.length > 0 && (
+        <Section title="Recovered problems" sub="Fixed automatically; listed so nothing goes unnoticed.">
+          <div className="flex flex-col gap-2">
+            {st.warnings.map((w, i) => <Notice key={i}>{when(w.at)}: {w.text}</Notice>)}
+          </div>
+        </Section>
       )}
 
       {cat && (
-        <>
-          <div className="vl-section-title">States and rivers ({cat.source === 'csv' ? 'states.csv + rivers.csv' : 'built-in list'})</div>
-          {cat.states.map((s) => (
-            <div key={s.id} style={{ marginBottom: 10 }}>
-              <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 4 }}>{s.name} <span className="vl-mono" style={{ color: '#8b5cf6' }}>{s.id}</span></div>
-              <div className="vl-chips">{s.rivers.map((r) => <span key={r.id} className="vl-chip">{r.name}</span>)}</div>
-            </div>
-          ))}
-          {cat.notes?.map((t, i) => <div key={i} className="vl-msg info">{t}</div>)}
-          <p style={{ fontSize: 12 }}>Add a state or river by adding a row to those files (Excel is fine); the list updates the next time it opens.</p>
-        </>
+        <Section title="States and rivers" sub={cat.source === 'csv' ? 'From states.csv and rivers.csv: add a row there to add a river.' : 'The built-in list. Add states.csv and rivers.csv to change it.'}>
+          <div className="grid gap-4 md:grid-cols-2">
+            {cat.states.map((s) => (
+              <div key={s.id} className="sx-well p-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <span className="text-[14px] font-bold text-ink">{s.name}</span>
+                  <span className="sx-pill">{s.rivers.length} rivers</span>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {s.rivers.map((r) => (
+                    <span key={r.id} className="rounded-lg px-2.5 py-1 text-[12.5px] font-medium"
+                      style={{ background: 'var(--sx-card)', border: '1px solid var(--sx-line)', color: 'var(--sx-sub)' }}>{r.name}</span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+          {cat.notes?.map((t, i) => <div key={i} className="mt-3"><Notice>{t}</Notice></div>)}
+        </Section>
       )}
     </>
   )

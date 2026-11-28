@@ -8,11 +8,11 @@
 // only works in the same browser session as the recording.
 
 import L from 'leaflet'
+import { EmptyState, Page, Section, TabHeader } from '../components/simple/Simple'
 import 'leaflet/dist/leaflet.css'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { MapContainer, Marker, Polyline, Popup, useMap } from 'react-leaflet'
 import CachedTileLayer from '../components/CachedTileLayer'
-import { StatusOrb, TiltCard } from '../components/ui'
 import { fmtCoord, num } from '../lib/format'
 import { usePositionHistory, replayableRuns } from '../lib/positionHistory'
 import { useMissionRecording } from '../lib/missionRecording'
@@ -132,37 +132,51 @@ export default function ReplayScreen() {
   // ── No-data empty state ────────────────────────────────────────────────────
   if (!runs.length) {
     return (
-      <div className="mx-auto max-w-4xl">
-        <TiltCard tilt={false} className="p-6">
-          <h2 className="mb-2 text-base font-semibold text-ink">Mission replay</h2>
-          <p className="text-sm text-muted">
-            No replay yet. Start a mission (Save → Upload → Start on Missions) and let it run for a bit — VARUNA records the drone&apos;s position through the flight so you can scrub through it here later. Recordings live in this browser session only.
-          </p>
-        </TiltCard>
-      </div>
+      <Page>
+        <TabHeader icon="replay" title="Replay" hint="Play back a recorded flight: where the drone flew and what it found, minute by minute." />
+        <Section>
+          <EmptyState icon="replay" title="No recorded flights yet">
+            Every mission you fly is recorded automatically: its path, its altitude and the plastic it found.
+            Plan one on Missions (Save, Upload, Start) and it appears here to play back.
+          </EmptyState>
+          <div className="mx-auto grid max-w-[720px] gap-3 pb-6 sm:grid-cols-3">
+            {[['1', 'Plan', 'Add waypoints on the Missions tab.'], ['2', 'Fly', 'Upload and start the mission.'], ['3', 'Replay', 'Scrub through the flight here.']].map(([n, t, d]) => (
+              <div key={n} className="sx-well p-3">
+                <div className="flex items-center gap-2 text-[14px] font-bold text-ink">
+                  <span className="grid h-6 w-6 place-items-center rounded-full text-[12px]" style={{ background: 'var(--sx-accent-soft)', color: 'var(--sx-accent-text)' }}>{n}</span>{t}
+                </div>
+                <div className="mt-1 text-[13px] text-muted">{d}</div>
+              </div>
+            ))}
+          </div>
+          <p className="pb-5 text-center text-[12px] text-muted">Recordings are kept in this browser session.</p>
+        </Section>
+      </Page>
     )
   }
 
   const progressPct = run?.samples.length > 1 ? (idx / (run.samples.length - 1)) * 100 : 0
 
   return (
-    <div className="mx-auto grid max-w-6xl gap-4 lg:grid-cols-[1.5fr_1fr]">
+    <Page>
+    <TabHeader icon="replay" title="Replay" hint="Play back a recorded flight: where the drone flew and what it found, minute by minute." />
+    <div className="grid gap-4 lg:grid-cols-[1.5fr_1fr]">
 
       {/* ── Left column: map + scrubber ── */}
-      <TiltCard tilt={false} className="p-4">
+      <Section title="Flight" sub={run ? new Date(run.startedAt).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : undefined}>
 
-        {/* Run selector — pill chips */}
+        {/* Run selector */}
         <div className="mb-3 flex flex-wrap items-center gap-2">
-          <span className="eyebrow shrink-0">Run</span>
+          <span className="sx-label shrink-0">Recorded runs</span>
           {runs.map((r) => {
             const label = new Date(r.startedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
             const on    = r.id === (run?.id)
             return (
               <button key={r.id} onClick={() => setRunId(r.id)}
-                className="rounded-full px-3 py-1 text-[11px] font-semibold transition-all"
+                className="rounded-full px-3 py-1.5 text-[12px] font-semibold transition-all"
                 style={on
-                  ? { background: 'rgba(59,158,255,0.15)', color: 'var(--accent-hex)', border: '1px solid rgba(59,158,255,0.3)' }
-                  : { background: 'var(--chip)', color: 'var(--muted)', border: '1px solid transparent' }}>
+                  ? { background: 'var(--sx-accent-soft)', color: 'var(--sx-accent-text)', border: '1px solid var(--sx-accent)' }
+                  : { background: 'var(--sx-card2)', color: 'var(--sx-muted)', border: '1px solid var(--sx-line)' }}>
                 {label} · {r.samples.length} pts
               </button>
             )
@@ -210,19 +224,18 @@ export default function ReplayScreen() {
         </div>
 
         {/* Scrubber panel */}
-        <div className="rounded-xl p-3"
-          style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+        <div className="sx-well p-3">
 
           {/* Speed controls */}
           <div className="mb-2 flex items-center justify-between">
-            <span className="eyebrow">Timeline</span>
+            <span className="sx-label">Timeline</span>
             <div className="flex gap-1.5">
               {[0.5, 1, 2].map((s) => (
                 <button key={s} onClick={() => setSpeed(s)}
                   className="rounded-lg px-2.5 py-1 text-[11px] font-bold transition-all"
                   style={speed === s
-                    ? { background: 'var(--accent-hex)', color: '#04121F' }
-                    : { background: 'var(--chip)', color: 'var(--muted)' }}>
+                    ? { background: 'var(--sx-accent)', color: 'var(--sx-accent-ink)' }
+                    : { background: 'var(--sx-card)', color: 'var(--sx-muted)', border: '1px solid var(--sx-line)' }}>
                   {s}×
                 </button>
               ))}
@@ -261,7 +274,7 @@ export default function ReplayScreen() {
           <div className="flex items-center gap-3">
             <button onClick={() => setPlaying((v) => !v)}
               className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full font-bold text-white transition-all"
-              style={{ background: 'var(--accent-hex)', boxShadow: '0 0 12px rgba(59,158,255,0.4)' }}>
+              style={{ background: 'var(--sx-accent)', color: 'var(--sx-accent-ink)' }} aria-label={playing ? 'Pause' : 'Play'}>
               {playing ? '⏸' : '▶'}
             </button>
             <div className="h-[4px] flex-1 overflow-hidden rounded-full bg-chip2">
@@ -272,34 +285,28 @@ export default function ReplayScreen() {
             </span>
           </div>
         </div>
-      </TiltCard>
+      </Section>
 
       {/* ── Right column: video + at-this-moment + trash timeline ── */}
       <div className="flex flex-col gap-3">
 
         {/* Synced video */}
-        <TiltCard tilt={false} className="p-3">
-          <div className="mb-2 flex items-center justify-between">
-            <span className="eyebrow">Video (synced)</span>
-            {video.clips?.length > 0 && (
-              <span className="text-[10px] text-muted">{video.clips.length} clip{video.clips.length === 1 ? '' : 's'}</span>
-            )}
-          </div>
+        <Section title="Flight video" sub="Plays in step with the timeline"
+          actions={video.clips?.length > 0 ? <span className="sx-pill">{video.clips.length} clip{video.clips.length === 1 ? '' : 's'}</span> : null}>
           {clipUrl ? (
             <video ref={videoRef} src={clipUrl}
               className="w-full rounded-lg" style={{ aspectRatio: '16/9', background: '#000' }}
               controls muted playsInline />
           ) : (
-            <div className="rounded-lg px-3 py-6 text-center text-xs text-muted"
-              style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', aspectRatio: '16/9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              No recorded video for this run. Turn on the AI camera on the Live tab before Start next time.
+            <div className="sx-well px-4 py-6 text-center text-[13px] text-muted"
+              style={{ aspectRatio: '16/9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              No video for this run. Turn on the AI camera on the Live tab before starting the next mission.
             </div>
           )}
-        </TiltCard>
+        </Section>
 
         {/* At this moment — grid layout */}
-        <TiltCard tilt={false} className="p-3">
-          <div className="mb-2 eyebrow">At this moment</div>
+        <Section title="At this moment">
           {sample ? (
             <>
               <div className="grid grid-cols-2 gap-2">
@@ -309,36 +316,33 @@ export default function ReplayScreen() {
                   { k: 'Altitude',  v: sample.alt != null ? `${num(sample.alt, 1)} m` : '—' },
                   { k: 'Heading',   v: sample.heading != null ? `${num(sample.heading, 0)}°` : '—' },
                 ].map(({ k, v }) => (
-                  <div key={k} className="rounded-lg px-2.5 py-2"
-                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}>
-                    <div className="text-[9px] uppercase tracking-wider text-faint">{k}</div>
+                  <div key={k} className="sx-well px-3 py-2">
+                    <div className="sx-label" style={{ fontSize: 10.5 }}>{k}</div>
                     <div className="mt-0.5 font-mono text-sm font-semibold tnum text-ink">{v}</div>
                   </div>
                 ))}
               </div>
               {/* Trash progress */}
-              <div className="mt-2 rounded-lg px-2.5 py-2"
-                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}>
-                <div className="mb-1 text-[9px] uppercase tracking-wider text-faint">Trash spotted so far</div>
+              <div className="sx-well mt-2 px-3 py-2">
+                <div className="sx-label mb-1" style={{ fontSize: 10.5 }}>Plastic found so far</div>
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-base font-bold tnum text-accent">{visibleTrash.length}</span>
                   <div className="flex-1 overflow-hidden rounded-full bg-chip2" style={{ height: 4 }}>
                     <div className="h-full rounded-full bg-accent transition-all"
                       style={{ width: allTrash.length > 0 ? `${(visibleTrash.length / allTrash.length) * 100}%` : '0%' }} />
                   </div>
-                  <span className="text-[10px] text-faint">of {allTrash.length}</span>
+                  <span className="text-[12px] text-muted">of {allTrash.length}</span>
                 </div>
               </div>
             </>
           ) : (
-            <div className="py-2 text-sm text-muted">Move the slider to scrub through the flight.</div>
+            <div className="py-2 text-sm text-muted">Move the timeline to scrub through the flight.</div>
           )}
-        </TiltCard>
+        </Section>
 
         {/* Trash event timeline */}
         {allTrash.length > 0 && (
-          <TiltCard tilt={false} className="p-3">
-            <div className="mb-2 eyebrow">Detections in run</div>
+          <Section title="Found on this flight">
             <div className="flex flex-col">
               {sightings.filter((s) => s.located).slice(0, 10).map((s, i) => {
                 const col     = classColor(s.class)
@@ -348,27 +352,28 @@ export default function ReplayScreen() {
                 return (
                   <div key={i}
                     className="flex items-center gap-2 border-b py-1.5"
-                    style={{ borderColor: 'rgba(255,255,255,0.06)', opacity: reached ? 1 : 0.35 }}>
+                    style={{ borderColor: 'var(--sx-line)', opacity: reached ? 1 : 0.35 }}>
                     <div className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: col }} />
-                    <span className="text-xs text-ink flex-1 truncate">
+                    <span className="text-[13px] text-ink flex-1 truncate">
                       {icon} {s.class}{s.count > 1 ? ` ×${s.count}` : ''}
                     </span>
                     {elapsed && (
-                      <span className="font-mono text-[10px] tnum text-faint shrink-0">{elapsed}</span>
+                      <span className="font-mono text-[11.5px] tnum text-muted shrink-0">{elapsed}</span>
                     )}
                   </div>
                 )
               })}
               {sightings.filter((s) => s.located).length > 10 && (
-                <div className="pt-1 text-[10px] text-faint">+{sightings.filter((s) => s.located).length - 10} more</div>
+                <div className="pt-1.5 text-[12px] text-muted">+{sightings.filter((s) => s.located).length - 10} more</div>
               )}
               {!sample && (
-                <div className="mt-1 text-[10px] text-faint">Dimmed items not yet reached in replay</div>
+                <div className="mt-1.5 text-[12px] text-muted">Faded items come later in the flight.</div>
               )}
             </div>
-          </TiltCard>
+          </Section>
         )}
       </div>
     </div>
+    </Page>
   )
 }

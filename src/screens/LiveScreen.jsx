@@ -1,11 +1,10 @@
 import { lazy, Suspense, useMemo, useState } from 'react'
-import { AnimatePresence, motion } from 'framer-motion'
+import { Pill } from '../components/simple/Simple'
 import { api } from '../api/client'
 import { useSystem } from '../components/SystemContext'
 import { usePolling } from '../hooks/usePolling'
 import { useToast } from '../components/Toast'
-import { StaleBadge, StatusOrb, CommandButton, CommandPanel } from '../components/ui'
-import { ViewToggle, EYE, EYE_OFF, SWAP } from '../components/ViewToggle'
+import { StaleBadge, CommandButton, CommandPanel } from '../components/ui'
 import VideoHUD from '../components/VideoHUD'
 import MapCanvas from '../components/MapCanvas'
 import LiveDetectionMarkers from '../components/LiveDetectionMarkers'
@@ -16,18 +15,12 @@ import { BoatLiveCollectCard } from '../components/BoatLiveCollectCard'
 import DroneMiniMap, { DroneGpsLayer, readDroneGps, useDroneTrail } from '../components/DroneMiniMap'
 import { useBoat } from '../components/BoatContext'
 import { useRecommendedConf } from '../components/BackgroundDetect'
-import { pick, bool } from '../lib/format'
+import { pick, bool, num } from '../lib/format'
 import { cmd } from '../lib/commands'
 
 const WebcamDetect = lazy(() => import('../components/WebcamDetect'))
 
-// The waste-locations panel's shown/hidden choice survives a restart.
-const WASTE_KEY = 'varuna.live.wasteGps'
-function readShowWaste() {
-  try { return localStorage.getItem(WASTE_KEY) !== 'hidden' } catch { return true }
-}
-const PIN = <path d="M12 2a7 7 0 00-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 00-7-7zm0 9.5A2.5 2.5 0 1112 6.5a2.5 2.5 0 010 5z" fill="currentColor" />
-const AI_CAM = <path d="M4 7h3l1.5-2h7L17 7h3a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V8a1 1 0 011-1zm8 3a3.5 3.5 0 100 7 3.5 3.5 0 000-7z" fill="currentColor" />
+const PANEL = { background: 'var(--sx-card)', border: '1px solid var(--sx-line)', boxShadow: 'var(--sx-shadow)' }
 
 function readTelemetry(t) {
   if (!t) return {}
@@ -49,14 +42,14 @@ export default function LiveScreen() {
   const toast   = useToast()
   const ai      = usePolling(api.aiStatus, 5000)
   const [busy, setBusy]               = useState(null)
-  const [hideWidgets, setHideWidgets] = useState(false)
+  // "Full view" hides the side panel; remembered across restarts.
+  const [hideWidgets, setHideRaw]     = useState(() => { try { return localStorage.getItem('varuna.live.full') === '1' } catch { return false } })
+  const setHideWidgets = (f) => setHideRaw((v) => {
+    const n = typeof f === 'function' ? f(v) : f
+    try { localStorage.setItem('varuna.live.full', n ? '1' : '0') } catch { /* private window */ }
+    return n
+  })
   const [mainView, setMainView]       = useState('video') // 'video' | 'map' | 'webcam'
-  const [showWaste, setShowWaste]     = useState(readShowWaste)
-  function toggleWaste() {
-    const next = !showWaste
-    try { localStorage.setItem(WASTE_KEY, next ? 'shown' : 'hidden') } catch { /* private window */ }
-    setShowWaste(next)
-  }
   // The slider starts at the confidence the model's training run found best.
   const [conf, setConf]               = useRecommendedConf()
   // The boat's live collect, on the same screen as the drone's finds.
@@ -110,217 +103,165 @@ export default function LiveScreen() {
   }
 
   const swap = () => setMainView((v) => (v === 'video' ? 'map' : 'video'))
+  const batt = pick(telemetry.data, ['battery_percent', 'battery_remaining'])
+  const flight = [
+    ['Mode', t.mode ?? '—'],
+    ['Motors', t.armed == null ? '—' : t.armed ? 'Armed' : 'Disarmed', t.armed ? 'var(--sx-warn)' : undefined],
+    ['Altitude', t.alt != null ? `${num(t.alt, 1)} m` : '—'],
+    ['Speed', t.speed != null ? `${num(t.speed, 1)} m/s` : '—'],
+    ['Satellites', t.sats != null ? num(t.sats, 0) : '—'],
+    ['Battery', batt != null ? `${num(batt, 0)}%` : t.volt != null ? `${num(t.volt, 1)} V` : '—'],
+  ]
+  const VIEWS = [['video', 'Drone camera'], ['map', 'Map'], ['webcam', 'Laptop AI cam']]
 
   return (
-    <div className="relative" style={{ height: 'calc(100vh - 66px)' }}>
+    <div className="flex flex-col gap-3 pb-3 lg:h-[calc(100vh-66px)] lg:pb-0">
 
-      {/* ── Background view ── */}
-      <div className="absolute inset-0 z-0 overflow-hidden rounded-2xl border border-line">
-        {mainView === 'webcam' ? (
-          <Suspense fallback={<div className="flex h-full w-full items-center justify-center text-sm text-muted">Loading AI detector…</div>}>
-            <WebcamDetect confThr={conf} />
-          </Suspense>
-        ) : (
-          <>
-            {/* The feed stays mounted under the map, so detection keeps running in Map view
-                and new plastic keeps appearing on the map. */}
-            <Suspense fallback={<div className="flex h-full w-full items-center justify-center text-sm text-muted">Loading feed…</div>}>
-              <WebcamDetect confThr={conf} defaultSource="auto" autoStart controlsLift={hideWidgets ? 0 : 135} />
-            </Suspense>
-            {mainView === 'map' && (
-              <div className="absolute inset-0 z-10">
-                <MapCanvas center={center} hasFix={hasFix}
-                  droneMarker={<DroneGpsLayer pos={gps.pos} heading={gps.heading} acc={gps.acc} trail={trail} home={gps.home} />}>
-                  <LiveDetectionMarkers />
-                  <LiveBoatMarkers />
-                </MapCanvas>
-              </div>
-            )}
-          </>
-        )}
-      </div>
-
-      {/* ── Top-left: status pill + action buttons (drone views only) ── */}
-      {mainView !== 'webcam' && (
-        <div className="absolute left-3 top-3 z-20 flex flex-col gap-2">
-          {/* Status pill */}
-          <div
-            className="flex items-center gap-2 rounded-full px-3 py-1.5"
-            style={{
-              background: 'rgba(0,0,0,0.7)',
-              border: '1px solid rgba(255,255,255,0.08)',
-              backdropFilter: 'blur(10px)',
-            }}
-          >
-            <StatusOrb level={connected ? 'ok' : 'bad'} size={9} pulse={!connected} />
-            <span className="text-[13px] font-bold text-ink">LIVE · VARUNA-01</span>
-            <StaleBadge lastUpdate={telemetry.lastUpdate} connected={connected} />
-            {simulated && (
-              <span
-                className="rounded-full px-2 py-0.5 text-[10px] font-bold"
-                style={{ background: 'rgba(245,158,11,0.16)', color: '#F59E0B' }}
-              >
-                SIM
-              </span>
-            )}
+      {/* ── Toolbar ── */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2.5 rounded-[14px] px-4 py-2.5" style={PANEL}>
+        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px]" style={{ background: 'var(--sx-accent-soft)', color: 'var(--sx-accent-text)' }}>
+            <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="2.5" y="6" width="13" height="12" rx="2.5" /><path d="M15.5 10.5l6-3.5v10l-6-3.5" /></svg>
+          </span>
+          <div className="min-w-0">
+            <h1 className="text-[17px] font-bold leading-tight tracking-tight text-ink">Live</h1>
+            <p className="truncate text-[12.5px] text-muted">Drone camera, map and flight controls</p>
           </div>
-
-          {/* AI + Capture row */}
-          <div className="flex flex-wrap gap-2">
-            <button
-              disabled={busy === 'ai'}
-              onClick={toggleAI}
-              className="rounded-xl px-4 py-2 text-[12px] font-bold transition-all active:scale-95 disabled:opacity-40"
-              style={aiOn
-                ? { background: 'linear-gradient(135deg,#32D74B,#0e8f28)', color: '#fff', boxShadow: '0 0 16px rgba(50,215,75,0.4)', border: '1px solid rgba(50,215,75,0.4)' }
-                : { background: 'rgba(255,255,255,0.07)', color: 'var(--muted)', border: '1px solid rgba(255,255,255,0.1)' }}
-            >
-              {aiOn ? '● AI On' : '○ AI Off'}
-            </button>
-            <button
-              onClick={() => window.open(api.snapshotUrl(), '_blank')}
-              className="rounded-xl px-4 py-2 text-[12px] font-bold transition-all active:scale-95"
-              style={{ background: 'rgba(255,255,255,0.07)', color: 'var(--muted)', border: '1px solid rgba(255,255,255,0.1)' }}
-            >
-              📸 Capture
-            </button>
-          </div>
+          <Pill tone={connected ? 'ok' : 'bad'} pulse={!connected}>{connected ? 'Drone connected' : 'Drone offline'}</Pill>
+          {simulated && <Pill tone="warn">Simulator</Pill>}
         </div>
-      )}
-
-      {/* ── View controls (bottom-center) ── */}
-      <div className="absolute bottom-3 left-1/2 z-30 flex -translate-x-1/2 flex-wrap items-center justify-center gap-2">
-        <ViewToggle active={hideWidgets} onClick={() => setHideWidgets((v) => !v)} label={hideWidgets ? 'Show widgets' : 'Hide widgets'} icon={hideWidgets ? EYE_OFF : EYE} />
-        {mainView !== 'webcam' && (
-          <ViewToggle active={mainView === 'map'} onClick={swap} label={mainView === 'map' ? 'Video view' : 'Map view'} icon={SWAP} />
-        )}
-        <ViewToggle
-          active={mainView === 'webcam'}
-          onClick={() => setMainView((v) => (v === 'webcam' ? 'video' : 'webcam'))}
-          label={mainView === 'webcam' ? 'Exit AI cam' : 'AI cam'}
-          icon={AI_CAM}
-        />
-        <ViewToggle
-          active={showWaste}
-          onClick={toggleWaste}
-          label={showWaste ? 'Hide waste GPS' : 'Show waste GPS'}
-          icon={PIN}
-        />
-        {mainView === 'webcam' && (
-          <div
-            className="flex items-center gap-2 rounded-xl px-3 py-2"
-            style={{ background: 'rgba(0,0,0,0.65)', border: '1px solid rgba(255,255,255,0.08)', backdropFilter: 'blur(10px)' }}
-          >
-            <span className="text-[11px] font-semibold text-muted">Conf</span>
-            <input type="range" min={0.1} max={0.9} step={0.05} value={conf}
-              onChange={(e) => setConf(Number(e.target.value))}
-              className="w-24 accent-accent" />
-            <span className="w-8 font-mono text-[11px] tnum text-accent">{Math.round(conf * 100)}%</span>
-          </div>
-        )}
+        <span className="hidden flex-1 lg:block" />
+        <div className="sx-seg max-w-full overflow-x-auto" role="tablist" aria-label="View">
+          {VIEWS.map(([k, l]) => (
+            <button key={k} type="button" role="tab" aria-selected={mainView === k} aria-pressed={mainView === k} onClick={() => setMainView(k)}>{l}</button>
+          ))}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {mainView === 'webcam' ? (
+            <label className="sx-well flex items-center gap-2 px-3" style={{ minHeight: 36 }}>
+              <span className="text-[12.5px] font-semibold text-muted">Confidence</span>
+              <input type="range" min={0.1} max={0.9} step={0.05} value={conf} onChange={(e) => setConf(Number(e.target.value))} className="w-24 accent-accent" />
+              <span className="w-9 font-mono text-[12px] tnum text-ink">{Math.round(conf * 100)}%</span>
+            </label>
+          ) : (
+            <>
+              <button type="button" disabled={busy === 'ai'} onClick={toggleAI} aria-pressed={aiOn}
+                className="sx-btn ghost sm" style={aiOn ? { borderColor: 'var(--sx-ok)', color: 'var(--sx-ok)' } : undefined}>
+                <span className="h-2 w-2 rounded-full" style={{ background: aiOn ? 'var(--sx-ok)' : 'var(--sx-line2)' }} />
+                Plastic finder {aiOn ? 'on' : 'off'}
+              </button>
+              <button type="button" className="sx-btn ghost sm" onClick={() => window.open(api.snapshotUrl(), '_blank')}>
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z" /><circle cx="12" cy="13" r="3.5" /></svg>
+                Photo
+              </button>
+            </>
+          )}
+          <button type="button" className="sx-btn ghost sm hidden lg:inline-flex" aria-pressed={hideWidgets} onClick={() => setHideWidgets((v) => !v)}
+            title={hideWidgets ? 'Show the side panel' : 'Hide the side panel'}>
+            {hideWidgets ? 'Show panel' : 'Full view'}
+          </button>
+        </div>
       </div>
 
-      {/* ── Latest detection + its GPS, big, over the video (the main thing to read on a phone) ── */}
-      {mainView !== 'map' && <LatestDetectionBanner />}
+      {/* ── Stage + side panel ── */}
+      <div className={`grid min-h-0 gap-3 lg:flex-1 ${hideWidgets ? '' : 'lg:grid-cols-[minmax(0,1fr)_340px]'}`}>
+        <div className="flex min-h-0 min-w-0 flex-col gap-3">
+          <div className="sx-keepdark relative h-[58vh] min-h-[320px] overflow-hidden rounded-[14px] lg:h-auto lg:flex-1"
+            style={{ background: '#0b1120', border: '1px solid var(--sx-line)' }}>
+            {mainView === 'webcam' ? (
+              <Suspense fallback={<div className="flex h-full w-full items-center justify-center text-sm text-white/60">Loading AI detector…</div>}>
+                <WebcamDetect confThr={conf} />
+              </Suspense>
+            ) : (
+              <>
+                {/* The feed stays mounted under the map, so detection keeps running in Map view
+                    and new plastic keeps appearing on the map. */}
+                <Suspense fallback={<div className="flex h-full w-full items-center justify-center text-sm text-white/60">Loading feed…</div>}>
+                  <WebcamDetect confThr={conf} defaultSource="auto" autoStart />
+                </Suspense>
+                {mainView === 'map' && (
+                  <div className="absolute inset-0 z-10">
+                    <MapCanvas center={center} hasFix={hasFix}
+                      droneMarker={<DroneGpsLayer pos={gps.pos} heading={gps.heading} acc={gps.acc} trail={trail} home={gps.home} />}>
+                      <LiveDetectionMarkers />
+                      <LiveBoatMarkers />
+                    </MapCanvas>
+                  </div>
+                )}
+              </>
+            )}
 
-      {/* ── Waste locations (bottom-right): GPS of every detection, own Show/Hide button ── */}
-      <WasteLocationsPanel show={showWaste} />
+            {/* Latest detection + its GPS, big, over the video */}
+            {mainView !== 'map' && <LatestDetectionBanner />}
 
-      {/* ── The boat collecting what the drone finds, live (top-right) ── */}
-      <AnimatePresence>
-        {!hideWidgets && mainView !== 'webcam' && boatLive && (
-          <motion.div
-            initial={{ opacity: 0, x: 20 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 20 }}
-            transition={{ type: 'spring', stiffness: 260, damping: 26 }}
-            className={`absolute right-3 ${mainView === 'video' ? 'top-[14rem] lg:top-14' : 'top-3'} z-20 max-h-[calc(100%-6rem)] w-[240px] overflow-y-auto`}
-          >
-            <div
-              className="rounded-2xl p-2 [&>div]:mb-0"
-              style={{
-                background: 'rgba(13,17,26,0.88)',
-                border: '1px solid rgba(255,255,255,0.08)',
-                backdropFilter: 'blur(16px)',
-                boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
-              }}
-            >
-              <BoatLiveCollectCard />
+            {/* Map view: the video in a thumbnail */}
+            {mainView === 'map' && (
+              <button type="button" onClick={swap} title="Back to the drone camera"
+                className="isolate absolute bottom-3 left-3 z-20 h-28 w-44 overflow-hidden rounded-xl"
+                style={{ border: '1px solid rgba(255,255,255,0.18)', boxShadow: '0 4px 20px rgba(0,0,0,0.45)' }}>
+                <VideoHUD speed={t.speed} altitude={t.alt} heading={t.heading} aiOn={aiOn} fill />
+                <span className="absolute inset-x-0 bottom-0 py-1 text-center text-[10px] font-semibold tracking-wide text-white" style={{ background: 'rgba(0,0,0,0.6)' }}>
+                  Drone camera
+                </span>
+              </button>
+            )}
+          </div>
+
+          {/* ── Flight controls ── */}
+          {mainView !== 'webcam' && (
+            <div className="sx-keepdark flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-[14px] px-4 py-2.5"
+              style={{ background: '#0b1120', border: '1px solid rgba(255,255,255,0.08)' }}>
+              <div className="min-w-0">
+                <div className="text-[13.5px] font-semibold text-white">Flight controls</div>
+                <div className="text-[12px] text-white/55">{fcUp ? 'Each command asks you to confirm first.' : 'No flight controller on the link: commands are off.'}</div>
+              </div>
+              {fcUp && (
+                <CommandPanel>
+                  <CommandButton cmd={t.armed ? 'disarm' : 'arm'} disabled={busy === 'arm'}
+                    onConfirm={() => run('arm', () => cmd.arm(!t.armed), t.armed ? 'Motors disarmed' : 'Motors armed')} />
+                  <CommandButton cmd="takeoff" disabled={busy === 'takeoff'} onConfirm={takeoff} />
+                  <CommandButton cmd="rth"     disabled={busy === 'rtl'}
+                    onConfirm={() => run('rtl', cmd.rtl, 'Returning to Home')} />
+                  <CommandButton cmd="land"    disabled={busy === 'land'}
+                    onConfirm={() => run('land', cmd.land, 'Landing')} />
+                  <CommandButton cmd="stop"    disabled={busy === 'stop'}
+                    onConfirm={() => run('stop', cmd.emergencyStop, 'Emergency stop sent')} />
+                </CommandPanel>
+              )}
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+          )}
+        </div>
 
-      {/* ── Bottom-left: the drone's live position on a small map (video view),
-            or the video in a thumbnail (map view) ── */}
-      <AnimatePresence>
-        {!hideWidgets && mainView === 'video' && (
-          <motion.div
-            key="minimap"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 20 }}
-            className="absolute bottom-20 left-3 z-20"
-          >
-            <DroneMiniMap g={gps} trail={trail} onOpenMap={swap} />
-          </motion.div>
-        )}
-        {!hideWidgets && mainView === 'map' && (
-          <motion.button
-            key="videopip"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 20 }}
-            onClick={swap}
-            className="isolate absolute bottom-20 left-3 z-20 h-28 w-44 overflow-hidden rounded-xl"
-            style={{ border: '1px solid rgba(255,255,255,0.14)', boxShadow: '0 4px 20px rgba(0,0,0,0.5)' }}
-            title="Tap to swap main view"
-          >
-            <VideoHUD speed={t.speed} altitude={t.alt} heading={t.heading} aiOn={aiOn} fill />
-            <span
-              className="absolute inset-x-0 bottom-0 py-1 text-center text-[9px] font-bold tracking-widest text-white"
-              style={{ background: 'rgba(0,0,0,0.65)' }}
-            >
-              TAP TO SWAP
-            </span>
-          </motion.button>
-        )}
-      </AnimatePresence>
+        {/* ── Side panel ── */}
+        {!hideWidgets && (
+          <aside className="flex min-h-0 min-w-0 flex-col gap-3 lg:overflow-y-auto lg:pr-0.5 [&>*]:shrink-0">
+            <section className="overflow-hidden rounded-[14px]" style={PANEL}>
+              <div className="flex items-center justify-between border-b px-4 py-2.5" style={{ borderColor: 'var(--sx-line)' }}>
+                <span className="text-[14px] font-semibold text-ink">Flight</span>
+                {telemetry.status !== 'live' && <StaleBadge status={telemetry.status} />}
+              </div>
+              <div className="grid grid-cols-3 gap-px" style={{ background: 'var(--sx-line)' }}>
+                {flight.map(([k, v, c]) => (
+                  <div key={k} className="px-3 py-2.5" style={{ background: 'var(--sx-card)' }}>
+                    <div className="text-[11.5px] font-medium text-muted">{k}</div>
+                    <div className="truncate font-mono text-[14.5px] font-semibold tnum text-ink" style={c ? { color: c } : undefined}>{v}</div>
+                  </div>
+                ))}
+              </div>
+            </section>
 
-      {/* ── Flight command ring (bottom-center above view controls): only with a
-            flight controller to command (none when the phone is the drone's link) ── */}
-      <AnimatePresence>
-        {!hideWidgets && mainView !== 'webcam' && fcUp && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 20 }}
-            className="pointer-events-none absolute inset-x-0 bottom-16 z-20 flex justify-center px-3"
-          >
-            <div
-              className="pointer-events-auto flex items-center gap-2 rounded-[40px] px-4 py-2.5"
-              style={{
-                background: 'rgba(10,14,24,0.88)',
-                border: '1px solid rgba(255,255,255,0.08)',
-                backdropFilter: 'blur(16px)',
-                boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
-              }}
-            >
-              <CommandPanel>
-                <CommandButton cmd={t.armed ? 'disarm' : 'arm'} disabled={busy === 'arm'}
-                  onConfirm={() => run('arm', () => cmd.arm(!t.armed), t.armed ? 'Motors disarmed' : 'Motors armed')} />
-                <CommandButton cmd="takeoff" disabled={busy === 'takeoff'} onConfirm={takeoff} />
-                <CommandButton cmd="rth"     disabled={busy === 'rtl'}
-                  onConfirm={() => run('rtl', cmd.rtl, 'Returning to Home')} />
-                <CommandButton cmd="land"    disabled={busy === 'land'}
-                  onConfirm={() => run('land', cmd.land, 'Landing')} />
-                <CommandButton cmd="stop"    disabled={busy === 'stop'}
-                  onConfirm={() => run('stop', cmd.emergencyStop, 'Emergency stop sent')} />
-              </CommandPanel>
-            </div>
-          </motion.div>
+            {mainView !== 'webcam' && <DroneMiniMap embedded g={gps} trail={trail} onOpenMap={mainView === 'video' ? swap : undefined} />}
+
+            {boatLive && (
+              <section className="overflow-hidden rounded-[14px] p-2 [&>div]:mb-0" style={PANEL}>
+                <BoatLiveCollectCard />
+              </section>
+            )}
+
+            <WasteLocationsPanel show inline />
+          </aside>
         )}
-      </AnimatePresence>
+      </div>
     </div>
   )
 }

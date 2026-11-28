@@ -1,3 +1,8 @@
+
+// AudioContext.close() returns a promise that rejects if it is already closed
+// (a try/catch around it never sees that), so close only once and swallow it.
+const closeCtx = (c) => { try { if (c && c.state !== 'closed') c.close().catch(() => {}) } catch { /* ignore */ } }
+
 // Voice in/out for the VARUNA assistant.
 //  - listenUntilSilence(): records the operator's command and stops by itself
 //    once they stop talking (simple energy-based voice-activity detection);
@@ -39,7 +44,7 @@ export function listenUntilSilence({ onLevel, startTimeoutMs = 7000, silenceMs =
       rec = new MediaRecorder(stream)
     } catch (e) {
       stream.getTracks().forEach((t) => t.stop())
-      ctx.close()
+      closeCtx(ctx)
       throw e
     }
     const chunks = []
@@ -86,7 +91,7 @@ export function listenUntilSilence({ onLevel, startTimeoutMs = 7000, silenceMs =
     hard = setTimeout(finish, MAX_SECONDS * 1000 + 500)
     await stopped
     stream.getTracks().forEach((t) => t.stop())
-    ctx.close()
+    closeCtx(ctx)
     onLevel?.(0)
     if (cancelled || !spoke || !chunks.length) return null
     return { blob: new Blob(chunks, { type: rec.mimeType || 'audio/webm' }), seconds: (Date.now() - startedAt) / 1000 }
@@ -328,7 +333,7 @@ export function chime() {
       o.start(t)
       o.stop(t + 0.24)
     })
-    setTimeout(() => ctx.close(), 600)
+    setTimeout(() => closeCtx(ctx), 600)
   } catch {
     /* no audio output — the orb still shows it's awake */
   }
@@ -426,7 +431,7 @@ export function browserListenToText({ onLevel, startTimeoutMs = 7000, silenceMs 
       clearInterval(levelIv)
       try { rec.abort() } catch { /* ignore */ }
       try { mediaStream?.getTracks().forEach((t) => t.stop()) } catch { /* ignore */ }
-      try { ctx?.close() } catch { /* ignore */ }
+      closeCtx(ctx)
       onLevel?.(0)
     }
 

@@ -147,9 +147,20 @@ export class PlasticLock {
     if (score < this.conf) return null
     const hits = Number(b.hits) || 0
     const seenEnough = hits >= this.minHits || score >= this.sureScore
-    const g = boxGround(b, w, h, cfg)
-    if (!g || g.distance > this.maxM) return null
-    return { ...g, id: b.id, label: b.label, score, hits, seenEnough }
+    // Any plastic the camera sees counts, near or far: with no usable distance
+    // (above the horizon line, or farther than maxM) the boat still runs its
+    // motor towards it; only the scoop waits for a known, short distance.
+    let g = boxGround(b, w, h, cfg)
+    if (g && g.distance > this.maxM) g = null
+    // How much of the picture the box covers: the boat refuses a box too big to be one item.
+    const frac = ((b.x2 - b.x1) * (b.y2 - b.y1)) / Math.max(1, w * h)
+    // Side offset from the picture alone (used when there is no distance).
+    const offX = w > 0 ? ((b.x1 + b.x2) / 2) / w - 0.5 : 0
+    const ground = g || { forward: null, right: null, distance: null, bearing: offX * (Number(cfg?.camera_hfov_deg) || 66) }
+    // Where the box is in the picture (0..1): the boat checks it against the
+    // scoop's mouth before it closes the scoop.
+    const nbox = w > 0 && h > 0 ? [b.x1 / w, b.y1 / h, b.x2 / w, b.y2 / h].map((v) => Math.round(Math.min(1, Math.max(0, v)) * 1000) / 1000) : null
+    return { ...ground, id: b.id, label: b.label, score, hits, seenEnough, frac, offX, nbox }
   }
 
   /**
@@ -167,14 +178,17 @@ export class PlasticLock {
       const same = cands.find((c) => c.id === held.id)
       if (same) {
         // Smooth the distance: single detections jitter, the boat should not.
-        const d = held.distance + (same.distance - held.distance) * this.smooth
-        const closing = d < held.distance - 0.05 ? true : d > held.distance + 0.05 ? false : held.closing
+        // (No distance on either side: take the new reading as it is.)
+        const sm = (a, b) => (a == null || b == null ? b : a + (b - a) * this.smooth)
+        const d = sm(held.distance, same.distance)
+        const closing = d == null || held.distance == null ? held.closing
+          : d < held.distance - 0.05 ? true : d > held.distance + 0.05 ? false : held.closing
         this.lock = {
           ...held, ...same,
           distance: d,
-          bearing: held.bearing + (same.bearing - held.bearing) * this.smooth,
-          forward: held.forward + (same.forward - held.forward) * this.smooth,
-          right: held.right + (same.right - held.right) * this.smooth,
+          bearing: sm(held.bearing, same.bearing),
+          forward: sm(held.forward, same.forward),
+          right: sm(held.right, same.right),
           lastSeen: now,
           seen: (held.seen || 0) + 1,
           closing,
@@ -204,15 +218,19 @@ export class PlasticLock {
       score: Math.round(l.score * 1000) / 1000,
       hits: l.hits,
       seen: l.seen,
-      distance_m: Math.round(l.distance * 100) / 100,
-      forward_m: Math.round(l.forward * 100) / 100,
-      right_m: Math.round(l.right * 100) / 100,
-      bearing_deg: Math.round(l.bearing * 10) / 10,
-      centred: Math.abs(l.right) <= this.centreFrac * Math.max(0.5, l.forward),
+      distance_m: r2(l.distance),
+      forward_m: r2(l.forward),
+      right_m: r2(l.right),
+      bearing_deg: Number.isFinite(l.bearing) ? Math.round(l.bearing * 10) / 10 : null,
+      centred: l.right != null && l.forward != null
+        ? Math.abs(l.right) <= this.centreFrac * Math.max(0.5, l.forward)
+        : Math.abs(l.offX ?? 1) <= 0.12, // no distance: near the middle of the picture
       closing: l.closing,
       age_ms: Math.round(ageMs),
       visible: ageMs < 250,
       held_ms: Math.round(now - l.firstSeen),
+      box_frac: Number.isFinite(l.frac) ? Math.round(l.frac * 1000) / 1000 : null,
+      box: l.nbox || null, // [x1, y1, x2, y2] as fractions of the picture
       // The boat acts on this only when it is true: class, confidence and
       // evidence all passed, and the item is in sight now or was a moment ago.
       confirmed: ageMs <= this.lostMs,
@@ -220,7 +238,9 @@ export class PlasticLock {
   }
 }
 
+const r2 = (v) => (v == null || !Number.isFinite(v) ? null : Math.round(v * 100) / 100)
+
 /** Highest score first, then nearest — used only to choose a NEW lock. */
 function pick(c) {
-  return c.score - c.distance / 100
+  return c.score - (c.distance ?? 50) / 100
 }

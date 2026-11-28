@@ -36,7 +36,10 @@ const KINDS = [
   ['container', 'container'], ['box', 'container'], ['tub', 'container'], ['can', 'container'],
   ['foam', 'foam'], ['styrofoam', 'foam'], ['thermocol', 'foam'],
 ]
-const UNKNOWN = new Set(['', 'trash', 'plastic', 'item', 'object', 'other', 'other plastic', 'debris', 'litter', 'waste'])
+// 'OTHERS' is the drone model's catch-all class: it says nothing about the kind,
+// so it must not count as a DIFFERENT kind from 'plastic bottle'.
+const UNKNOWN = new Set(['', 'trash', 'plastic', 'item', 'object', 'other', 'others', 'other plastic', 'others plastic',
+  'misc', 'unknown', 'debris', 'litter', 'waste', 'garbage', 'rubbish'])
 
 /** 'plastic bottle' → 'bottle'; 'trash' / '' → null (unknown). Same rules as the boat's target_match.py. */
 export function kind(label) {
@@ -46,10 +49,16 @@ export function kind(label) {
   return s.replace('plastic', '').trim() || null
 }
 
+// The detector mixes these up on clear or crumpled plastic (a clear bottle in
+// the water is often called a "container" or a "bag" from the boat's low
+// angle), so two of them disagreeing is weak evidence of a different item.
+const CONFUSABLE = new Set(['bottle', 'container', 'cup', 'bag'])
+
 export function classAgreement(a, b) {
   const ka = kind(a), kb = kind(b)
   if (ka == null || kb == null) return 0.5
-  return ka === kb ? 1 : 0.15
+  if (ka === kb) return 1
+  return CONFUSABLE.has(ka) && CONFUSABLE.has(kb) ? 0.35 : 0.15
 }
 
 /** Nearest-pixel resize to SIG x SIG (a canvas drawImage does this better in the page). */
@@ -112,8 +121,11 @@ function normalise(im) {
  * `raw: true` = the earlier signature (no lighting correction, hard hue bins),
  * kept for imageSearch.js, which compares against its own pixel bins.
  */
-export function signature(img, { raw = false } = {}) {
+export function signature(img, { raw = false, aspect = null } = {}) {
   if (!img || !img.width || !img.height) return null
+  // Width / height of the REAL region the image shows: crops are squeezed into
+  // SIG x SIG, and the item's true shape (a long thin bottle) needs it back.
+  const asp = Number(aspect) > 0 ? Number(aspect) : Number(img.aspect) > 0 ? Number(img.aspect) : img.width / img.height
   const im = raw ? toSig(img) : normalise(toSig(img))
   const n = SIG, px = im.data
   const at = (x, y) => (y * n + x) * 4
@@ -138,9 +150,12 @@ export function signature(img, { raw = false } = {}) {
   const mean = [0, 0, 0]
   const grad = new Float32Array(G_BINS)
   let x0 = n, y0 = n, x1 = 0, y1 = 0
+  let mx = 0, my = 0, mxx = 0, myy = 0, mxy = 0 // shape moments, in true proportions
   for (let y = 0; y < n; y++) {
     for (let x = 0; x < n; x++) {
       if (!fg[y * n + x]) continue
+      const X = x * asp, Y = y
+      mx += X; my += Y; mxx += X * X; myy += Y * Y; mxy += X * Y
       const i = at(x, y)
       const [h, s, v] = hsv(px[i], px[i + 1], px[i + 2])
       const sb = Math.min(S_BINS - 1, Math.floor(s * S_BINS))
@@ -183,7 +198,15 @@ export function signature(img, { raw = false } = {}) {
   const g = new Float32Array(G_BINS)
   for (let k = 0; k < G_BINS; k++) g[k] = gsum ? grad[(top + k) % G_BINS] / gsum : 0
   const fill = count / Math.max(1, (x1 - x0 + 1) * (y1 - y0 + 1))
-  return { hist, mean, grad: gsum ? g : null, fill }
+  // Elongation: long axis / short axis of the item, whichever way it lies.
+  // A bottle stays long and thin from the drone (above) and the boat (side).
+  mx /= count; my /= count
+  const cxx = mxx / count - mx * mx, cyy = myy / count - my * my, cxy = mxy / count - mx * my
+  const tr = cxx + cyy, det = cxx * cyy - cxy * cxy
+  const disc = Math.sqrt(Math.max(0, (tr * tr) / 4 - det))
+  const l1 = tr / 2 + disc, l2 = Math.max(1e-6, tr / 2 - disc)
+  const elong = Math.min(8, Math.sqrt(Math.max(l1, 1e-6) / l2))
+  return { hist, mean, grad: gsum ? g : null, fill, elong }
 }
 
 /** The earlier comparison, unchanged, for imageSearch.js (its own, un-normalised signatures). */
@@ -202,6 +225,11 @@ export function legacySimilarity(a, b) {
   return Math.max(0, Math.min(1, shape == null ? colour : 0.8 * colour + 0.2 * shape))
 }
 
+/** 0..1: how alike two elongations are (3:1 vs 1:1 = not alike at all). */
+function elongSim(ea, eb) {
+  return Math.max(0, 1 - Math.abs(Math.log(Math.max(1, ea) / Math.max(1, eb))) / Math.log(3))
+}
+
 /** 0..1: how alike two signatures look. */
 export function similarity(a, b) {
   if (!a || !b) return null
@@ -216,10 +244,13 @@ export function similarity(a, b) {
   if (a.grad && b.grad) {
     let gi = 0
     for (let k = 0; k < G_BINS; k++) gi += Math.sqrt(a.grad[k] * b.grad[k])
-    shape = 0.7 * gi + 0.3 * (1 - Math.min(1, Math.abs(a.fill - b.fill) * 2))
+    const fillSim = 1 - Math.min(1, Math.abs(a.fill - b.fill) * 2)
+    shape = Number.isFinite(a.elong) && Number.isFinite(b.elong)
+      ? 0.45 * gi + 0.2 * fillSim + 0.35 * elongSim(a.elong, b.elong)
+      : 0.7 * gi + 0.3 * fillSim
   }
   const colour = 0.6 * bc + 0.4 * meanSim
-  const s = shape == null ? colour : 0.85 * colour + 0.15 * shape
+  const s = shape == null ? colour : 0.8 * colour + 0.2 * shape
   // Spread the scale: unrelated items rarely score below ~0.42 on raw look,
   // so map 0.42..1 onto 0..1 to keep them clear of the threshold.
   return Math.max(0, Math.min(1, (s - 0.42) / 0.58))
@@ -229,8 +260,24 @@ export function similarity(a, b) {
  * Score a candidate against the drone's item: { score 0..1, parts }.
  * Parts that can't be judged (no images) are left out and the weights renormalised.
  */
+const BOTTLE_ELONG = 1.65 // at least this long and thin (drone view): bottle-shaped
+
+/** The kind of the drone's item: its class, else 'bottle' when it is unnamed but bottle-shaped. */
+function refKind(refClass, refSig) {
+  const k = kind(refClass)
+  if (k != null) return { k, guessed: false }
+  if (refSig?.elong >= BOTTLE_ELONG) return { k: 'bottle', guessed: true }
+  return { k: null, guessed: false }
+}
+
 export function matchScore(refSig, refClass, candSig, candClass, candConf) {
-  const parts = { class: classAgreement(refClass, candClass) }
+  const rk = refKind(refClass, refSig)
+  // A guessed bottle (the drone's AI said "OTHERS", the shape says bottle) agrees
+  // less firmly than a named one, either way.
+  const ck = kind(candClass)
+  const cls = !rk.guessed ? classAgreement(refClass, candClass)
+    : ck == null ? 0.5 : ck === 'bottle' ? 0.85 : 0.3
+  const parts = { class: cls }
   if (Number.isFinite(candConf)) parts.detector = Math.max(0, Math.min(1, candConf))
   const look = refSig && candSig ? similarity(refSig, candSig) : null
   if (look != null) parts.look = look
@@ -241,7 +288,15 @@ export function matchScore(refSig, refClass, candSig, candClass, candConf) {
   // A clearly different-looking item never matches on class alone, and two
   // look-alikes the AIs call different things are probably different items.
   if (look != null && look < 0.25) s = Math.min(s, look + 0.2)
-  if (parts.class < 0.5) s *= 0.75
+  if (parts.class < 0.5) s *= 0.85
+  // Plastic bottles: long and thin seen from the drone (above) and from the
+  // boat (the side) alike. A long, thin candidate for a long, thin bottle earns
+  // a little; colour alone is weak for clear bottles, which take on the water's.
+  if (rk.k === 'bottle' && refSig?.elong >= BOTTLE_ELONG && candSig?.elong >= 1.6 && parts.class >= 0.35
+      && (look == null || look >= 0.25)) {
+    parts.shape = Math.min(1, candSig.elong / refSig.elong, refSig.elong / candSig.elong)
+    s = Math.min(1, s + 0.08 * (0.5 + 0.5 * parts.shape))
+  }
   const r3 = (v) => Math.round(v * 1000) / 1000
   return { score: r3(s), parts: Object.fromEntries(Object.entries(parts).map(([k, v]) => [k, r3(v)])) }
 }

@@ -97,7 +97,7 @@ function explainError(err, ms) {
     return {
       ok: false, ms,
       title: 'Address not found',
-      detail: "That name doesn't resolve. If it's a Netbird name, check the NetBird app on this phone shows Connected — or use the Pi's 100.x.x.x Netbird IP instead.",
+      detail: "That name doesn't resolve. If it's a Tailscale name (like varuna-drone), check the Tailscale app on this phone shows Connected — or use the 100.x.x.x Tailscale IP instead.",
     }
   }
   if (code === 'ECONNREFUSED') {
@@ -111,7 +111,7 @@ function explainError(err, ms) {
     return {
       ok: false, ms,
       title: 'Timed out',
-      detail: 'The Pi is offline, or it and this phone are not both connected to the same Netbird network (open the NetBird app and connect).',
+      detail: 'The Pi is offline, or it and this phone are not both logged in to the same Tailscale account (open the Tailscale app and connect).',
     }
   }
   return { ok: false, ms, title: 'Could not reach the Pi', detail: `${code || (err && err.message) || 'Unknown error'}` }
@@ -120,7 +120,7 @@ function explainError(err, ms) {
 function testPi(base) {
   return new Promise((resolve) => {
     if (!base) {
-      return resolve({ ok: false, title: 'No address entered', detail: "Enter the Pi's Netbird address, e.g. http://100.92.14.7:8000" })
+      return resolve({ ok: false, title: 'No address entered', detail: "Enter the drone Pi's Tailscale address, e.g. http://varuna-drone:8000" })
     }
     const t0 = Date.now()
     let settled = false
@@ -161,7 +161,7 @@ function testPi(base) {
 /** Like testPi, then also checks the address really is the boat (not the drone's Pi). */
 async function testBoat(base) {
   if (!base) {
-    return { ok: false, title: 'No address entered', detail: "Enter the boat Pi's Netbird address, e.g. http://100.92.14.8:8000" }
+    return { ok: false, title: 'No address entered', detail: "Enter the boat program's Tailscale address, e.g. http://varuna-laptop:8001" }
   }
   const r = await testPi(base)
   if (!r.ok) return r
@@ -186,7 +186,7 @@ async function testBoat(base) {
     return {
       ok: false, ms: r.ms,
       title: 'That address is not the boat',
-      detail: "A backend answered, but it is not the VARUNA boat backend (it may be the drone's Pi). Enter the boat Pi's Netbird address.",
+      detail: "A backend answered, but it is not the VARUNA boat backend (it may be the drone's Pi). Enter the boat program's Tailscale address (the laptop running Start VARUNA Boat, port 8001).",
     }
   }
   return { ...r, detail: `The boat answered /api/ping in ${r.ms} ms.` }

@@ -53,7 +53,7 @@ export function NlBoatOffline({ boat, onNavigate }) {
             {wrong ? "A VARUNA backend answered, but it isn't the boat's (it may be the drone's Pi)." : boat.linkHint || 'No answer from the boat Pi.'}
           </div>
           <div className="mt-1.5 nl-text nl-muted">
-            Set the boat Pi's NetBird address in <b style={{ color: 'var(--nl-ink)' }}>System → Boat connection</b>. To practise without hardware run the simulator: <span className="nl-num" style={{ color: 'var(--nl-ink)' }}>python main.py --sim --port 8001</span>
+            Start VARUNA Boat on this laptop, then tap Boat on this computer in <b style={{ color: 'var(--nl-ink)' }}>System → Boat connection</b>. To practise without hardware run the simulator: <span className="nl-num" style={{ color: 'var(--nl-ink)' }}>python main.py --sim --port 8001</span>
           </div>
           <div className="mt-2.5 flex gap-2">
             <button className="nl-btn" onClick={() => onNavigate?.('system')}>Open System</button>
