@@ -1141,6 +1141,10 @@ function createLocalData({ dataDir, seedFile, log = console } = {}) {
   /** The origin the Google sign-in page is served from — the one to list under
    *  "Authorised JavaScript origins" in Google Cloud Console. */
   function signInOrigin(req) {
+    // Hosted website: the public server (server/web.cjs) passes the site's own
+    // https address, and the page is served there through its /local rewrite.
+    const site = String(req.headers['x-varuna-public-origin'] || '')
+    if (/^https:\/\/[a-z0-9.-]+$/.test(site)) return site
     const port = String(req.headers.host || '').split(':').pop()
     return `http://localhost${/^\d+$/.test(port) ? ':' + port : ''}`
   }
